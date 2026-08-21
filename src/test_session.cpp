@@ -6,15 +6,14 @@
 // documented at the top of session.hpp -- not a mock, not a unit test of
 // an isolated piece.
 //
-// This is, by a wide margin, the most complex file in this project that
-// I have not been able to compile myself (no Boost in the sandbox this
-// was written in). Treat this build as the real first compile of it --
-// same as session.cpp originally was, and same as fm_demod_liquid.cpp
-// was before you ran it and it turned out fine. I reviewed the Beast
-// client API calls carefully (they mirror patterns already used
-// server-side in session.cpp, which is some reassurance, but not the
-// same as a compiler having checked them) -- if something doesn't
-// compile, the errors are the most useful thing you can hand back to me.
+// This file was originally written without a Boost install to compile
+// against. It has since been built and run (gcc 13, Boost 1.83) and
+// passes: the Beast client API calls all compiled as written. Two
+// things did have to be fixed once it actually ran, both in the test
+// harness rather than in the code under test -- see TestClient::read
+// for why the read timeout needed rewriting, and
+// test_audio_pipeline_relays_events_and_audio for why its talkgroup
+// assertion was too strict.
 //
 // What this DOES verify, if it passes:
 //   - The server accepts a WebSocket connection and the "start" control
@@ -125,27 +124,71 @@ public:
     }
 
     // Blocking read with an explicit timeout. Returns false on
-    // timeout/error (check `ec_out` if you need to distinguish them);
-    // on success, fills `out` and sets `is_text`.
+    // timeout/error; on success, fills `out` and sets `is_text`.
+    //
+    // This has to go through async_read + io_context::run_for rather
+    // than the more obvious expires_after() + synchronous ws_.read().
+    // beast::tcp_stream's timeout only applies to *asynchronous*
+    // operations ("A logical operation is any series of one or more
+    // direct or indirect calls to the timeout stream's asynchronous
+    // read, asynchronous write, or asynchronous connect functions" --
+    // boost/beast/core/basic_stream.hpp); its synchronous read_some
+    // goes straight to the underlying socket and never consults the
+    // timer. So the synchronous version blocked forever whenever a
+    // response legitimately never arrived, which is exactly the case
+    // test_binary_before_start_is_silently_ignored is built to check.
     bool read(std::string& out, bool& is_text,
               std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
         beast::flat_buffer buffer;
-        beast::get_lowest_layer(ws_).expires_after(timeout);
         beast::error_code ec;
-        ws_.read(buffer, ec);
-        beast::get_lowest_layer(ws_).expires_never(); // don't leave a timeout armed between calls
+        bool done = false;
+        ws_.async_read(buffer, [&](beast::error_code e, std::size_t) {
+            ec = e;
+            done = true;
+        });
+        if (!run_until(done, timeout)) return false; // timed out
         if (ec) return false;
         is_text = ws_.got_text();
         out = beast::buffers_to_string(buffer.data());
         return true;
     }
 
+    // Errors are ignored: by the time a test closes it has already made
+    // its checks, and a client whose read timed out has had its socket
+    // closed underneath it (see run_until) so the handshake is expected
+    // to fail there.
     void close() {
-        beast::error_code ec;
-        ws_.close(websocket::close_code::normal, ec);
+        bool done = false;
+        ws_.async_close(websocket::close_code::normal, [&](beast::error_code) { done = true; });
+        // Bounded, for the same reason read() is: the closing handshake
+        // waits for the peer's close frame, and a test should fail
+        // rather than hang if that never comes.
+        run_until(done, std::chrono::seconds(2));
     }
 
 private:
+    // Runs this client's io_context until `done` is set or `timeout`
+    // elapses. Returns true if the operation completed in time.
+    //
+    // On timeout it closes the underlying socket -- which aborts the
+    // pending operation, the same way beast::tcp_stream's own timeout
+    // is documented to behave -- and then drains the context. That
+    // drain is not optional: the completion handlers above capture
+    // stack locals by reference, so they must be guaranteed to have run
+    // before this function returns. Once a call here times out the
+    // stream is finished; every test that hits a timeout only closes
+    // afterwards, and close()'s errors are ignored.
+    bool run_until(bool& done, std::chrono::milliseconds timeout) {
+        ioc_.restart();
+        ioc_.run_for(timeout);
+        if (done) return true;
+        beast::error_code ec;
+        beast::get_lowest_layer(ws_).socket().close(ec);
+        ioc_.restart();
+        ioc_.run();
+        return false;
+    }
+
     net::io_context ioc_;
     websocket::stream<beast::tcp_stream> ws_;
 };
@@ -296,19 +339,31 @@ void test_audio_pipeline_relays_events_and_audio() {
     }
 
     bool saw_event = false;
+    bool saw_call_event = false;
     bool saw_audio = false;
-    // Read up to a handful of frames, or until we've seen one of each --
-    // events and audio can interleave in either order depending on
-    // thread scheduling, so this doesn't assume a fixed sequence.
-    for (int i = 0; i < 20 && !(saw_event && saw_audio); ++i) {
+    // Read up to a handful of frames, or until we've seen both a
+    // talkgroup-carrying event and an audio frame -- events and audio
+    // can interleave in either order depending on thread scheduling, so
+    // this doesn't assume a fixed sequence.
+    //
+    // Note this waits for an event carrying the talkgroup rather than
+    // asserting that every event frame carries it. session.cpp emits
+    // one event frame per line dsd-fme writes to stdout, and not every
+    // such line is a decode: the fake's very first line is the
+    // "ARGS:..." banner it echoes its argv with (see
+    // test_fake_dsd_fme.cpp), which classify_line correctly reports as
+    // kind "unknown" with no talkgroup. That is the intended behavior
+    // of both ends -- the client gets the raw line either way -- so
+    // what's worth asserting is that the fake's TG=12345 decode line
+    // makes it through, not that nothing else does.
+    for (int i = 0; i < 20 && !(saw_call_event && saw_audio); ++i) {
         std::string resp;
         if (!client.read(resp, is_text, std::chrono::seconds(3))) break;
         if (is_text) {
             auto obj = json::parse_flat_object(resp);
             if (json::get_string(obj, "type") == "event") {
                 saw_event = true;
-                check(json::get_string(obj, "talkgroup") == "12345",
-                      "event carries the fake dsd-fme's talkgroup (12345)");
+                if (json::get_string(obj, "talkgroup") == "12345") saw_call_event = true;
             }
         } else {
             if (!resp.empty() && static_cast<uint8_t>(resp[0]) == 0x01) {
@@ -318,6 +373,7 @@ void test_audio_pipeline_relays_events_and_audio() {
         }
     }
     check(saw_event, "received at least one JSON event frame");
+    check(saw_call_event, "an event carries the fake dsd-fme's talkgroup (12345)");
     check(saw_audio, "received at least one tagged binary audio frame");
 
     client.send_text(json::Writer().field("type", std::string("stop")).str());
