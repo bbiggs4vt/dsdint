@@ -1,0 +1,36 @@
+# CMake build directory. README.md's build instructions use `mkdir build
+# && cd build`, so this is where everything lands by default; ignore any
+# similarly-named out-of-source build dir too.
+build/
+build-*/
+cmake-build-*/
+
+# CMake scratch, in case anyone configures in-source.
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+Makefile
+compile_commands.json
+
+# Built binaries (all targets in CMakeLists.txt, in case they end up
+# outside a build dir).
+dsd-server
+dsd-server-liquid
+dsd-server-dsdcc
+demod_benchmark
+test_fm_demod
+test_fm_demod_liquid
+test_session
+test-fake-dsd-fme
+dsd-fme
+
+# Object files and the usual editor/OS debris.
+*.o
+*.a
+*.so
+*.patch
+.vscode/
+.idea/
+.DS_Store
