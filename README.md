@@ -55,8 +55,8 @@ so multiple clients can decode different channels concurrently.
   decoded audio is pulled back out via a getter, with no child process,
   pipes, or UDP socket involved. Structurally the most different of the
   three backend swaps in this project so far — see "The DSDcc variant"
-  below, and read the top-of-file comment in `dsdcc_decoder.cpp` before
-  trusting any of it.
+  below. Now verified against DSDcc 1.9.0 with a real DMR capture (it
+  was originally written blind, without access to DSDcc).
 - `src/dsd_backend_selector.hpp` — compile-time switch between the two
   DSD backends (`-DDSD_USE_DSDCC_BACKEND`), mirroring
   `fm_demod_selector.hpp`'s role for the demod backends.
@@ -118,15 +118,13 @@ end-to-end. To still validate the pieces that matter most:
   below.
 - **`dsd_process.cpp`** and **`session.cpp`'s use of it** — these are the
   same files described above; no changes beyond what's already noted.
-- **`dsdcc_decoder.cpp`** — this one's meaningfully less verified than
-  the liquid variant. I only had fragments of DSDcc's headers to go on
-  (no confirmed real-world usage example for the main call), so the
-  core sample-ingestion API call is a placeholder, not a checked
-  signature. I did syntax-check my own code against a stub header
-  matching my assumptions (catches typos/logic errors in my file) —
-  that is **not** the same as validating against DSDcc's real API. See
-  "The DSDcc variant" below; the file's own top-of-file comment has the
-  full confidence breakdown, piece by piece.
+- **`dsdcc_decoder.cpp`** — originally the least verified file in the
+  project (written from header fragments with placeholder API calls);
+  since then it has been rewritten against DSDcc 1.9.0's real headers
+  and dsdccx's own integration loop, and validated end to end with
+  DSDcc's bundled real DMR capture — see "The DSDcc variant" below for
+  what "validated" means concretely (it's sample-exact against
+  upstream's own decoder output).
 - **`test_session.cpp`** — an integration test for `session.cpp` itself
   (real `Server`, real Beast WebSocket client, exercises the actual wire
   protocol). Like `session.cpp` originally was, this is reviewed but not
@@ -234,51 +232,65 @@ running many concurrent sessions on constrained hardware than the
 liquid-dsp swap is — 16 sessions means 16 decoder *objects* in your
 existing threads instead of 16 forked OS processes competing for cores.
 
-**This one needs real work before it does anything.** Unlike the
-liquid-dsp variant, I didn't have a confirmed usage example to check the
-main sample-ingestion call against — only fragments of DSDcc's headers
-surfaced via search. Concretely, as shipped:
+**Status: verified against DSDcc 1.9.0, end to end, with a real DMR
+signal.** This file was originally written blind (no network access to
+DSDcc), with its API calls marked LOW CONFIDENCE and its extraction
+logic stubbed out. It has since been rewritten against the real
+`dsd_decoder.h`/`dmr.h` and against `dsd_main.cpp` (upstream's own
+`dsdccx` CLI, the canonical integration example), and validated with
+DSDcc's bundled discriminator capture of a real DMR transmission
+(`samples/dmr_it_8.dis` in the DSDcc source tree). The verification is
+strong: running the capture through `DsdccDecoder` produces **exactly**
+the decoded audio upstream's `dsdccx` produces from the same file
+(151680 samples of 8 kHz voice, sample-count-exact), with the correct
+talkgroup (150607), sources, group-call flag, and TDMA slot in the
+emitted events.
 
-- `DsdccDecoder::write_audio()` compiles and accepts samples, but the
-  actual DSDcc call inside it (`decoder_->run(sample)`) is a low-confidence
-  guess at the method name/signature, and the audio/metadata extraction
-  around it is placeholder code that will silently produce **zero**
-  decoded output — no audio, no events — until you replace it with real
-  calls from your installed `dsd_decoder.h`/`dmr.h`. It prints a loud
-  warning to stderr on startup for exactly this reason, so it's hard to
-  mistake "compiles and runs" for "works."
-- The header include paths (`<dsdcc/dsd_decoder.h>`) are also a guess —
-  fix the include path in `CMakeLists.txt`/`dsdcc_decoder.cpp` if your
-  install exposes them differently.
-- `dsdcc_decoder.cpp`'s own top-of-file comment has a full confidence
-  breakdown (what's confirmed from header fragments vs. inferred vs.
-  placeholder) — read that before making any changes, it tells you
-  exactly which lines to fix first.
+For the record, how the original blind guesses fared (also in
+`dsdcc_decoder.cpp`'s top comment): `run(sample)` per input sample was
+guessed exactly right, and the `<dsdcc/...>` include prefix was right;
+the audio getters were close (right idea, wrong access path — it's
+`getAudio1/2()` on `DSDDecoder` directly, one per TDMA slot); but the
+guessed `setDecodeMode(mode, false)` second argument was backwards —
+the bool means on/off, so the placeholder would have silently
+*disabled* DMR decoding. The metadata getters didn't exist as guessed;
+the real source is DSDcc's fixed-layout 26-char per-slot status text,
+which `dsdcc_decoder.cpp` now parses (layout documented there,
+confirmed against `dmr.cpp`).
 
-**What I'd actually trust regardless of the exact API names**: the
-overall control flow (push samples → check for decoded audio → check
-for state changes → invoke callbacks, all synchronously, no extra
-threads needed) matches DSDcc's own documented integration pattern, and
-`session.cpp` needed zero changes to handle a backend whose callbacks
-fire synchronously on the demod worker thread instead of a dedicated
-reader thread — its "always post to the connection's strand before
-touching `ws_`" pattern already covered that case generically.
+Two contracts worth knowing: DSDcc's input rate is **fixed at 48 kHz**
+(S16LE discriminator audio; `start()` rejects anything else rather than
+silently failing to sync), and decoded audio comes out at **8 kHz**
+(DSDcc's MBE decoder native rate, upsampling off — the same rate
+dsd-fme's UDP output typically uses, so clients see no difference).
+`session.cpp` needed zero changes to host this backend — its "always
+post to the connection's strand" callback pattern already covered
+callbacks firing synchronously on the demod worker thread.
 
 **Getting this running:**
 
-1. Build DSDcc and mbelib (DSDcc needs mbelib for actual voice
-   synthesis, same dependency as the other two backends).
-2. Open your installed `dsd_decoder.h` and `dmr.h`, find the real
-   sample-ingestion method and the metadata/audio getters, and replace
-   the placeholders in `dsdcc_decoder.cpp` — start with the LOW
-   CONFIDENCE items listed in that file's top comment.
-3. `cmake .. && make dsd-server-dsdcc` — CMake finds DSDcc/mbelib the
+1. Build and install mbelib (github.com/szechyjs/mbelib), then DSDcc
+   (github.com/f4exb/dsdcc) — both are plain CMake builds.
+2. `cmake .. && make dsd-server-dsdcc` — CMake finds DSDcc/mbelib the
    same way it finds liquid-dsp for the other variant (skipped with a
    message if not found, not an error).
-4. There's no synthetic sanity test for this one, unlike
-   `test_fm_demod`/`test_fm_demod_liquid` — generating a valid encoded
-   DMR bitstream to feed it is a lot harder than synthesizing an FM
-   tone, so testing this needs a real DMR capture or a live signal.
+
+**Testing it** (this is no longer the untested backend — it's the most
+thoroughly tested one):
+
+- `test_dsdcc_decoder` runs `DsdccDecoder` directly on the real DMR
+  capture and asserts the decoded audio volume and the exact
+  talkgroup/source/slot metadata, plus rejection of bad configs.
+- `test_session_dsdcc` is the full-stack version: it starts the actual
+  WebSocket server built with this backend, FM-modulates the capture
+  into IQ on the client side, streams it over the socket, and asserts
+  that real decoded voice and the real talkgroup come back out. A pass
+  means IQ → demod → DSDcc → WebSocket worked on genuine RF-derived
+  data end to end (also sample-exact: all 151680 voice samples arrive).
+- Both are armed in ctest by pointing CMake at a DSDcc source checkout:
+  `cmake -DDSDCC_SAMPLES_DIR=/path/to/dsdcc/samples ..`. Without that
+  they build but print SKIPPED, since the capture ships in DSDcc's
+  source tree, not its installed artifacts.
 
 ## Comparing the two demod backends: demod_benchmark
 

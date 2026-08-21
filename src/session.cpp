@@ -25,6 +25,11 @@ namespace {
 //     still collides eventually. Tracking live allocations makes
 //     distinctness a guarantee instead of a probability.
 // stop_pipeline() releases the port when the session's pipeline stops.
+//
+// Only compiled for the subprocess backend: the DSDcc backend decodes
+// in-process and has no UDP audio port to allocate (udp_audio_port_
+// stays 0), so this whole allocator would be dead code there.
+#if !defined(DSD_USE_DSDCC_BACKEND)
 std::mutex g_udp_port_mutex;
 std::set<uint16_t> g_udp_ports_in_use;
 
@@ -46,6 +51,7 @@ void release_udp_port(uint16_t port) {
     std::lock_guard<std::mutex> lock(g_udp_port_mutex);
     g_udp_ports_in_use.erase(port);
 }
+#endif // !DSD_USE_DSDCC_BACKEND
 } // namespace
 
 Session::Session(tcp::socket socket) : ws_(std::move(socket)) {}
@@ -266,8 +272,10 @@ void Session::stop_pipeline() {
         std::lock_guard<std::mutex> lock(demod_mutex_);
         demod_.reset();
     }
+#if !defined(DSD_USE_DSDCC_BACKEND)
     release_udp_port(udp_audio_port_);
     udp_audio_port_ = 0;
+#endif
 
     {
         std::lock_guard<std::mutex> lock(iq_mutex_);

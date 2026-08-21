@@ -89,13 +89,14 @@ endif()
 # against the subprocess (dsd-fme/classic DSD) backend. Same
 # skip-with-a-message-if-not-found approach as the liquid variant above.
 #
-# IMPORTANT: dsdcc_decoder.cpp's DSDcc API calls are marked at LOW
-# CONFIDENCE in that file's own top-of-file comment (unlike the liquid
-# variant, I didn't have a confirmed real-world usage example to check
-# the main sample-ingestion call against). This target will very likely
-# need source changes, not just a working build environment, before it
-# does anything useful. See dsdcc_decoder.cpp before spending time on
-# the CMake/linking side of getting this to build.
+# STATUS: verified against DSDcc 1.9.0 built from source with mbelib.
+# dsdcc_decoder.cpp's API calls were checked against the real headers
+# and dsdccx's own integration loop, and test_dsdcc_decoder (below)
+# runs the wrapper on DSDcc's bundled real DMR capture and asserts the
+# decoded audio and talkgroup/source metadata match what upstream's
+# dsdccx extracts from the same file. The earlier LOW CONFIDENCE
+# warning that used to live here (the file was originally written
+# without access to DSDcc) no longer applies.
 option(DSD_BUILD_DSDCC_VARIANT "Also build dsd-server-dsdcc (in-process DSDcc backend) for testing" ON)
 
 if(DSD_BUILD_DSDCC_VARIANT)
@@ -126,6 +127,59 @@ if(DSD_BUILD_DSDCC_VARIANT)
     endif()
     target_compile_definitions(dsd-server-dsdcc PRIVATE DSD_USE_DSDCC_BACKEND)
     target_compile_options(dsd-server-dsdcc PRIVATE -Wall -Wextra)
+
+    # Decoder-level test against a real DMR capture. The capture ships
+    # in the DSDcc SOURCE tree (samples/dmr_it_8.dis), not in its
+    # installed artifacts, so point DSDCC_SAMPLES_DIR at a DSDcc source
+    # checkout's samples/ directory to arm the ctest case; without it
+    # the binary still builds and prints SKIPPED when run bare. See
+    # test_dsdcc_decoder.cpp for what it asserts and the ground truth.
+    set(DSDCC_SAMPLES_DIR "" CACHE PATH
+        "Directory containing DSDcc's sample captures (dmr_it_8.dis) to enable test_dsdcc_decoder's ctest case")
+
+    add_executable(test_dsdcc_decoder EXCLUDE_FROM_ALL
+      src/dsdcc_decoder.cpp
+      src/test_dsdcc_decoder.cpp
+    )
+    target_include_directories(test_dsdcc_decoder PRIVATE src ${DSDCC_INCLUDE_DIR})
+    target_link_libraries(test_dsdcc_decoder PRIVATE ${DSDCC_LIBRARY})
+    if(MBE_LIBRARY)
+      target_link_libraries(test_dsdcc_decoder PRIVATE ${MBE_LIBRARY})
+    endif()
+    target_compile_options(test_dsdcc_decoder PRIVATE -Wall -Wextra)
+
+    if(DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
+      add_test(NAME dsdcc_decoder_test
+               COMMAND test_dsdcc_decoder "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
+      set_tests_properties(dsdcc_decoder_test PROPERTIES TIMEOUT 120)
+    endif()
+
+    # Full-stack test of the DSDcc server build: session.cpp compiled
+    # with DSD_USE_DSDCC_BACKEND (the dsd-server-dsdcc configuration),
+    # driven over a real WebSocket with FM-modulated IQ of the same DMR
+    # capture. See test_session_dsdcc.cpp. Needs Boost (like
+    # test_session) on top of DSDcc.
+    add_executable(test_session_dsdcc EXCLUDE_FROM_ALL
+      src/session.cpp
+      src/fm_demod.cpp
+      src/dsdcc_decoder.cpp
+      src/test_session_dsdcc.cpp
+    )
+    target_include_directories(test_session_dsdcc PRIVATE src ${Boost_INCLUDE_DIRS} ${DSDCC_INCLUDE_DIR})
+    target_link_libraries(test_session_dsdcc PRIVATE Boost::system Threads::Threads ${DSDCC_LIBRARY})
+    if(MBE_LIBRARY)
+      target_link_libraries(test_session_dsdcc PRIVATE ${MBE_LIBRARY})
+    endif()
+    target_compile_definitions(test_session_dsdcc PRIVATE DSD_USE_DSDCC_BACKEND)
+    target_compile_options(test_session_dsdcc PRIVATE -Wall -Wextra)
+
+    if(DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
+      add_test(NAME session_dsdcc_test
+               COMMAND test_session_dsdcc "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
+      # Streaming is deliberately paced (~10 ms per 85 ms block), so the
+      # send phase alone takes a few seconds; leave generous headroom.
+      set_tests_properties(session_dsdcc_test PROPERTIES TIMEOUT 180)
+    endif()
   else()
     message(STATUS "DSDcc not found - skipping dsd-server-dsdcc. Build "
                     "from https://github.com/f4exb/dsdcc to enable it, "

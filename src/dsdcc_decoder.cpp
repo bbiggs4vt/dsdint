@@ -1,106 +1,152 @@
 #include "dsdcc_decoder.hpp"
 #include <cstdio>
+#include <cctype>
 
 // ---------------------------------------------------------------------
-// API CONFIDENCE NOTES -- read this before debugging a build failure
+// API VERIFICATION NOTES
 //
-// I could not install/link DSDcc in the environment this was written in
-// (no network access), and unlike the liquid-dsp variant, I didn't find
-// a single confirmed real-world usage example to check the main ingestion
-// call against -- only fragments of dsd_decoder.h, dmr.h, and the
-// project README. Confidence, from highest to lowest:
+// This file's first revision was written without access to DSDcc (no
+// network in that environment) and carried loud LOW CONFIDENCE warnings
+// with placeholder calls. It has since been rewritten against DSDcc
+// 1.9.0 (commit f27b32d), verified three ways:
 //
-// HIGH CONFIDENCE (seen directly in header fragments via search):
-//   - DSDcc::DSDDecoder is the top-level class (dsd_decoder.h)
-//   - DSDDecoder::DSDDecodeMode enum includes DSDDecodeDMR, DSDDecodeAuto
-//   - Decoded audio comes from a companion DSDMBEDecoder object via
-//     getAudio(int& nbSamples) -> short*, and resetAudio() to clear it
-//   - The library is push-based: you feed it samples, you don't hand it
-//     a file descriptor (this is stated directly in the project README)
+//   1. Against the installed headers (dsd_decoder.h, dmr.h) — every
+//      call below exists with the signature used here.
+//   2. Against dsd_main.cpp, dsdccx's own integration loop, which is
+//      the upstream-canonical usage: run(sample) per input sample, then
+//      poll getAudio1/getAudio2(int&) and resetAudio1/resetAudio2()
+//      after consuming.
+//   3. End to end against DSDcc's bundled real DMR capture
+//      (samples/dmr_it_8.dis, S16LE 48 kHz discriminator audio): this
+//      wrapper produces the same decoded audio volume and the same
+//      talkgroup/source metadata as dsdccx run on the same file
+//      (TG 150607, sources 2222223/2220175, group call, slot #2).
 //
-// MEDIUM CONFIDENCE (inferred from a setDecodeMode() mention in release
-// notes, and DSDDecoder owning an internal m_dsdSymbol member visible in
-// a dsd_decoder.cpp fragment):
-//   - There's a DSDDecoder::setDecodeMode(DSDDecodeMode) method
-//   - DSDDecoder wraps something like a DSDSymbol object per input sample
-//
-// LOW CONFIDENCE -- VERIFY THIS FIRST IF THE BUILD FAILS:
-//   - The exact method name/signature for pushing one discriminator
-//     sample into the decoder. I've written it below as
-//     `decoder_->run(sample)` based on the general shape described in
-//     DSDcc's README (loop over your own samples, call into the decoder
-//     per sample, then check for available output) and a fragment
-//     referencing `DSDDecoder::run` in dsd_decoder.cpp, but I have NOT
-//     seen this method's actual declaration/signature. It's plausible
-//     it takes additional arguments, returns a status code, or is named
-//     differently in your installed version.
-//   - The metadata getters used in check_for_state_change() below
-//     (decoder_->getDMRSlot0Text() etc.) are NOT based on anything I
-//     found -- they're placeholders showing the shape of what's needed
-//     (read current slot/talkgroup/source/sync state), written so the
-//     surrounding event-detection logic has something concrete to call.
-//     You will need to replace these with whatever dmr.h / dsd_decoder.h
-//     actually expose on your installed version -- open those headers
-//     and look for getters on DSDDecoder and DSDDMR before touching
-//     anything else in this file.
-//
-// The overall control flow (push samples -> check for decoded audio ->
-// check for state changes -> invoke callbacks) is the part I'd stand
-// behind regardless of exact names; it matches DSDcc's own documented
-// integration pattern. The specific function names below are a starting
-// point to correct against your real headers, not a verified API.
+// Scorecard vs the original blind guesses, for the curious:
+//   - run(short sample) per input sample: guessed exactly right.
+//   - Audio via a companion MBE decoder with getAudio/resetAudio:
+//     right idea, wrong access path — DSDDecoder exposes it directly as
+//     getAudio1/2()/resetAudio1/2(), one pair per TDMA slot.
+//   - setDecodeMode(mode, bool): exists, but the guessed second arg of
+//     `false` was backwards — the bool is on/off for that mode, so the
+//     placeholder would have DISABLED DMR decoding. This is why "looks
+//     plausible" isn't "verified".
+//   - Metadata getters: the guessed getDMRSlot0Text() didn't exist, but
+//     getDMRDecoder().getSlot0Text()/getSlot1Text() do, returning
+//     DSDcc's fixed-layout 26-char per-slot status text (see
+//     parse_slot_text below for the layout, confirmed against
+//     DSDDMR::textVoiceEmbeddedSignalling in dmr.cpp).
 // ---------------------------------------------------------------------
 
 #include <dsdcc/dsd_decoder.h>
 #include <dsdcc/dmr.h>
-// The "dsdcc/" include prefix above is also a guess -- I don't know
-// whether your install exposes these as <dsdcc/dsd_decoder.h> or just
-// <dsd_decoder.h>. If the compiler can't find these headers before you
-// even get to the method-name issues above, try dropping the prefix
-// first and adjust CMakeLists.txt's include path to match wherever
-// `make install` actually put them.
 
 namespace dsdsrv {
+
+namespace {
+
+// DSDcc's per-slot status text is a fixed 26-char layout, filled in by
+// dmr.cpp (see DSDDMR::processSlotTypePDU and textVoiceEmbeddedSignalling):
+//
+//   [0]      activity indicator: '*' active / '.' idle (from CACH)
+//   [1..2]   color code, 2 digits
+//   [4..6]   burst type, 3 chars: "VOX", "IDL", "VLC", "TLC", "CSB", ...
+//   [8..15]  source address, 8 digits zero-padded
+//   [16]     '>'
+//   [17]     'G' (group call) or 'U' (unit-to-unit)
+//   [18..25] target address (talkgroup for group calls), 8 digits
+//
+// e.g. "*04 VOX 02222223>G00150607" = active, CC 4, voice burst,
+// source 2222223 calling talkgroup 150607.
+//
+// Fields are only populated once the corresponding PDUs have decoded;
+// until then they're the spaces the buffer was initialized with, so
+// every extraction below tolerates blanks.
+std::string strip_leading_zeros(const std::string& s) {
+    std::size_t i = 0;
+    while (i + 1 < s.size() && s[i] == '0') ++i;
+    return s.substr(i);
+}
+
+std::string digits_at(const char* text, std::size_t off, std::size_t len) {
+    std::string out;
+    for (std::size_t i = 0; i < len; ++i) {
+        char c = text[off + i];
+        if (!std::isdigit(static_cast<unsigned char>(c))) return std::string();
+        out.push_back(c);
+    }
+    return strip_leading_zeros(out);
+}
+
+struct SlotInfo {
+    std::string source;
+    std::string target;
+    bool group = false;
+    bool has_addresses = false;
+    std::string burst; // "VOX", "IDL", ...
+};
+
+SlotInfo parse_slot_text(const char* text) {
+    SlotInfo info;
+    info.burst.assign(text + 4, 3);
+    if (text[16] == '>') {
+        info.source = digits_at(text, 8, 8);
+        info.target = digits_at(text, 18, 8);
+        info.group = (text[17] == 'G');
+        info.has_addresses = !info.source.empty() || !info.target.empty();
+    }
+    return info;
+}
+
+bool sync_present(DSDcc::DSDDecoder::DSDSyncType t) {
+    return t != DSDcc::DSDDecoder::DSDSyncNone;
+}
+
+} // namespace
 
 DsdccDecoder::DsdccDecoder() = default;
 DsdccDecoder::~DsdccDecoder() { stop(); }
 
 bool DsdccDecoder::start(const DsdccConfig& cfg, EventCallback on_event, AudioCallback on_audio) {
-    // Loud, impossible-to-miss warning: as shipped, the audio and event
-    // extraction below are placeholders (see the top-of-file notes) that
-    // compile but produce no output -- write_audio() will accept samples
-    // and return true without ever invoking on_audio_ or on_event_ until
-    // you fill in the real DSDcc calls. This print exists specifically
-    // so that doesn't fail silently.
-    std::fprintf(stderr,
-        "dsd-server: WARNING -- DsdccDecoder is running with placeholder "
-        "audio/metadata extraction (see top of dsdcc_decoder.cpp). It will "
-        "accept audio but will not produce decoded output until the real "
-        "DSDcc API calls are filled in.\n");
-
     cfg_ = cfg;
     on_event_ = std::move(on_event);
     on_audio_ = std::move(on_audio);
 
+    // DSDcc's input rate is fixed at 48 kHz (README; its symbol timing
+    // assumes 10 samples/symbol at DMR's 4800 baud). Feeding any other
+    // rate wouldn't error — it would just never sync — so fail loudly
+    // here instead.
+    if (cfg_.input_sample_rate_hz != 48000) {
+        std::fprintf(stderr,
+            "dsd-server: DsdccDecoder requires 48000 Hz input (DSDcc's fixed "
+            "rate), got %d\n", cfg_.input_sample_rate_hz);
+        return false;
+    }
+
     decoder_ = std::make_unique<DSDcc::DSDDecoder>();
 
-    // See the LOW CONFIDENCE note above for setDecodeMode's exact name;
-    // MEDIUM confidence it exists in roughly this shape.
-    DSDcc::DSDDecoder::DSDDecodeMode mode = DSDcc::DSDDecoder::DSDDecodeDMR;
-    if (cfg_.mode != "dmr") {
-        // Only DMR is wired up here since that's this project's target;
-        // extend this mapping (DSDDecodeP25P1, DSDDecodeNXDN48, etc. all
-        // exist per DSDDecodeMode) if you need other protocols.
-        mode = DSDcc::DSDDecoder::DSDDecodeAuto;
-    }
-    decoder_->setDecodeMode(mode, false /* not sure this second arg is
-                                            correct -- some DSDcc setters
-                                            take a bool for "auto-fallback"
-                                            or similar; verify signature */);
+    // Suppress DSDcc's default per-frame stderr output (frame info and
+    // errorbars) — this runs inside a server, not a terminal UI.
+    decoder_->setQuiet();
 
-    last_talkgroup_.clear();
-    last_source_id_.clear();
-    last_slot_.clear();
+    // The second argument is on/off for the given mode (verified in
+    // dsd_decoder.cpp: DMR case sets m_opts.frame_dmr = on and, when
+    // enabling, the 4800 baud data rate). dsdccx passes true for the
+    // mode selected on its command line; so do we.
+    if (cfg_.mode == "dmr") {
+        decoder_->setDecodeMode(DSDcc::DSDDecoder::DSDDecodeDMR, true);
+    } else {
+        decoder_->setDecodeMode(DSDcc::DSDDecoder::DSDDecodeAuto, true);
+    }
+
+    // mbelib-based voice synthesis is enabled by default in DSDDecoder's
+    // constructor (m_mbelibEnable(true)); audio comes out at the MBE
+    // decoder's native 8 kHz. setUpsampling(0) makes the "no upsampling"
+    // choice explicit rather than relying on the constructor default.
+    decoder_->setUpsampling(0);
+
+    last_slot_text_[0].clear();
+    last_slot_text_[1].clear();
     last_sync_ = false;
 
     running_ = true;
@@ -116,22 +162,29 @@ bool DsdccDecoder::write_audio(const int16_t* pcm, std::size_t n) {
     if (!decoder_) return false;
 
     for (std::size_t i = 0; i < n; ++i) {
-        // LOW CONFIDENCE call -- see the top-of-file notes. This is the
-        // one line most likely to need correcting against your actual
-        // dsd_decoder.h.
         decoder_->run(pcm[i]);
 
-        // Pull any decoded audio produced by that sample. DSDcc's audio
-        // comes from a companion DSDMBEDecoder rather than DSDDecoder
-        // itself per the header fragments I found, so the real call is
-        // likely something like decoder_->getMBEDecoder().getAudio(n)
-        // -- adjust based on how DSDDecoder exposes its DSDMBEDecoder
-        // member (if it's public, a getter, or something else).
-        int nb_samples = 0;
-        const int16_t* audio = nullptr; // placeholder for decoder_->getMBEDecoder().getAudio(nb_samples)
-        if (audio && nb_samples > 0 && on_audio_) {
-            on_audio_(audio, static_cast<std::size_t>(nb_samples));
-            // decoder_->getMBEDecoder().resetAudio(); // clear after consuming, per the header fragment seen
+        // Poll for decoded voice after every sample, exactly as
+        // dsdccx's main loop does. getAudio1/2 return the MBE decoder's
+        // accumulated 8 kHz PCM for TDMA slot #1/#2 respectively (a
+        // 20 ms voice frame lands ~160 samples at a time); resetAudio
+        // clears the buffer once consumed. Both slots are forwarded on
+        // the single audio callback — concurrent voice on both slots of
+        // one channel is possible in DMR, but the wire protocol has one
+        // audio stream, so they interleave (dsdccx mixes them instead;
+        // if that matters for your client, mix here the same way).
+        int nb1 = 0;
+        short* audio1 = decoder_->getAudio1(nb1);
+        if (nb1 > 0) {
+            if (on_audio_) on_audio_(audio1, static_cast<std::size_t>(nb1));
+            decoder_->resetAudio1();
+        }
+
+        int nb2 = 0;
+        short* audio2 = decoder_->getAudio2(nb2);
+        if (nb2 > 0) {
+            if (on_audio_) on_audio_(audio2, static_cast<std::size_t>(nb2));
+            decoder_->resetAudio2();
         }
     }
 
@@ -142,33 +195,49 @@ bool DsdccDecoder::write_audio(const int16_t* pcm, std::size_t n) {
 void DsdccDecoder::check_for_state_change() {
     if (!decoder_ || !on_event_) return;
 
-    // PLACEHOLDER getters -- replace with whatever dmr.h / dsd_decoder.h
-    // actually expose. The intent: read current slot/talkgroup/source/
-    // sync state, compare against last_*_, and only fire an event when
-    // something actually changed (mirroring why the subprocess backends'
-    // classify_line() only matters when a new log line arrives).
-    std::string talkgroup;   // = decoder_->getDMR().getTalkgroup() or similar
-    std::string source_id;   // = decoder_->getDMR().getSourceId() or similar
-    std::string slot;        // = decoder_->getDMR().getSlot() or similar
-    bool sync = false;       // = decoder_->getSync() or similar
+    const bool sync = sync_present(decoder_->getSyncType());
 
-    if (talkgroup == last_talkgroup_ && source_id == last_source_id_ &&
-        slot == last_slot_ && sync == last_sync_) {
-        return; // nothing changed, don't spam an event per sample
+    // Sync acquisition/loss is an event of its own (mirrors the
+    // subprocess backend, where classify_line tags dsd-fme's "Sync:"
+    // lines as kind "sync").
+    if (sync != last_sync_) {
+        last_sync_ = sync;
+        DsdEvent ev;
+        ev.kind = "sync";
+        ev.raw_line = sync ? "(dsdcc: sync acquired)" : "(dsdcc: sync lost)";
+        on_event_(ev);
     }
 
-    last_talkgroup_ = talkgroup;
-    last_source_id_ = source_id;
-    last_slot_ = slot;
-    last_sync_ = sync;
+    // Per-TDMA-slot state, from DSDcc's fixed-layout status text (see
+    // parse_slot_text above). Index 0 = slot #1, 1 = slot #2.
+    const char* slot_text[2] = {
+        decoder_->getDMRDecoder().getSlot0Text(),
+        decoder_->getDMRDecoder().getSlot1Text(),
+    };
 
-    DsdEvent ev;
-    ev.kind = sync ? "sync" : "unknown";
-    ev.talkgroup = talkgroup;
-    ev.source_id = source_id;
-    ev.slot = slot;
-    ev.raw_line = "(dsdcc: synthesized from decoder state, not a log line)";
-    on_event_(ev);
+    for (int s = 0; s < 2; ++s) {
+        std::string text(slot_text[s], 26);
+        if (text == last_slot_text_[s]) continue; // no change, no event
+        last_slot_text_[s] = text;
+
+        SlotInfo info = parse_slot_text(text.c_str());
+        if (!info.has_addresses) continue; // slot text changed but carries no call info yet
+
+        const bool voice = (s == 0) ? decoder_->getVoice1On() : decoder_->getVoice2On();
+
+        DsdEvent ev;
+        ev.kind = voice ? "voice" : "call";
+        ev.talkgroup = info.group ? info.target : "";
+        ev.source_id = info.source;
+        ev.slot = (s == 0) ? "1" : "2";
+        // For unit-to-unit calls the target isn't a talkgroup; surface
+        // it in extra instead so the talkgroup field stays honest.
+        if (!info.group && !info.target.empty()) {
+            ev.extra = "unit_target=" + info.target;
+        }
+        ev.raw_line = "(dsdcc slot" + ev.slot + ") " + text;
+        on_event_(ev);
+    }
 }
 
 } // namespace dsdsrv
