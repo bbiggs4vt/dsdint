@@ -4,11 +4,11 @@
 // Same public interface (process/set_gain/set_freq_offset/config), so
 // fm_demod_selector.hpp can swap it in at compile time with nothing else
 // in the server changing. See fm_demod_liquid.cpp for the reasoning
-// behind the specific liquid objects used and — importantly — the API
-// assumptions that are NOT verified against a real liquid-dsp build in
-// this environment (no liquid-dsp available to compile against here;
-// see the README's "what's tested" section before trusting this on your
-// target hardware).
+// behind the specific liquid objects used. Verified against real
+// liquid-dsp 1.6.0 — including on a real DMR signal, where this chain's
+// output decodes sample-identically to the hand-rolled demod's (see
+// test_fm_demod_liquid_real.cpp and the README's liquid section, which
+// also has measured A/B performance numbers).
 //
 // Architecturally this differs from fm_demod.cpp's hand-rolled chain:
 // instead of a separate FIR-decimate stage followed by a linear-

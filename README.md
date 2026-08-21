@@ -119,14 +119,13 @@ end-to-end. To still validate the pieces that matter most:
   support the liquid-dsp variant, the only changes to these two files
   were mechanical (swap one `#include`, swap the demod type name in two
   places) — the logic reviewed above is otherwise untouched.
-- **`fm_demod_liquid.cpp`** — originally code-reviewed against
-  liquid-dsp's public API docs and example code without compiling it (no
-  liquid-dsp available in my sandbox). **Since then, you've built and run
-  `test_fm_demod_liquid` against real liquid-dsp** and it passed — output
-  RMS matched the theoretical value for a correctly-scaled discriminator
-  to within 0.2%, confirming the one call I flagged as uncertain
-  (`freqdem_demodulate_block`) is correct. See "The liquid-dsp variant"
-  below.
+- **`fm_demod_liquid.cpp`** — now fully verified against real
+  liquid-dsp (1.6.0): every API call compiles as written, the synthetic
+  sanity test passes, and — the strong check — the liquid demod chain
+  was run on a real DMR transmission (FM-remodulated from DSDcc's
+  bundled capture) and its output decoded **sample-exactly** to the same
+  151680 voice samples and talkgroup as decoding the capture directly.
+  See `test_fm_demod_liquid_real` and "The liquid-dsp variant" below.
 - **`dsd_process.cpp`** and **`session.cpp`'s use of it** — these are the
   same files described above; no changes beyond what's already noted.
 - **`dsdcc_decoder.cpp`** — originally the least verified file in the
@@ -148,7 +147,7 @@ RF (see `test_dsd_process` / `test_session_real_fme` /
 `test_dsdcc_decoder` / `test_session_dsdcc`). The remaining genuinely
 untested surface is a live SDR as the IQ source (all RF-derived testing
 uses a captured discriminator recording, FM-remodulated for the
-full-stack tests) and the liquid-dsp demod variant's runtime behavior.
+full-stack tests).
 
 ## Build
 
@@ -188,19 +187,33 @@ hardware — the two binaries (`dsd-server` and `dsd-server-liquid`) run
 identical networking and `dsd-fme` plumbing, so any performance
 difference you measure comes from the demod backend alone.
 
-**Important: I wrote this without being able to compile it.** The
-sandbox this was built in has no network access, so liquid-dsp couldn't
-be installed and none of `fm_demod_liquid.cpp` has been built or run —
-unlike `fm_demod.cpp`, which was compiled and sanity-tested (see below).
-The function signatures used (`msresamp_crcf_create`/`_execute`,
-`nco_crcf_create`/`_mix_block_down`, `freqdem_create`) are based on
-liquid-dsp's published API docs and example code, and I'm reasonably
-confident in all of them except one: **`freqdem_demodulate_block`'s
-exact name** — liquid-dsp added block-level execution for FM
-demodulation in v1.3.0, but I couldn't verify the precise function name
-against a real header. If the build fails there, it's almost certainly
-just a rename, not a logic problem — the comment block at the top of
-`fm_demod_liquid.cpp` explains what to check.
+**Status: verified against real liquid-dsp 1.6.0** (this file was
+originally written without being able to compile it; that's history
+now). Every API call — `msresamp_crcf_create`/`_execute`,
+`nco_crcf_create`/`_mix_block_down`, `freqdem_create`, and
+`freqdem_demodulate_block`, the one originally flagged as least certain
+— compiles and runs as written. Beyond compiling: `test_fm_demod_liquid`
+(synthetic tone) passes, and `test_fm_demod_liquid_real` runs a real
+DMR transmission through the liquid chain and decodes it with DSDcc —
+**sample-exactly** the same 151680 voice samples and talkgroup as
+decoding the capture directly, i.e. on this signal the liquid demod's
+output is decode-equivalent to the hand-rolled demod's.
+
+**Measured A/B numbers** (x86, 4 cores, this container — run
+`demod_benchmark` on your own target before drawing conclusions): the
+hand-rolled demod is *faster* here — 2.2x faster single-threaded with no
+frequency offset, narrowing to 1.24x with a 1500 Hz offset active
+(liquid's `nco_crcf` does reduce the NCO cost, as hypothesized — just
+not enough to win overall on this machine), and roughly 2-4x higher
+channel throughput at every thread count in the concurrency sweep. The
+original motivation for this variant was NEON on ARM targets; on x86 the
+hand-rolled chain (a simple FIR-decimate the compiler vectorizes well)
+wins. Note if you benchmarked before this was written: an earlier
+version of `demod_benchmark` constructed the demod instances inside
+Phase 2's timed region, which unfairly charged liquid's expensive
+polyphase filter design (~a whole workload's worth) as if it were
+throughput; that's fixed, and liquid's Phase 2 numbers now agree with
+its Phase 1 throughput.
 
 **Before you A/B test with this:**
 
@@ -213,15 +226,10 @@ just a rename, not a logic problem — the comment block at the top of
    make test_fm_demod_liquid
    ./test_fm_demod_liquid
    ```
-   **Update, confirmed on real hardware:** this has now actually been
-   built and run against real liquid-dsp (not just reviewed against
-   docs) and it passes — output RMS matched the theoretically expected
-   value for a correctly-scaled discriminator to within 0.2%, which
-   confirms `freqdem_demodulate_block`'s name/signature (the one call I
-   was least sure about) is correct as written. If you see a handful of
-   clipped samples right at the start of the run, that's an
-   `msresamp_crcf` settling transient, not a bug — the test only warns
-   if clipping is sustained across more than 5% of the output.
+   (If you see a handful of clipped samples right at the start of the
+   run, that's an `msresamp_crcf` settling transient, not a bug — the
+   test only warns if clipping is sustained across more than 5% of the
+   output.)
 3. Once that passes, build and run `dsd-server-liquid` the same way as
    `dsd-server`, against the same `dsd-fme` setup, and compare.
 

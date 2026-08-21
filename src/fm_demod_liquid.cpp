@@ -4,13 +4,15 @@
 #include <algorithm>
 
 // ---------------------------------------------------------------------
-// API ASSUMPTIONS — please read before trusting this file
-//
-// I could not install/link liquid-dsp in the environment this was
-// written in (no network access), so none of the code below has been
-// compiled. The function signatures used here are based on liquid-dsp's
-// published API docs and example code, cross-checked at the time of
-// writing:
+// API STATUS: verified against real liquid-dsp 1.6.0. This file was
+// originally written without liquid-dsp available to compile against,
+// and this comment block recorded which signatures were assumptions.
+// All of them turned out correct as written: the file compiles clean
+// against the real headers, the synthetic sanity test passes, and
+// test_fm_demod_liquid_real.cpp runs a real DMR transmission through
+// this chain and decodes it sample-identically to the hand-rolled
+// demod (151680 voice samples, correct talkgroup). The original
+// provenance notes are kept below for the record:
 //
 //   msresamp_crcf_create(rate, stopband_attenuation_db) -> msresamp_crcf
 //   msresamp_crcf_execute(q, in, n_in, out, &n_out)

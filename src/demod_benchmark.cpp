@@ -47,6 +47,8 @@
 #include <cstdio>
 #include <numeric>
 #include <string>
+#include <atomic>
+#include <memory>
 #include <thread>
 #include <vector>
 
@@ -129,22 +131,45 @@ double benchmark_concurrent(const FmDemodConfig& cfg, std::size_t n_samples_per_
             make_test_signal(n_samples_per_thread, cfg.input_sample_rate_hz, 1000.0, 2000.0);
     }
 
+    // Construct the demod instances OUTSIDE the timed region, matching
+    // both Phase 1 and the server's real lifecycle (a session builds its
+    // demod once at "start", then it runs for the whole session). This
+    // matters a lot for the comparison's fairness: FmDemodulatorLiquid's
+    // constructor designs a multi-stage polyphase resampler
+    // (msresamp_crcf_create), which at a 2 MHz -> 48 kHz ratio costs on
+    // the order of this benchmark's entire 0.25 s-of-signal workload --
+    // the original version constructed inside the timed threads, which
+    // made liquid's Phase 2 numbers ~5x worse than its own Phase 1
+    // throughput for the same configuration (construction cost measured
+    // as if it were throughput).
+    std::vector<std::unique_ptr<DemodT>> demods;
+    std::vector<std::vector<int16_t>> outs(static_cast<std::size_t>(n_threads));
+    for (int i = 0; i < n_threads; ++i) {
+        demods.push_back(std::make_unique<DemodT>(cfg));
+        outs[static_cast<std::size_t>(i)].reserve(n_samples_per_thread);
+    }
+
+    // Threads spawn before the clock starts and spin on a start flag, so
+    // thread-creation overhead isn't measured either and all workers
+    // begin at once.
+    std::atomic<bool> go{false};
     std::vector<std::thread> threads;
     threads.reserve(static_cast<std::size_t>(n_threads));
-
-    auto t0 = std::chrono::steady_clock::now();
     for (int i = 0; i < n_threads; ++i) {
         threads.emplace_back([&, i] {
-            DemodT demod(cfg);
-            std::vector<int16_t> out;
+            while (!go.load(std::memory_order_acquire)) { /* spin */ }
+            DemodT& demod = *demods[static_cast<std::size_t>(i)];
+            std::vector<int16_t>& out = outs[static_cast<std::size_t>(i)];
             const auto& sig = signals[static_cast<std::size_t>(i)];
-            out.reserve(sig.size());
             for (std::size_t off = 0; off < sig.size(); off += block_size) {
                 const std::size_t n = std::min(block_size, sig.size() - off);
                 demod.process(sig.data() + off, n, out);
             }
         });
     }
+
+    auto t0 = std::chrono::steady_clock::now();
+    go.store(true, std::memory_order_release);
     for (auto& th : threads) th.join();
     auto t1 = std::chrono::steady_clock::now();
 

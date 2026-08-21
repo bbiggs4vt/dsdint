@@ -176,6 +176,32 @@ if(DSD_BUILD_DSDCC_VARIANT)
       # send phase alone takes a few seconds; leave generous headroom.
       set_tests_properties(session_dsdcc_test PROPERTIES TIMEOUT 180)
     endif()
+
+    # Real-signal verification of the liquid demod: modulates the same
+    # DMR capture into IQ, demodulates with FmDemodulatorLiquid, and
+    # decodes with DsdccDecoder -- needs BOTH DSDcc (this block) and
+    # liquid-dsp (whose block above already ran, so its find results are
+    # available here). See test_fm_demod_liquid_real.cpp; the round trip
+    # is sample-exact against decoding the capture directly.
+    if(LIQUID_INCLUDE_DIR AND LIQUID_LIBRARY)
+      add_executable(test_fm_demod_liquid_real EXCLUDE_FROM_ALL
+        src/fm_demod_liquid.cpp
+        src/dsdcc_decoder.cpp
+        src/test_fm_demod_liquid_real.cpp
+      )
+      target_include_directories(test_fm_demod_liquid_real PRIVATE src ${LIQUID_INCLUDE_DIR} ${DSDCC_INCLUDE_DIR})
+      target_link_libraries(test_fm_demod_liquid_real PRIVATE ${LIQUID_LIBRARY} ${DSDCC_LIBRARY} m)
+      if(MBE_LIBRARY)
+        target_link_libraries(test_fm_demod_liquid_real PRIVATE ${MBE_LIBRARY})
+      endif()
+      target_compile_options(test_fm_demod_liquid_real PRIVATE -Wall -Wextra)
+
+      if(DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
+        add_test(NAME fm_demod_liquid_real_test
+                 COMMAND test_fm_demod_liquid_real "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
+        set_tests_properties(fm_demod_liquid_real_test PROPERTIES TIMEOUT 120)
+      endif()
+    endif()
   else()
     message(STATUS "DSDcc not found - skipping dsd-server-dsdcc. Build "
                     "from https://github.com/f4exb/dsdcc to enable it, "
