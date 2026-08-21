@@ -85,11 +85,22 @@ end-to-end. To still validate the pieces that matter most:
   expected range for a known injected deviation. This is a sanity check,
   **not** validation against a real DMR capture — you should verify
   against your own SDR before trusting it operationally.
-- **`dsd_process.cpp`** — compiled and run end-to-end against a fake
-  `dsd-fme` stand-in script that echoes its argv, logs synthetic event
-  lines, and sends fake UDP audio. Confirmed stdin PCM delivery, stdout
-  line parsing, and UDP audio receipt all work correctly through the real
-  fork/exec/pipe/socket code path.
+- **`dsd_process.cpp`** — now verified against REAL dsd-fme
+  (lwvmobile/dsd-fme built from source) decoding a real DMR capture,
+  not just the fake stand-in. That verification found and fixed three
+  genuine bugs in the originally guessed command line: `-f d` selected
+  D-STAR (dsd-fme's DMR mode is `-fs`), `-U host:port` was the rigctl
+  port rather than audio output (the real flag is `-o udp:host:port`),
+  and with no `-o` at all dsd-fme exits at startup when no PulseAudio
+  daemon exists — fatal on a headless server. It also fixed the
+  talkgroup regex (real dsd-fme writes `TGT=`, which the old `TG`-only
+  pattern never matched), slot attribution (the bracketed `[SLOT2]`
+  marker is what names the active slot), ANSI color codes leaking into
+  event text, and unescaped control characters producing invalid JSON.
+  See the DSD-FME VERIFICATION NOTES in `dsd_process.cpp` and the two
+  tests: `test_dsd_process` (DsdProcess + real dsd-fme + real capture)
+  and `test_session_real_fme` (the full production stack over a real
+  WebSocket — the strongest end-to-end check in the project).
 - **`session.cpp` / `main.cpp`** — reviewed carefully but **not compiled**
   (no Boost available in the sandbox). I found and fixed two real bugs
   during that review that are worth knowing about even though you'll
@@ -130,10 +141,14 @@ end-to-end. To still validate the pieces that matter most:
   protocol). Like `session.cpp` originally was, this is reviewed but not
   compiled by me — see "Testing session.cpp" below.
 
-**Before relying on this**, build it, run it against Boost's compiler
-warnings/sanitizers (`-fsanitize=thread` is worth a run given the
-multi-threaded design), and test against a real IQ source and a real
-`dsd-fme` build.
+**Where verification stands now**: everything above has since been
+built, run, and tested — including under ThreadSanitizer (see the
+concurrency test's TSan target) and against real dsd-fme and real DMR
+RF (see `test_dsd_process` / `test_session_real_fme` /
+`test_dsdcc_decoder` / `test_session_dsdcc`). The remaining genuinely
+untested surface is a live SDR as the IQ source (all RF-derived testing
+uses a captured discriminator recording, FM-remodulated for the
+full-stack tests) and the liquid-dsp demod variant's runtime behavior.
 
 ## Build
 

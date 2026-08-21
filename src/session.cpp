@@ -191,7 +191,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
 #else
     udp_audio_port_ = acquire_udp_port();
     dcfg.input_sample_rate_hz = 48000;
-    dcfg.mode_flag = "d"; // DMR; adjust/expose if you need other modes
+    dcfg.mode_flag = "s"; // dsd-fme's DMR TDMA mode (-fs); "-fd" would be D-STAR
     dcfg.udp_audio_port = udp_audio_port_;
 #endif
 

@@ -1,15 +1,17 @@
 // dsd_process.hpp
 //
 // Manages one dsd-fme child process: feeds it raw discriminator PCM on
-// stdin, reads its textual event log from stdout, and (optionally) listens
-// on a local UDP port for the decoded voice PCM that dsd-fme streams out
-// via its "-U host:port" option.
+// stdin, reads its textual event log from stdout/stderr, and (optionally)
+// listens on a local UDP port for the decoded voice PCM that dsd-fme
+// streams out via its "-o udp:host:port" output.
 //
-// IMPORTANT: dsd-fme's exact command-line flags and stdout log format have
-// changed across versions/forks. The flags below (input from stdin, DMR
-// frame sync, UDP audio output) reflect the common case but you should
-// verify against `dsd-fme -h` for the version you have installed and
-// adjust build_argv() / the event regexes in dsd_process.cpp accordingly.
+// STATUS: verified against real dsd-fme (lwvmobile/dsd-fme, commit
+// 198f0ea) built from source and run on a real DMR capture. The original
+// guessed flags were partly wrong and are fixed here -- see build_argv()
+// in dsd_process.cpp for the verified command line, and DSD-FME
+// VERIFICATION NOTES there for exactly what was checked. Other
+// versions/forks may still differ; `dsd-fme -h` remains the authority
+// for yours.
 //
 // This class is Linux-specific (uses fork/exec/pipe/POSIX sockets).
 
@@ -30,17 +32,32 @@ namespace dsdsrv {
 struct DsdProcessConfig {
     std::string dsd_fme_path = "dsd-fme";
     // Discriminator audio format we'll write to dsd-fme's stdin.
+    // dsd-fme reads stdin ("-i -") as raw S16LE mono at its wav sample
+    // rate, which defaults to 48000 (verified in dsd_audio.c's
+    // openAudioInDevice); 48000 is also what FmDemodulator produces.
     int input_sample_rate_hz = 48000;
-    // DMR frame sync mode. See `dsd-fme -h`: typically "-f d" or similar.
-    std::string mode_flag = "d";
+    // Decoder mode letter, passed as "-f <letter>". VERIFIED against
+    // real dsd-fme: "s" = DMR TDMA BS/MS simplex (the DMR mode), "a" =
+    // auto-detect. The old default here was "d", on the guess that d
+    // meant DMR -- in real dsd-fme "-fd" is D-STAR, so that default
+    // would have silently decoded the wrong protocol.
+    std::string mode_flag = "s";
     // Extra raw args appended verbatim (e.g. {"-T"} for trunking, or
     // {"-C", "451000000"} for a control channel). Kept separate from the
     // fixed flags above so callers don't have to rebuild the base command.
     std::vector<std::string> extra_args;
 
-    // If non-empty, dsd-fme is told to stream decoded voice PCM out via
-    // UDP to 127.0.0.1:<udp_audio_port>, which we then read locally.
-    // 0 = disabled (no audio relay, events only).
+    // If nonzero, dsd-fme is told to stream decoded voice PCM out via
+    // UDP to 127.0.0.1:<udp_audio_port> ("-o udp:127.0.0.1:<port>"),
+    // which we then read locally. 0 = disabled (no audio relay, events
+    // only) -- "-o null" is passed instead, because dsd-fme's default
+    // output is PulseAudio and it EXITS at startup when no Pulse daemon
+    // is reachable (verified; typical for a server).
+    //
+    // Payload is raw PCM, no header. With mode_flag "s" (DMR stereo
+    // mode) real dsd-fme sends 8000 Hz STEREO interleaved int16 -- TDMA
+    // slot 1 on the left channel, slot 2 on the right (640-byte packets
+    // = 20 ms). This is relayed to the client as-is.
     uint16_t udp_audio_port = 0;
 };
 

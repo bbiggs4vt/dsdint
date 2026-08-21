@@ -128,14 +128,10 @@ if(DSD_BUILD_DSDCC_VARIANT)
     target_compile_definitions(dsd-server-dsdcc PRIVATE DSD_USE_DSDCC_BACKEND)
     target_compile_options(dsd-server-dsdcc PRIVATE -Wall -Wextra)
 
-    # Decoder-level test against a real DMR capture. The capture ships
-    # in the DSDcc SOURCE tree (samples/dmr_it_8.dis), not in its
-    # installed artifacts, so point DSDCC_SAMPLES_DIR at a DSDcc source
-    # checkout's samples/ directory to arm the ctest case; without it
-    # the binary still builds and prints SKIPPED when run bare. See
+    # Decoder-level test against a real DMR capture -- see
     # test_dsdcc_decoder.cpp for what it asserts and the ground truth.
-    set(DSDCC_SAMPLES_DIR "" CACHE PATH
-        "Directory containing DSDcc's sample captures (dmr_it_8.dis) to enable test_dsdcc_decoder's ctest case")
+    # (DSDCC_SAMPLES_DIR is declared near the top of this file, next to
+    # DSD_FME_BIN, since the dsd_process test uses the same capture.)
 
     add_executable(test_dsdcc_decoder EXCLUDE_FROM_ALL
       src/dsdcc_decoder.cpp
@@ -230,6 +226,63 @@ set_tests_properties(session_integration_test PROPERTIES
   ENVIRONMENT "TEST_FAKE_DSD_FME_DIR=$<TARGET_FILE_DIR:test-fake-dsd-fme>"
   TIMEOUT 60
 )
+
+# --- Verification test against a REAL dsd-fme binary ---
+# DsdProcess spawning actual dsd-fme (lwvmobile/dsd-fme, built from
+# source) and decoding the same real DMR capture the DSDcc tests use --
+# this is what verified build_argv's command line and classify_line's
+# regexes against reality (see the DSD-FME VERIFICATION NOTES in
+# dsd_process.cpp). Needs no Boost. To arm the ctest case, point
+# DSD_FME_BIN at a built dsd-fme and DSDCC_SAMPLES_DIR (declared below
+# with the DSDcc targets) at a DSDcc source checkout's samples dir;
+# without them the binary builds and prints SKIPPED when run bare.
+set(DSD_FME_BIN "" CACHE FILEPATH
+    "Path to a real dsd-fme binary to enable test_dsd_process's ctest case")
+# The real-capture tests (this one and the DSDcc ones below) all use
+# DSDcc's bundled DMR capture; it ships in the DSDcc SOURCE tree
+# (samples/dmr_it_8.dis), not in its installed artifacts.
+set(DSDCC_SAMPLES_DIR "" CACHE PATH
+    "Directory containing DSDcc's sample captures (dmr_it_8.dis) to enable the real-capture ctest cases")
+
+add_executable(test_dsd_process EXCLUDE_FROM_ALL
+  src/dsd_process.cpp
+  src/test_dsd_process.cpp
+)
+target_include_directories(test_dsd_process PRIVATE src)
+target_link_libraries(test_dsd_process PRIVATE Threads::Threads)
+target_compile_options(test_dsd_process PRIVATE -Wall -Wextra)
+
+if(DSD_FME_BIN AND EXISTS "${DSD_FME_BIN}" AND DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
+  add_test(NAME dsd_process_test
+           COMMAND test_dsd_process "${DSD_FME_BIN}" "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
+  # Paced streaming (~10 ms per 85 ms block) makes the send phase a few
+  # seconds on its own.
+  set_tests_properties(dsd_process_test PROPERTIES TIMEOUT 120)
+endif()
+
+# --- Full-stack test: stock server + REAL dsd-fme over a WebSocket ---
+# test_session's production-configuration twin: same Session/demod/
+# DsdProcess build as dsd-server, but the dsd-fme found on PATH is the
+# real one and the streamed IQ carries a real DMR signal. See
+# test_session_real_fme.cpp. The binary named "dsd-fme" must live in
+# the directory containing DSD_FME_BIN (the test passes that directory
+# via PATH, exercising the same lookup the server uses in production).
+add_executable(test_session_real_fme EXCLUDE_FROM_ALL
+  src/session.cpp
+  src/dsd_process.cpp
+  src/fm_demod.cpp
+  src/test_session_real_fme.cpp
+)
+target_include_directories(test_session_real_fme PRIVATE src ${Boost_INCLUDE_DIRS})
+target_link_libraries(test_session_real_fme PRIVATE Boost::system Threads::Threads)
+target_compile_options(test_session_real_fme PRIVATE -Wall -Wextra)
+
+if(DSD_FME_BIN AND EXISTS "${DSD_FME_BIN}" AND DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
+  get_filename_component(DSD_FME_DIR "${DSD_FME_BIN}" DIRECTORY)
+  add_test(NAME session_real_fme_test
+           COMMAND test_session_real_fme "${DSD_FME_DIR}" "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
+  set_tests_properties(session_real_fme_test PROPERTIES TIMEOUT 180)
+endif()
 
 # --- Concurrency stress test for the same server ---
 # Separate binary from test_session so the simple end-to-end test stays

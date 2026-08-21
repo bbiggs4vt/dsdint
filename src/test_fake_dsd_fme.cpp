@@ -8,8 +8,10 @@
 //
 // Behavior: echoes its argv as the first stdout line (so a test could
 // verify DsdProcess::build_argv() if it wanted to), optionally sends a
-// small fake PCM packet to a UDP port given via -U host:port, and prints
-// a fake event line to stdout every time it reads a chunk from stdin --
+// small fake PCM packet to a UDP port given via "-o udp:host:port" (the
+// real dsd-fme's audio-output syntax, which build_argv now emits), and
+// prints a fake event line to stdout every time it reads a chunk from
+// stdin --
 // enough to exercise DsdProcess's stdin-write / stdout-read / UDP-read
 // plumbing without needing a real DSD binary or a real DMR signal.
 //
@@ -37,13 +39,18 @@ int main(int argc, char** argv) {
     std::printf("ARGS:%s\n", args.c_str());
     std::fflush(stdout);
 
+    // Parse the audio output the way real dsd-fme does: "-o" followed by
+    // "udp:host:port" (or "null" for no audio, which we honor by simply
+    // not sending any).
     int udp_port = -1;
     for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) == "-U" && i + 1 < argc) {
-            std::string hostport = argv[i + 1];
-            auto colon = hostport.find(':');
-            if (colon != std::string::npos) {
-                udp_port = std::atoi(hostport.c_str() + colon + 1);
+        if (std::string(argv[i]) == "-o" && i + 1 < argc) {
+            std::string dev = argv[i + 1];
+            if (dev.rfind("udp:", 0) == 0) {
+                auto last_colon = dev.rfind(':');
+                if (last_colon != std::string::npos && last_colon > 3) {
+                    udp_port = std::atoi(dev.c_str() + last_colon + 1);
+                }
             }
         }
     }

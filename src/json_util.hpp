@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include <cstdio>
 #include <string>
 #include <sstream>
 #include <unordered_map>
@@ -96,7 +97,19 @@ private:
                 case '\n': out += "\\n"; break;
                 case '\r': out += "\\r"; break;
                 case '\t': out += "\\t"; break;
-                default: out += c;
+                default:
+                    // RFC 8259: control characters below 0x20 MUST be
+                    // escaped. This actually happens in practice -- real
+                    // dsd-fme colorizes its log with ANSI sequences, so
+                    // raw event lines contain ESC (0x1b); unescaped, that
+                    // produced invalid JSON the browser side rejects.
+                    if (static_cast<unsigned char>(c) < 0x20) {
+                        char u[8];
+                        std::snprintf(u, sizeof(u), "\\u%04x", c);
+                        out += u;
+                    } else {
+                        out += c;
+                    }
             }
         }
         return out;

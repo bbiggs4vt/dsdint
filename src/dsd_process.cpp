@@ -7,6 +7,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <cctype>
 #include <cstring>
 #include <cerrno>
 #include <regex>
@@ -15,21 +16,82 @@
 
 namespace dsdsrv {
 
+namespace {
+// Removes ANSI escape sequences (CSI "\x1b[...<letter>" -- real dsd-fme
+// colorizes its log with these) plus stray carriage returns, so parsing
+// and the raw_line clients receive see clean text.
+std::string strip_ansi(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        char c = in[i];
+        if (c == '\x1b' && i + 1 < in.size() && in[i + 1] == '[') {
+            i += 2;
+            while (i < in.size() && !std::isalpha(static_cast<unsigned char>(in[i]))) ++i;
+            continue; // also swallows the terminating letter
+        }
+        if (c == '\r') continue;
+        out.push_back(c);
+    }
+    return out;
+}
+} // namespace
+
 DsdProcess::~DsdProcess() { stop(); }
 
+// ---------------------------------------------------------------------
+// DSD-FME VERIFICATION NOTES
+//
+// This backend was originally written without access to dsd-fme; its
+// command line and event parsing were educated guesses flagged as such.
+// It has since been verified against real dsd-fme (lwvmobile/dsd-fme,
+// commit 198f0ea) built from source and fed a real DMR discriminator
+// capture (DSDcc's samples/dmr_it_8.dis). What that established:
+//
+//   - "-i -" (stdin input) works even though `dsd-fme -h` doesn't list
+//     it: openAudioInDevice() in dsd_audio.c opens stdin via libsndfile
+//     as raw S16LE mono at the wav rate (default 48000). Guessed right.
+//   - "-f" + "d" was WRONG for DMR: dsd-fme's -f takes a letter where
+//     'd' means D-STAR. DMR is 's' (TDMA BS/MS simplex; 'a' = auto).
+//   - "-U host:port" was WRONG for audio: real dsd-fme's -U is the
+//     RIGCTL TCP port (sscanf %d would have read "127" out of our
+//     "127.0.0.1:..." and enabled rigctl). Decoded audio out is
+//     "-o udp:host:port" -- raw headerless PCM, 8 kHz, and for the
+//     DMR stereo mode ('s') it is STEREO interleaved (slot1 left,
+//     slot2 right; 640-byte packets = 20 ms).
+//   - With no "-o" at all, dsd-fme defaults to PulseAudio and EXITS at
+//     startup when no Pulse daemon exists ("Connection refused") --
+//     fatal in a server environment, hence the explicit "-o null" when
+//     audio relay is off.
+//   - dsd-fme logs exclusively to STDERR (stdout stays empty), so
+//     start() folding the child's stderr into our stdout pipe is what
+//     makes event reading work at all.
+//   - Real event lines look like:
+//       "20:37:20 Sync: +DMR   slot1  [SLOT2] | Color Code=04 | VC6"
+//       " SLOT 2 TGT=19535 SRC=2222223 Group Call"
+//     with ANSI color sequences embedded (stripped in
+//     stdout_reader_loop before parsing). "TGT=" is why the talkgroup
+//     regex accepts TGT as well as TG, and the bracketed "[SLOT2]" is
+//     why classify_line prefers the bracketed slot marker (the bracket
+//     marks the slot the current burst belongs to; a bare "slot1"
+//     appears in every sync line regardless of which slot is active).
+// ---------------------------------------------------------------------
+
 std::vector<std::string> DsdProcess::build_argv() const {
-    // NOTE: verify these flags against `dsd-fme -h` for your installed
-    // build. This targets the common dsd-fme CLI shape:
-    //   dsd-fme -i - -f d [-U 127.0.0.1:PORT] [extra_args...]
+    // Verified command line (see notes above):
+    //   dsd-fme -i - -f s -o udp:127.0.0.1:PORT [extra_args...]
+    //   dsd-fme -i - -f s -o null               [extra_args...]
     std::vector<std::string> argv;
     argv.push_back(cfg_.dsd_fme_path);
     argv.push_back("-i");
-    argv.push_back("-");            // read raw discriminator audio from stdin
+    argv.push_back("-");            // stdin: raw S16LE mono 48 kHz discriminator audio
     argv.push_back("-f");
-    argv.push_back(cfg_.mode_flag); // e.g. "d" for DMR
+    argv.push_back(cfg_.mode_flag); // "s" = DMR (see DsdProcessConfig)
+    argv.push_back("-o");
     if (cfg_.udp_audio_port != 0) {
-        argv.push_back("-U");
-        argv.push_back("127.0.0.1:" + std::to_string(cfg_.udp_audio_port));
+        argv.push_back("udp:127.0.0.1:" + std::to_string(cfg_.udp_audio_port));
+    } else {
+        argv.push_back("null"); // never let it default to Pulse -- see notes above
     }
     for (const auto& a : cfg_.extra_args) argv.push_back(a);
     return argv;
@@ -206,16 +268,20 @@ void DsdProcess::stdout_reader_loop() {
 
         std::size_t pos;
         while ((pos = buf.find('\n')) != std::string::npos) {
-            std::string line = buf.substr(0, pos);
+            std::string line = strip_ansi(buf.substr(0, pos));
             buf.erase(0, pos + 1);
+            // Skip blank lines too: real dsd-fme's log is full of them
+            // (and of lines that are pure ANSI color churn, which
+            // strip_ansi reduces to empty).
             if (!line.empty() && on_event_) {
                 on_event_(classify_line(line));
             }
         }
     }
     // Flush any trailing partial line on exit.
-    if (!buf.empty() && on_event_) {
-        on_event_(classify_line(buf));
+    std::string tail = strip_ansi(buf);
+    if (!tail.empty() && on_event_) {
+        on_event_(classify_line(tail));
     }
 }
 
@@ -249,8 +315,19 @@ DsdEvent DsdProcess::classify_line(const std::string& line) const {
     ev.raw_line = line;
     ev.kind = "unknown";
 
-    static const std::regex tg_re(R"(TG[:=]?\s*(\d+))", std::regex::icase);
+    // Formats verified against real dsd-fme output (see the DSD-FME
+    // VERIFICATION NOTES above build_argv):
+    //   " SLOT 2 TGT=19535 SRC=2222223 Group Call"
+    //   "20:37:20 Sync: +DMR   slot1  [SLOT2] | Color Code=04 | VC6"
+    // TGT? because real dsd-fme writes "TGT=", not "TG=" (the old
+    // TG-only regex silently never matched a real talkgroup). The
+    // bracketed-slot regex is tried first because sync lines name BOTH
+    // slots ("slot1  [SLOT2]") and the brackets mark the one the
+    // current burst belongs to; matching a bare "slot" first would
+    // always report slot 1.
+    static const std::regex tg_re(R"(TGT?[:=]?\s*(\d+))", std::regex::icase);
     static const std::regex src_re(R"((?:SRC|RID|Source)[:=]?\s*(\d+))", std::regex::icase);
+    static const std::regex slot_bracket_re(R"(\[slot\s*(\d)\])", std::regex::icase);
     static const std::regex slot_re(R"((?:TS|Slot)[:=]?\s*(\d))", std::regex::icase);
     static const std::regex sync_re(R"(sync|no sync|nosync)", std::regex::icase);
     static const std::regex voice_re(R"(voice|ambe)", std::regex::icase);
@@ -258,7 +335,8 @@ DsdEvent DsdProcess::classify_line(const std::string& line) const {
     std::smatch m;
     if (std::regex_search(line, m, tg_re)) ev.talkgroup = m[1].str();
     if (std::regex_search(line, m, src_re)) ev.source_id = m[1].str();
-    if (std::regex_search(line, m, slot_re)) ev.slot = m[1].str();
+    if (std::regex_search(line, m, slot_bracket_re)) ev.slot = m[1].str();
+    else if (std::regex_search(line, m, slot_re)) ev.slot = m[1].str();
 
     if (std::regex_search(line, voice_re)) ev.kind = "voice";
     else if (std::regex_search(line, sync_re)) ev.kind = "sync";
