@@ -176,3 +176,61 @@ set_tests_properties(session_integration_test PROPERTIES
   ENVIRONMENT "TEST_FAKE_DSD_FME_DIR=$<TARGET_FILE_DIR:test-fake-dsd-fme>"
   TIMEOUT 60
 )
+
+# --- Concurrency stress test for the same server ---
+# Separate binary from test_session so the simple end-to-end test stays
+# fast and easy to reason about (see the top of test_session.cpp), while
+# the threading gets hammered here. Same sources, same fake dsd-fme;
+# what differs is the load. Uses its own port, since ctest may run the
+# two cases in parallel.
+add_executable(test_session_concurrency EXCLUDE_FROM_ALL
+  src/session.cpp
+  src/dsd_process.cpp
+  src/fm_demod.cpp
+  src/test_session_concurrency.cpp
+)
+target_include_directories(test_session_concurrency PRIVATE src ${Boost_INCLUDE_DIRS})
+target_link_libraries(test_session_concurrency PRIVATE Boost::system Threads::Threads)
+target_compile_options(test_session_concurrency PRIVATE -Wall -Wextra)
+add_dependencies(test_session_concurrency test-fake-dsd-fme)
+
+# Longer timeout than the integration test: this one spawns dozens of
+# dsd-fme children over its lifetime and deliberately waits out a few
+# short read timeouts.
+add_test(NAME session_concurrency_test COMMAND test_session_concurrency)
+set_tests_properties(session_concurrency_test PROPERTIES
+  ENVIRONMENT "TEST_FAKE_DSD_FME_DIR=$<TARGET_FILE_DIR:test-fake-dsd-fme>"
+  TIMEOUT 180
+)
+
+# --- ThreadSanitizer build of the concurrency test ---
+# Off by default: TSan roughly 5-15x's runtime and needs a compiler that
+# supports it, so it shouldn't be in anyone's default build. But a
+# concurrency test without a race detector mostly proves the server
+# doesn't deadlock -- data races are undefined behavior that typically
+# does nothing visible on x86, so they pass silently. This target is how
+# you actually check for them:
+#
+#   cmake -DDSD_BUILD_TSAN_TESTS=ON -S . -B build
+#   cmake --build build --target test_session_concurrency_tsan
+#   TEST_FAKE_DSD_FME_DIR=<build dir> ./build/test_session_concurrency_tsan
+#
+# -O1 and -g rather than the default Release flags: TSan reports are
+# only useful with frame pointers and line numbers, and -O3 inlines the
+# interesting frames away.
+option(DSD_BUILD_TSAN_TESTS "Also build a ThreadSanitizer version of the concurrency test" OFF)
+
+if(DSD_BUILD_TSAN_TESTS)
+  add_executable(test_session_concurrency_tsan EXCLUDE_FROM_ALL
+    src/session.cpp
+    src/dsd_process.cpp
+    src/fm_demod.cpp
+    src/test_session_concurrency.cpp
+  )
+  target_include_directories(test_session_concurrency_tsan PRIVATE src ${Boost_INCLUDE_DIRS})
+  target_link_libraries(test_session_concurrency_tsan PRIVATE Boost::system Threads::Threads)
+  target_compile_options(test_session_concurrency_tsan PRIVATE
+    -Wall -Wextra -fsanitize=thread -fno-omit-frame-pointer -g -O1)
+  target_link_options(test_session_concurrency_tsan PRIVATE -fsanitize=thread)
+  add_dependencies(test_session_concurrency_tsan test-fake-dsd-fme)
+endif()

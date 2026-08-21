@@ -4,16 +4,47 @@
 #include <iostream>
 #include <cstring>
 #include <random>
+#include <set>
 
 namespace dsdsrv {
 
 namespace {
-// Pick a pseudo-random local UDP port per session for dsd-fme's decoded
-// audio output, to avoid collisions between concurrent client sessions.
-uint16_t random_udp_port() {
+// Allocate a local UDP port per session for dsd-fme's decoded audio
+// output, avoiding collisions between concurrent client sessions -- a
+// collision would mean one session receiving another's audio.
+//
+// Two things about the previous version of this (a bare static mt19937,
+// no lock, no bookkeeping), both found by test_session_concurrency's
+// distinct-ports case:
+//   - Sessions start concurrently on different strand threads, so the
+//     shared RNG state was mutated from several threads at once. That's
+//     a data race, and in practice racing threads handed out IDENTICAL
+//     ports far more often than the birthday math says honest random
+//     draws would (roughly 1 in 5 test runs, vs ~1 in 700 expected).
+//   - Even with the race fixed, random selection without bookkeeping
+//     still collides eventually. Tracking live allocations makes
+//     distinctness a guarantee instead of a probability.
+// stop_pipeline() releases the port when the session's pipeline stops.
+std::mutex g_udp_port_mutex;
+std::set<uint16_t> g_udp_ports_in_use;
+
+uint16_t acquire_udp_port() {
     static std::mt19937 rng(std::random_device{}());
     static std::uniform_int_distribution<int> dist(40000, 59000);
-    return static_cast<uint16_t>(dist(rng));
+    std::lock_guard<std::mutex> lock(g_udp_port_mutex);
+    // The range holds ~19k ports and a session uses one, so in any sane
+    // deployment this terminates almost immediately; it could only spin
+    // if ~19k pipelines were live at once.
+    for (;;) {
+        auto port = static_cast<uint16_t>(dist(rng));
+        if (g_udp_ports_in_use.insert(port).second) return port;
+    }
+}
+
+void release_udp_port(uint16_t port) {
+    if (port == 0) return; // never allocated (e.g. the DSDcc in-process backend)
+    std::lock_guard<std::mutex> lock(g_udp_port_mutex);
+    g_udp_ports_in_use.erase(port);
 }
 } // namespace
 
@@ -83,8 +114,10 @@ void Session::handle_text_message(const std::string& msg) {
             float gain = static_cast<float>(json::get_number(obj, "gain", 26000.0));
             start_pipeline(sample_rate, bw, offset, gain);
         } else if (type == "set_gain") {
+            std::lock_guard<std::mutex> lock(demod_mutex_);
             if (demod_) demod_->set_gain(static_cast<float>(json::get_number(obj, "gain", 26000.0)));
         } else if (type == "set_freq_offset") {
+            std::lock_guard<std::mutex> lock(demod_mutex_);
             if (demod_) demod_->set_freq_offset(json::get_number(obj, "hz", 0.0));
         } else if (type == "stop") {
             stop_pipeline();
@@ -136,7 +169,10 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
     cfg.channel_bandwidth_hz = channel_bw;
     cfg.freq_offset_hz = freq_offset;
     cfg.disc_gain = gain;
-    demod_ = std::make_unique<ActiveFmDemodulator>(cfg);
+    {
+        std::lock_guard<std::mutex> lock(demod_mutex_);
+        demod_ = std::make_unique<ActiveFmDemodulator>(cfg);
+    }
 
     ActiveDsdBackendConfig dcfg;
 #if defined(DSD_USE_DSDCC_BACKEND)
@@ -147,7 +183,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
     // below reports that accurately (0 meaning "not applicable here",
     // not "failed to allocate").
 #else
-    udp_audio_port_ = random_udp_port();
+    udp_audio_port_ = acquire_udp_port();
     dcfg.input_sample_rate_hz = 48000;
     dcfg.mode_flag = "d"; // DMR; adjust/expose if you need other modes
     dcfg.udp_audio_port = udp_audio_port_;
@@ -224,7 +260,14 @@ void Session::stop_pipeline() {
     if (worker_thread_.joinable()) worker_thread_.join();
 
     dsd_.stop();
-    demod_.reset();
+    {
+        // Safe to take here: the worker was joined above, so nothing is
+        // inside process() holding this.
+        std::lock_guard<std::mutex> lock(demod_mutex_);
+        demod_.reset();
+    }
+    release_udp_port(udp_audio_port_);
+    udp_audio_port_ = 0;
 
     {
         std::lock_guard<std::mutex> lock(iq_mutex_);
@@ -245,7 +288,10 @@ void Session::demod_worker_loop() {
         }
 
         pcm_scratch.clear();
-        demod_->process(block.data(), block.size(), pcm_scratch);
+        {
+            std::lock_guard<std::mutex> lock(demod_mutex_);
+            demod_->process(block.data(), block.size(), pcm_scratch);
+        }
         if (!pcm_scratch.empty()) {
             dsd_.write_audio(pcm_scratch.data(), pcm_scratch.size());
         }

@@ -94,6 +94,21 @@ private:
     // writes on ws_.
     beast::flat_buffer read_buffer_;
     std::unique_ptr<ActiveFmDemodulator> demod_;
+    // Guards every use of demod_ -- both the pointer and calls through
+    // it. The demodulator itself documents its setters as only safe
+    // "from the same thread that owns this object", but three threads
+    // genuinely touch it: the connection's strand thread (set_gain/
+    // set_freq_offset from control messages, and reset in
+    // stop_pipeline), the demod worker thread (process()), and
+    // whichever thread drops the last shared_ptr<Session> (~Session ->
+    // stop_pipeline -> reset -- that can be a DsdProcess reader thread,
+    // via a posted callback holding the pointer). The concurrency
+    // test's TSan build confirmed the setter-vs-process() race, and the
+    // reset path is worse than a race: set_gain through a demod_ being
+    // reset concurrently is a use-after-free. Never held while joining
+    // worker_thread_ (see stop_pipeline), so it cannot deadlock with
+    // the worker taking it around process().
+    std::mutex demod_mutex_;
     ActiveDsdBackend dsd_;
     uint16_t udp_audio_port_ = 0; // only meaningful for the DsdProcess (subprocess) backend
 

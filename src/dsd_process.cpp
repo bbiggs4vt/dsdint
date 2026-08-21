@@ -42,8 +42,22 @@ bool DsdProcess::start(const DsdProcessConfig& cfg, EventCallback on_event, Audi
 
     int stdin_pipe[2];  // [0]=read (child), [1]=write (us)
     int stdout_pipe[2]; // [0]=read (us), [1]=write (child)
-    if (pipe(stdin_pipe) != 0) return false;
-    if (pipe(stdout_pipe) != 0) {
+    // O_CLOEXEC matters here, and specifically because there is one
+    // DsdProcess per Session and Sessions start concurrently: a plain
+    // pipe() is inherited by EVERY subsequently-forked child, so
+    // session B's dsd-fme would hold duplicates of session A's pipe
+    // ends. Then closing A's stdin write end in stop() no longer
+    // delivers EOF to A's child (B still holds the write end), and --
+    // worse -- A's stdout pipe never hits EOF either, leaving A's
+    // stdout_reader_loop blocked in read() and stop() deadlocked in
+    // join(), taking A's strand thread with it. The concurrency test's
+    // start/stop churn case reproduced exactly that hang. pipe2() is
+    // atomic, so there's no window for a concurrent fork to slip
+    // through between pipe() and a separate fcntl(FD_CLOEXEC). The
+    // child's own copies are fine: dup2() onto the stdio fd numbers
+    // clears the close-on-exec flag for the duplicates.
+    if (pipe2(stdin_pipe, O_CLOEXEC) != 0) return false;
+    if (pipe2(stdout_pipe, O_CLOEXEC) != 0) {
         close(stdin_pipe[0]); close(stdin_pipe[1]);
         return false;
     }
@@ -52,7 +66,8 @@ bool DsdProcess::start(const DsdProcessConfig& cfg, EventCallback on_event, Audi
     // know it's ready by the time the child starts sending to it.
     udp_fd_ = -1;
     if (cfg_.udp_audio_port != 0) {
-        udp_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
+        // SOCK_CLOEXEC for the same reason as the pipes above.
+        udp_fd_ = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
         if (udp_fd_ >= 0) {
             sockaddr_in addr{};
             addr.sin_family = AF_INET;
@@ -138,6 +153,9 @@ void DsdProcess::stop() {
     }
 
     if (stdin_fd_ >= 0) { close(stdin_fd_); stdin_fd_ = -1; } // EOF -> dsd-fme should exit
+    // shutdown() (not close()!) is what wakes udp_reader_loop out of a
+    // blocked recv(); the fd itself stays open until after the join
+    // below.
     if (udp_fd_ >= 0) { shutdown(udp_fd_, SHUT_RDWR); }
 
     if (child_pid_ > 0) {
@@ -156,11 +174,23 @@ void DsdProcess::stop() {
         }
     }
 
-    if (stdout_fd_ >= 0) { close(stdout_fd_); stdout_fd_ = -1; }
-    if (udp_fd_ >= 0) { close(udp_fd_); udp_fd_ = -1; }
-
+    // Join the reader threads BEFORE closing their fds -- this order is
+    // load-bearing, and the concurrency test's TSan build flagged the
+    // old order (close first, join after) on both fds. Closing an fd a
+    // thread is blocked reading does not wake that thread on Linux, so
+    // close-then-join never sped anything up; what actually ends the
+    // readers is EOF on the child's exit (stdout -- and the O_CLOEXEC
+    // pipes in start() guarantee this process holds the only other
+    // reference, so EOF is prompt) and the shutdown() above (UDP).
+    // Worse, close-first frees the fd number for reuse while the reader
+    // may not have entered read() yet, at which point the reader is
+    // reading someone else's fd -- with concurrent sessions opening
+    // sockets constantly, "someone else" is another session's pipe.
     if (stdout_thread_.joinable()) stdout_thread_.join();
     if (udp_thread_.joinable()) udp_thread_.join();
+
+    if (stdout_fd_ >= 0) { close(stdout_fd_); stdout_fd_ = -1; }
+    if (udp_fd_ >= 0) { close(udp_fd_); udp_fd_ = -1; }
 }
 
 void DsdProcess::stdout_reader_loop() {
