@@ -142,7 +142,10 @@ end-to-end. To still validate the pieces that matter most:
 
 **Where verification stands now**: everything above has since been
 built, run, and tested — including under ThreadSanitizer (see the
-concurrency test's TSan target) and against real dsd-fme and real DMR
+concurrency test's TSan target), under AddressSanitizer + UBSan (build
+with `-DDSD_ENABLE_ASAN=ON` in a dedicated build dir and run ctest; the
+full suite passes with zero reports — no corruption, leaks, or detected
+UB), and against real dsd-fme and real DMR
 RF (see `test_dsd_process` / `test_session_real_fme` /
 `test_dsdcc_decoder` / `test_session_dsdcc`). The remaining genuinely
 untested surface is a live SDR as the IQ source (all RF-derived testing

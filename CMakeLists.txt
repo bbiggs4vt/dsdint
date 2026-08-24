@@ -9,6 +9,32 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 
+# --- AddressSanitizer + UBSan build mode ---
+# Applies to EVERYTHING in the build tree (servers and tests), so use a
+# dedicated build directory:
+#
+#   cmake -DDSD_ENABLE_ASAN=ON -S . -B build-asan
+#   cmake --build build-asan -j"$(nproc)" --target <the test targets>
+#   cd build-asan && UBSAN_OPTIONS=halt_on_error=1 ctest --output-on-failure
+#
+# This is the memory-corruption counterpart to DSD_BUILD_TSAN_TESTS
+# (data races, defined further down; the two sanitizers are mutually
+# incompatible -- don't enable both in one tree). A full-suite run under
+# this mode (ASan + LeakSanitizer + UBSan with halt_on_error) passes
+# 8/8 with zero reports as of the commit that added it; keeping it that
+# way is the point of making the mode reproducible. The -O1 -g appended
+# here overrides the build type's optimization level so sanitizer
+# reports keep usable stacks and line numbers.
+#
+# ctest note: the session tests' read timeouts (3-5 s) have plenty of
+# headroom for ASan's ~2x slowdown, but avoid running the sanitized
+# suite on an otherwise-loaded machine for the same reason.
+option(DSD_ENABLE_ASAN "Build everything with AddressSanitizer + UBSan (use a dedicated build dir)" OFF)
+if(DSD_ENABLE_ASAN)
+  add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -g -O1)
+  add_link_options(-fsanitize=address,undefined)
+endif()
+
 # 1.74 floor so Debian bookworm's stock libboost-dev satisfies it (the
 # Docker image builds on bookworm; see Dockerfile). Everything this
 # project uses from Beast/Asio long predates 1.74, and the full test
@@ -386,6 +412,11 @@ set_tests_properties(session_concurrency_test PROPERTIES
 option(DSD_BUILD_TSAN_TESTS "Also build a ThreadSanitizer version of the concurrency test" OFF)
 
 if(DSD_BUILD_TSAN_TESTS)
+  if(DSD_ENABLE_ASAN)
+    message(FATAL_ERROR "DSD_BUILD_TSAN_TESTS and DSD_ENABLE_ASAN are mutually "
+                        "incompatible (TSan and ASan cannot be linked together); "
+                        "use separate build directories.")
+  endif()
   add_executable(test_session_concurrency_tsan EXCLUDE_FROM_ALL
     src/session.cpp
     src/dsd_process.cpp
