@@ -12,8 +12,12 @@
 //
 //   Client -> Server:
 //     - Text frame, JSON: {"type":"start","sample_rate":2000000,
-//         "channel_bandwidth":12500,"freq_offset":0,"gain":26000}
-//       Starts the demod + dsd-fme pipeline for this connection.
+//         "channel_bandwidth":12500,"freq_offset":0,"gain":26000,
+//         "afc":false}
+//       Starts the demod + dsd-fme pipeline for this connection. "afc"
+//       (default false) enables automatic frequency control: the demod
+//       measures the residual carrier offset in its own discriminator
+//       output and steers the NCO to zero it (see fm_demod.hpp).
 //     - Text frame, JSON: {"type":"set_gain","gain":30000}
 //       Adjusts discriminator gain live.
 //     - Text frame, JSON: {"type":"set_freq_offset","hz":1500}
@@ -76,7 +80,7 @@ private:
     void handle_text_message(const std::string& msg);
     void handle_binary_message(const uint8_t* data, std::size_t len);
 
-    void start_pipeline(double sample_rate, double channel_bw, double freq_offset, float gain);
+    void start_pipeline(double sample_rate, double channel_bw, double freq_offset, float gain, bool afc);
     void stop_pipeline();
 
     // Thread-safe send of a text/binary frame; queues if a write is

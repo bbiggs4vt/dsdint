@@ -44,9 +44,29 @@ struct FmDemodConfig {
     double input_sample_rate_hz = 2'000'000.0; // rate of incoming IQ
     double output_sample_rate_hz = 48'000.0;   // rate DSD-FME expects
     double channel_bandwidth_hz = 12'500.0;    // DMR channel width
-    double freq_offset_hz = 0.0;               // NCO shift applied before filtering
+    // Where the channel of interest sits in the incoming IQ, in Hz:
+    // positive means the channel is ABOVE 0 Hz and the NCO mixes it down
+    // to baseband. (This sign convention is shared with
+    // FmDemodulatorLiquid and pinned by test_afc.cpp -- the two
+    // implementations historically disagreed, see that test.)
+    double freq_offset_hz = 0.0;
     float disc_gain = 26000.0f;                // discriminator -> PCM scale, tune empirically
     int fir_taps = 63;                         // channel filter length (odd)
+
+    // --- AFC (automatic frequency control) ---
+    // When enabled, the demod measures the DC component of its own
+    // discriminator output -- which IS the residual carrier offset, in
+    // disguise -- and steers the NCO to zero it. This corrects SDR
+    // reference (ppm) error and slow drift without the client having to
+    // know its dongle's calibration; the client-supplied freq_offset_hz
+    // remains the starting point the correction is applied on top of.
+    // The update is gated on the discriminator variance so that
+    // no-signal noise (whose phase is random and would random-walk the
+    // NCO) never moves the correction. See afc_update() in fm_demod.cpp
+    // for the loop math and test_afc.cpp for measured behavior.
+    bool afc_enabled = false;
+    double afc_time_constant_s = 0.25;   // loop time constant; lock in ~4x this
+    double afc_max_correction_hz = 5000.0; // hard clamp on |correction|
 };
 
 // Streaming FM demodulator. Feed it IQ blocks via process(); it appends
@@ -62,22 +82,33 @@ public:
     void process(const cf32* in, std::size_t n, std::vector<int16_t>& out);
 
     // Reconfigure gain / offset at runtime (safe to call between process()
-    // calls from the same thread that owns this object).
+    // calls from the same thread that owns this object; session.cpp
+    // serializes these against process() with its demod mutex).
     void set_gain(float g) { cfg_.disc_gain = g; }
+    // Sets a new base offset AND resets any accumulated AFC correction:
+    // an explicit retune is a statement of new truth, so stale
+    // correction from the old tuning must not carry over.
     void set_freq_offset(double hz);
 
     const FmDemodConfig& config() const { return cfg_; }
     int decimation_factor() const { return decim_; }
     double decimated_rate_hz() const { return cfg_.input_sample_rate_hz / decim_; }
 
+    // Current AFC correction in Hz (0 when AFC is disabled or not yet
+    // locked). The effective NCO frequency is freq_offset_hz + this.
+    double afc_correction_hz() const { return afc_correction_hz_; }
+
 private:
     void design_lowpass();
+    void apply_nco_frequency();
+    void afc_update();
     void mix_and_filter_decimate(const cf32* in, std::size_t n);
     void demod_block();
     void resample_to_output();
 
     FmDemodConfig cfg_;
     int decim_ = 1;
+    double afc_correction_hz_ = 0.0;
 
     // NCO state for optional frequency shifting
     double nco_phase_ = 0.0;

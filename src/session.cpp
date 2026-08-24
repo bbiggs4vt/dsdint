@@ -118,7 +118,8 @@ void Session::handle_text_message(const std::string& msg) {
             double bw = json::get_number(obj, "channel_bandwidth", 12'500.0);
             double offset = json::get_number(obj, "freq_offset", 0.0);
             float gain = static_cast<float>(json::get_number(obj, "gain", 26000.0));
-            start_pipeline(sample_rate, bw, offset, gain);
+            bool afc = json::get_bool(obj, "afc", false);
+            start_pipeline(sample_rate, bw, offset, gain, afc);
         } else if (type == "set_gain") {
             std::lock_guard<std::mutex> lock(demod_mutex_);
             if (demod_) demod_->set_gain(static_cast<float>(json::get_number(obj, "gain", 26000.0)));
@@ -166,7 +167,7 @@ void Session::handle_binary_message(const uint8_t* data, std::size_t len) {
     iq_cv_.notify_one();
 }
 
-void Session::start_pipeline(double sample_rate, double channel_bw, double freq_offset, float gain) {
+void Session::start_pipeline(double sample_rate, double channel_bw, double freq_offset, float gain, bool afc) {
     stop_pipeline(); // clean slate if already running
 
     FmDemodConfig cfg;
@@ -175,6 +176,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
     cfg.channel_bandwidth_hz = channel_bw;
     cfg.freq_offset_hz = freq_offset;
     cfg.disc_gain = gain;
+    cfg.afc_enabled = afc;
     {
         std::lock_guard<std::mutex> lock(demod_mutex_);
         demod_ = std::make_unique<ActiveFmDemodulator>(cfg);

@@ -54,7 +54,20 @@ FmDemodulator::FmDemodulator(const FmDemodConfig& cfg) : cfg_(cfg) {
 
 void FmDemodulator::set_freq_offset(double hz) {
     cfg_.freq_offset_hz = hz;
-    nco_incr_ = 2.0 * kPi * hz / cfg_.input_sample_rate_hz;
+    afc_correction_hz_ = 0.0; // explicit retune invalidates old correction
+    apply_nco_frequency();
+}
+
+void FmDemodulator::apply_nco_frequency() {
+    // NEGATIVE increment: a channel at +f is brought to baseband by
+    // multiplying with e^{-j2*pi*f*t}. The original code used a positive
+    // increment, which silently meant the OPPOSITE sign convention from
+    // FmDemodulatorLiquid (whose nco mix-down matched the documented
+    // "channel sits at +freq_offset" meaning) -- the same start message
+    // with a nonzero offset behaved oppositely between dsd-server and
+    // dsd-server-liquid. Pinned by test_afc.cpp for both classes.
+    const double effective_hz = cfg_.freq_offset_hz + afc_correction_hz_;
+    nco_incr_ = -2.0 * kPi * effective_hz / cfg_.input_sample_rate_hz;
 }
 
 void FmDemodulator::design_lowpass() {
@@ -68,6 +81,7 @@ void FmDemodulator::design_lowpass() {
 void FmDemodulator::process(const cf32* in, std::size_t n, std::vector<int16_t>& out) {
     mix_and_filter_decimate(in, n);
     demod_block();
+    if (cfg_.afc_enabled) afc_update(); // reads disc_out_ at the decimated rate
     resample_to_output();
 
     out.reserve(out.size() + disc_out_.size());
@@ -136,6 +150,54 @@ void FmDemodulator::demod_block() {
         disc_out_.push_back(angle);
         last_sample_ = s;
     }
+}
+
+void FmDemodulator::afc_update() {
+    // The discriminator output is instantaneous frequency: each sample
+    // is 2*pi*f_inst/decimated_rate radians. Its mean over a block is
+    // therefore the residual carrier offset -- the quantity the NCO
+    // failed to remove -- and its variance separates signal from
+    // no-signal noise:
+    //
+    //   DMR 4FSK symbols sit at +/-648 and +/-1944 Hz, so a real signal
+    //   block has a frequency std deviation of ~1.5 kHz. Noise-only
+    //   input has near-uniform random phase steps: std ~ fs/(2*pi*sqrt(3))
+    //   which is ~13.8 kHz even at a 48 kHz discriminator rate. The
+    //   variance gate below sits between the two (std 5 kHz), so noise
+    //   blocks never move the correction -- without the gate, AFC would
+    //   random-walk the NCO whenever the channel goes quiet.
+    //
+    // The update is a plain first-order integrator: correction +=
+    // g * residual, with g = block_duration / time_constant (capped for
+    // stability with very large blocks). Since the residual is measured
+    // AFTER the correction is applied, this is negative feedback and
+    // converges with time constant afc_time_constant_s.
+    const std::size_t n = disc_out_.size();
+    if (n < 32) return; // too short to estimate anything
+
+    const double fs = decimated_rate_hz();
+    const double rad_to_hz = fs / (2.0 * kPi);
+    double sum = 0.0, sum2 = 0.0;
+    for (float v : disc_out_) { sum += v; sum2 += static_cast<double>(v) * v; }
+    const double mean_rad = sum / n;
+    const double var_rad = sum2 / n - mean_rad * mean_rad;
+
+    const double mean_hz = mean_rad * rad_to_hz;
+    const double var_hz2 = var_rad * rad_to_hz * rad_to_hz;
+
+    constexpr double kSignalVarGateHz2 = 25.0e6; // (5 kHz)^2 -- see above
+    if (var_hz2 > kSignalVarGateHz2) return;     // no signal: hold
+
+    double g = (n / fs) / cfg_.afc_time_constant_s;
+    if (g > 0.5) g = 0.5; // stability cap for blocks comparable to the time constant
+
+    afc_correction_hz_ += g * mean_hz;
+    if (afc_correction_hz_ > cfg_.afc_max_correction_hz)
+        afc_correction_hz_ = cfg_.afc_max_correction_hz;
+    if (afc_correction_hz_ < -cfg_.afc_max_correction_hz)
+        afc_correction_hz_ = -cfg_.afc_max_correction_hz;
+
+    apply_nco_frequency();
 }
 
 void FmDemodulator::resample_to_output() {

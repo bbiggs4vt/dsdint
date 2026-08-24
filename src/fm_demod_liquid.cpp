@@ -68,8 +68,8 @@ FmDemodulatorLiquid::FmDemodulatorLiquid(const FmDemodConfig& cfg) : cfg_(cfg) {
     // anyway. It's more of a "get this roughly right and let disc_gain
     // do the fine-tuning" parameter than a hard requirement.
     const double assumed_deviation_hz = 2000.0;
-    const float kf = static_cast<float>(assumed_deviation_hz / cfg_.output_sample_rate_hz);
-    demod_ = freqdem_create(kf);
+    kf_ = static_cast<float>(assumed_deviation_hz / cfg_.output_sample_rate_hz);
+    demod_ = freqdem_create(kf_);
 }
 
 FmDemodulatorLiquid::~FmDemodulatorLiquid() {
@@ -80,10 +80,54 @@ FmDemodulatorLiquid::~FmDemodulatorLiquid() {
 
 void FmDemodulatorLiquid::set_freq_offset(double hz) {
     cfg_.freq_offset_hz = hz;
+    afc_correction_hz_ = 0.0; // explicit retune invalidates old correction
+    apply_nco_frequency();
+}
+
+void FmDemodulatorLiquid::apply_nco_frequency() {
+    // nco_crcf_mix_block_down multiplies by e^{-j\theta}, so a positive
+    // frequency here brings a channel at +f down to baseband -- the
+    // documented freq_offset convention (and, since the sign fix in
+    // fm_demod.cpp, the same one FmDemodulator implements).
     if (nco_) {
-        const double radians_per_sample = 2.0 * kPi * hz / cfg_.input_sample_rate_hz;
+        const double effective_hz = cfg_.freq_offset_hz + afc_correction_hz_;
+        const double radians_per_sample = 2.0 * kPi * effective_hz / cfg_.input_sample_rate_hz;
         nco_crcf_set_frequency(nco_, static_cast<float>(radians_per_sample));
     }
+}
+
+void FmDemodulatorLiquid::afc_update() {
+    // Same loop as FmDemodulator::afc_update (see the full derivation
+    // there); the only difference is units. freqdem's output m relates
+    // to instantaneous frequency as f_inst = m * kf * fs (its output is
+    // normalized so |m| = 1 at the assumed peak deviation), so the
+    // conversion to Hz goes through kf_ rather than 2*pi.
+    const std::size_t n = disc_out_.size();
+    if (n < 32) return;
+
+    const double fs = cfg_.output_sample_rate_hz; // freqdem runs post-resample
+    const double m_to_hz = static_cast<double>(kf_) * fs;
+    double sum = 0.0, sum2 = 0.0;
+    for (float v : disc_out_) { sum += v; sum2 += static_cast<double>(v) * v; }
+    const double mean_m = sum / n;
+    const double var_m = sum2 / n - mean_m * mean_m;
+
+    const double mean_hz = mean_m * m_to_hz;
+    const double var_hz2 = var_m * m_to_hz * m_to_hz;
+
+    constexpr double kSignalVarGateHz2 = 25.0e6; // (5 kHz)^2, same gate as fm_demod.cpp
+    if (var_hz2 > kSignalVarGateHz2) return;
+
+    double g = (n / fs) / cfg_.afc_time_constant_s;
+    if (g > 0.5) g = 0.5;
+
+    afc_correction_hz_ += g * mean_hz;
+    if (afc_correction_hz_ > cfg_.afc_max_correction_hz)
+        afc_correction_hz_ = cfg_.afc_max_correction_hz;
+    if (afc_correction_hz_ < -cfg_.afc_max_correction_hz)
+        afc_correction_hz_ = -cfg_.afc_max_correction_hz;
+
+    apply_nco_frequency();
 }
 
 void FmDemodulatorLiquid::process(const cf32* in, std::size_t n, std::vector<int16_t>& out) {
@@ -96,7 +140,7 @@ void FmDemodulatorLiquid::process(const cf32* in, std::size_t n, std::vector<int
     // dot-product kernels are expected to matter most at higher session
     // counts (see the architecture discussion in-chat for the reasoning).
     mixed_.resize(n);
-    if (cfg_.freq_offset_hz != 0.0) {
+    if (cfg_.freq_offset_hz + afc_correction_hz_ != 0.0) {
         // reinterpret_cast between std::complex<float> and liquid's
         // liquid_float_complex (a C99 `float complex`) relies on the
         // standard-guaranteed layout compatibility of std::complex<float>
@@ -139,6 +183,8 @@ void FmDemodulatorLiquid::process(const cf32* in, std::size_t n, std::vector<int
             ny,
             disc_out_.data());
     }
+
+    if (cfg_.afc_enabled) afc_update();
 
     // 4) Gain scale + clip to int16. Same convention as fm_demod.cpp,
     // but note freqdem's output is already normalized to roughly ±1.0 at

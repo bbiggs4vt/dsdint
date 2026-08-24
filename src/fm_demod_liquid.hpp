@@ -47,12 +47,24 @@ public:
     void process(const cf32* in, std::size_t n, std::vector<int16_t>& out);
 
     void set_gain(float g) { cfg_.disc_gain = g; }
+    // Resets any accumulated AFC correction, same as FmDemodulator.
     void set_freq_offset(double hz);
 
     const FmDemodConfig& config() const { return cfg_; }
 
+    // Current AFC correction in Hz; see fm_demod.hpp's AFC notes -- the
+    // feature is implemented identically here (the measurement source
+    // differs: freqdem's output is normalized to the assumed deviation
+    // rather than raw radians, see afc_update()).
+    double afc_correction_hz() const { return afc_correction_hz_; }
+
 private:
+    void apply_nco_frequency();
+    void afc_update();
+
     FmDemodConfig cfg_;
+    double afc_correction_hz_ = 0.0;
+    float kf_ = 0.0f; // freqdem modulation index, kept for AFC's unit conversion
 
     nco_crcf nco_ = nullptr;         // optional frequency shift (input rate)
     msresamp_crcf resamp_ = nullptr; // channel filter + resample, input rate -> output_sample_rate_hz

@@ -26,10 +26,28 @@ back to the defaults shown (see `handle_text_message` in `session.cpp`).
 
 | type | fields | effect |
 |---|---|---|
-| `start` | `sample_rate` (default 2000000), `channel_bandwidth` (12500), `freq_offset` (0), `gain` (26000) | Builds the demod + DSD pipeline. If a pipeline is already running it is stopped and rebuilt (clean restart). Replies with `started` on success, `error` on failure. |
+| `start` | `sample_rate` (default 2000000), `channel_bandwidth` (12500), `freq_offset` (0), `gain` (26000), `afc` (false) | Builds the demod + DSD pipeline. If a pipeline is already running it is stopped and rebuilt (clean restart). Replies with `started` on success, `error` on failure. |
 | `set_gain` | `gain` (26000) | Live-adjusts discriminator gain. No reply. Ignored (silently) if no pipeline is running. |
-| `set_freq_offset` | `hz` (0) | Live-adjusts the NCO shift. No reply. Ignored if no pipeline is running. |
+| `set_freq_offset` | `hz` (0) | Live-adjusts the NCO shift. No reply. Ignored if no pipeline is running. Also resets any accumulated AFC correction (an explicit retune is a statement of new truth). |
 | `stop` | — | Tears down the pipeline (kills the dsd-fme child / destroys the decoder). No reply. The WebSocket stays open; a new `start` is accepted afterwards. |
+
+`freq_offset` / `hz` sign convention: **positive means the channel of
+interest sits above 0 Hz in your IQ**, and the server mixes it down to
+baseband. (Before AFC was added, the two demod implementations disagreed
+on this sign — the hand-rolled demod had it inverted relative to the
+liquid variant; it is now unified as stated and pinned by
+`tests/test_afc.cpp`.)
+
+`afc`: when `true`, the demod continuously measures the residual carrier
+offset in its own discriminator output and steers the NCO to remove it —
+correcting SDR reference (ppm) error and slow drift on top of whatever
+`freq_offset` the client supplied. Measured behavior (see
+`tests/test_afc.cpp` and the README): locks a static error of up to
+~4 kHz in 0.3–1.1 s, tracks drift up to ~250 Hz/s with under ~250 Hz of
+residual, holds still on no-signal noise (variance-gated), and is
+clamped to ±5 kHz of correction. With AFC on, a signal mis-tuned by
+3 kHz — which decodes only partially or not at all otherwise — decodes
+in full.
 
 Anything else — an unknown `type`, or a text frame that doesn't parse as
 a flat JSON object — gets an `error` reply (see below); the connection

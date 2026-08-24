@@ -197,4 +197,14 @@ inline double get_number(const std::unordered_map<std::string, Value>& obj,
     return def;
 }
 
+inline bool get_bool(const std::unordered_map<std::string, Value>& obj,
+                     const std::string& key, bool def = false) {
+    auto it = obj.find(key);
+    if (it == obj.end()) return def;
+    if (auto p = std::get_if<bool>(&it->second)) return *p;
+    // Tolerate 0/1 numbers for clients that don't emit real booleans.
+    if (auto p = std::get_if<double>(&it->second)) return *p != 0.0;
+    return def;
+}
+
 } // namespace dsdsrv::json

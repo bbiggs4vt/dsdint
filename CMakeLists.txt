@@ -30,6 +30,16 @@ target_compile_options(dsd-server PRIVATE -Wall -Wextra)
 add_executable(test_fm_demod EXCLUDE_FROM_ALL src/fm_demod.cpp tests/test_fm_demod.cpp)
 target_include_directories(test_fm_demod PRIVATE src)
 
+# AFC + freq_offset sign-convention tests (tests/test_afc.cpp). Core
+# cases are synthetic-tone only, no external deps. The liquid and DSDcc
+# variant blocks below add their sections to this target when those
+# libraries are found; the ctest case itself is registered at the END of
+# this file so those blocks can hand it the real DMR capture path.
+add_executable(test_afc EXCLUDE_FROM_ALL tests/test_afc.cpp src/fm_demod.cpp)
+target_include_directories(test_afc PRIVATE src)
+target_link_libraries(test_afc PRIVATE m)
+target_compile_options(test_afc PRIVATE -Wall -Wextra)
+
 # Head-to-head performance comparison of the demod backends. Always
 # buildable against the hand-rolled implementation alone; liquid-dsp
 # support is layered on below (once we know whether liquid was found)
@@ -71,6 +81,12 @@ if(DSD_BUILD_LIQUID_VARIANT)
     )
     target_include_directories(test_fm_demod_liquid PRIVATE src ${LIQUID_INCLUDE_DIR})
     target_link_libraries(test_fm_demod_liquid PRIVATE ${LIQUID_LIBRARY} m)
+
+    # Run the AFC test cases against the liquid demod too.
+    target_sources(test_afc PRIVATE src/fm_demod_liquid.cpp)
+    target_include_directories(test_afc PRIVATE ${LIQUID_INCLUDE_DIR})
+    target_link_libraries(test_afc PRIVATE ${LIQUID_LIBRARY})
+    target_compile_definitions(test_afc PRIVATE DSD_AFC_TEST_HAVE_LIQUID)
 
     # Layer liquid-dsp support onto the always-built demod_benchmark
     # target (defined earlier, alongside test_fm_demod) now that we know
@@ -179,6 +195,18 @@ if(DSD_BUILD_DSDCC_VARIANT)
       # Streaming is deliberately paced (~10 ms per 85 ms block), so the
       # send phase alone takes a few seconds; leave generous headroom.
       set_tests_properties(session_dsdcc_test PROPERTIES TIMEOUT 180)
+    endif()
+
+    # Give the AFC test its real-capture rescue case (see test_afc.cpp).
+    target_sources(test_afc PRIVATE src/dsdcc_decoder.cpp)
+    target_include_directories(test_afc PRIVATE ${DSDCC_INCLUDE_DIR})
+    target_link_libraries(test_afc PRIVATE ${DSDCC_LIBRARY})
+    if(MBE_LIBRARY)
+      target_link_libraries(test_afc PRIVATE ${MBE_LIBRARY})
+    endif()
+    target_compile_definitions(test_afc PRIVATE DSD_AFC_TEST_HAVE_DSDCC)
+    if(DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
+      set(AFC_TEST_CAPTURE "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
     endif()
 
     # Real-signal verification of the liquid demod: modulates the same
@@ -371,3 +399,8 @@ if(DSD_BUILD_TSAN_TESTS)
   target_link_options(test_session_concurrency_tsan PRIVATE -fsanitize=thread)
   add_dependencies(test_session_concurrency_tsan test-fake-dsd-fme)
 endif()
+
+# Registered last so the variant blocks above could optionally hand the
+# AFC test the real DMR capture path (empty = core tone cases only).
+add_test(NAME afc_test COMMAND test_afc ${AFC_TEST_CAPTURE})
+set_tests_properties(afc_test PROPERTIES TIMEOUT 120)

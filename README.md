@@ -478,7 +478,7 @@ the binary audio formats. The tables below are the quick summary.
 
 | Frame | Payload | Purpose |
 |---|---|---|
-| text | `{"type":"start","sample_rate":2000000,"channel_bandwidth":12500,"freq_offset":0,"gain":26000}` | Start the demod + dsd-fme pipeline for this connection. `sample_rate` is your IQ rate in Hz. `freq_offset` shifts the channel to baseband if it isn't already centered at 0 Hz in your IQ stream. `gain` scales discriminator output into PCM range — see Tuning below. |
+| text | `{"type":"start","sample_rate":2000000,"channel_bandwidth":12500,"freq_offset":0,"gain":26000,"afc":false}` | Start the demod + dsd-fme pipeline for this connection. `sample_rate` is your IQ rate in Hz. `freq_offset` (positive = channel sits above 0 Hz in your IQ) shifts the channel to baseband. `afc:true` enables automatic frequency control — the server then corrects residual ppm error/drift itself (locks up to ~4 kHz of error in about a second; see PROTOCOL.md). `gain` scales discriminator output into PCM range — see Tuning below. |
 | text | `{"type":"set_gain","gain":30000}` | Adjust discriminator gain live. |
 | text | `{"type":"set_freq_offset","hz":1500}` | Adjust the NCO shift live. |
 | text | `{"type":"stop"}` | Stop the pipeline (connection stays open). |
