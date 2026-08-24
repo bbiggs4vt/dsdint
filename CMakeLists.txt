@@ -23,7 +23,7 @@ target_link_libraries(dsd-server PRIVATE Boost::system Threads::Threads)
 target_compile_options(dsd-server PRIVATE -Wall -Wextra)
 
 # Standalone sanity test for the DSP core (no Boost/network dependency).
-add_executable(test_fm_demod EXCLUDE_FROM_ALL src/fm_demod.cpp src/test_fm_demod.cpp)
+add_executable(test_fm_demod EXCLUDE_FROM_ALL src/fm_demod.cpp tests/test_fm_demod.cpp)
 target_include_directories(test_fm_demod PRIVATE src)
 
 # Head-to-head performance comparison of the demod backends. Always
@@ -63,7 +63,7 @@ if(DSD_BUILD_LIQUID_VARIANT)
 
     add_executable(test_fm_demod_liquid EXCLUDE_FROM_ALL
       src/fm_demod_liquid.cpp
-      src/test_fm_demod_liquid.cpp
+      tests/test_fm_demod_liquid.cpp
     )
     target_include_directories(test_fm_demod_liquid PRIVATE src ${LIQUID_INCLUDE_DIR})
     target_link_libraries(test_fm_demod_liquid PRIVATE ${LIQUID_LIBRARY} m)
@@ -135,7 +135,7 @@ if(DSD_BUILD_DSDCC_VARIANT)
 
     add_executable(test_dsdcc_decoder EXCLUDE_FROM_ALL
       src/dsdcc_decoder.cpp
-      src/test_dsdcc_decoder.cpp
+      tests/test_dsdcc_decoder.cpp
     )
     target_include_directories(test_dsdcc_decoder PRIVATE src ${DSDCC_INCLUDE_DIR})
     target_link_libraries(test_dsdcc_decoder PRIVATE ${DSDCC_LIBRARY})
@@ -159,7 +159,7 @@ if(DSD_BUILD_DSDCC_VARIANT)
       src/session.cpp
       src/fm_demod.cpp
       src/dsdcc_decoder.cpp
-      src/test_session_dsdcc.cpp
+      tests/test_session_dsdcc.cpp
     )
     target_include_directories(test_session_dsdcc PRIVATE src ${Boost_INCLUDE_DIRS} ${DSDCC_INCLUDE_DIR})
     target_link_libraries(test_session_dsdcc PRIVATE Boost::system Threads::Threads ${DSDCC_LIBRARY})
@@ -187,7 +187,7 @@ if(DSD_BUILD_DSDCC_VARIANT)
       add_executable(test_fm_demod_liquid_real EXCLUDE_FROM_ALL
         src/fm_demod_liquid.cpp
         src/dsdcc_decoder.cpp
-        src/test_fm_demod_liquid_real.cpp
+        tests/test_fm_demod_liquid_real.cpp
       )
       target_include_directories(test_fm_demod_liquid_real PRIVATE src ${LIQUID_INCLUDE_DIR} ${DSDCC_INCLUDE_DIR})
       target_link_libraries(test_fm_demod_liquid_real PRIVATE ${LIQUID_LIBRARY} ${DSDCC_LIBRARY} m)
@@ -218,7 +218,7 @@ endif()
 # for exactly what this does and doesn't verify.
 enable_testing()
 
-add_executable(test-fake-dsd-fme EXCLUDE_FROM_ALL src/test_fake_dsd_fme.cpp)
+add_executable(test-fake-dsd-fme EXCLUDE_FROM_ALL tests/test_fake_dsd_fme.cpp)
 
 # test_session.cpp locates its fake DSD backend the same way the real
 # Session does: DsdProcessConfig::dsd_fme_path defaults to the literal
@@ -240,7 +240,7 @@ add_executable(test_session EXCLUDE_FROM_ALL
   src/session.cpp
   src/dsd_process.cpp
   src/fm_demod.cpp
-  src/test_session.cpp
+  tests/test_session.cpp
 )
 target_include_directories(test_session PRIVATE src ${Boost_INCLUDE_DIRS})
 target_link_libraries(test_session PRIVATE Boost::system Threads::Threads)
@@ -272,7 +272,7 @@ set(DSDCC_SAMPLES_DIR "" CACHE PATH
 
 add_executable(test_dsd_process EXCLUDE_FROM_ALL
   src/dsd_process.cpp
-  src/test_dsd_process.cpp
+  tests/test_dsd_process.cpp
 )
 target_include_directories(test_dsd_process PRIVATE src)
 target_link_libraries(test_dsd_process PRIVATE Threads::Threads)
@@ -297,7 +297,7 @@ add_executable(test_session_real_fme EXCLUDE_FROM_ALL
   src/session.cpp
   src/dsd_process.cpp
   src/fm_demod.cpp
-  src/test_session_real_fme.cpp
+  tests/test_session_real_fme.cpp
 )
 target_include_directories(test_session_real_fme PRIVATE src ${Boost_INCLUDE_DIRS})
 target_link_libraries(test_session_real_fme PRIVATE Boost::system Threads::Threads)
@@ -320,7 +320,7 @@ add_executable(test_session_concurrency EXCLUDE_FROM_ALL
   src/session.cpp
   src/dsd_process.cpp
   src/fm_demod.cpp
-  src/test_session_concurrency.cpp
+  tests/test_session_concurrency.cpp
 )
 target_include_directories(test_session_concurrency PRIVATE src ${Boost_INCLUDE_DIRS})
 target_link_libraries(test_session_concurrency PRIVATE Boost::system Threads::Threads)
@@ -358,7 +358,7 @@ if(DSD_BUILD_TSAN_TESTS)
     src/session.cpp
     src/dsd_process.cpp
     src/fm_demod.cpp
-    src/test_session_concurrency.cpp
+    tests/test_session_concurrency.cpp
   )
   target_include_directories(test_session_concurrency_tsan PRIVATE src ${Boost_INCLUDE_DIRS})
   target_link_libraries(test_session_concurrency_tsan PRIVATE Boost::system Threads::Threads)

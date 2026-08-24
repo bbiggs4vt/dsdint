@@ -156,12 +156,21 @@ void test_malformed_binary_frame_gets_error_after_start() {
     std::vector<uint8_t> bad_frame(7, 0);
     check(client.send_binary(bad_frame), "sends a malformed-length binary frame");
 
-    std::string resp;
-    check(client.read(resp, is_text), "receives a response");
-    if (is_text) {
+    // Read until the error frame, skipping anything else. The skip is
+    // load-bearing, not defensive: this test started a pipeline, so the
+    // fake dsd-fme's "ARGS:..." banner becomes an event frame that
+    // RACES the error reply -- the error is usually queued first, but
+    // not always, and reading exactly one frame here failed
+    // intermittently (roughly 1 in 30 suite runs) when the banner won.
+    bool got_error = false;
+    for (int i = 0; i < 10 && !got_error; ++i) {
+        std::string resp;
+        if (!client.read(resp, is_text)) break;
+        if (!is_text) continue;
         auto obj = json::parse_flat_object(resp);
-        check(json::get_string(obj, "type") == "error", "response type is \"error\"");
+        if (json::get_string(obj, "type") == "error") got_error = true;
     }
+    check(got_error, "receives an \"error\" response");
 
     client.close();
 }

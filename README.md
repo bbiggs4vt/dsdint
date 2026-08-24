@@ -79,7 +79,7 @@ could not install Boost or compile/run the actual WebSocket server
 end-to-end. To still validate the pieces that matter most:
 
 - **`fm_demod.cpp`** — compiled standalone and run against a synthetic
-  FM-modulated tone (see `src/test_fm_demod.cpp`). Confirms the streaming
+  FM-modulated tone (see `tests/test_fm_demod.cpp`). Confirms the streaming
   block/history-carry logic doesn't crash across chunk boundaries and
   that the recovered discriminator magnitude lands in the theoretically
   expected range for a known injected deviation. This is a sanity check,
