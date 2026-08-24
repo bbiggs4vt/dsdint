@@ -1,0 +1,8 @@
+# Keep the build context to sources only — the Dockerfile copies
+# CMakeLists.txt, src/, and tests/ explicitly, but a small context also
+# makes builds faster and keeps host build junk from busting the cache.
+.git
+build/
+build-*/
+cmake-build-*/
+*.patch

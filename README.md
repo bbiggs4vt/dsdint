@@ -151,7 +151,27 @@ full-stack tests).
 
 ## Build
 
-Dependencies: a C++17 compiler, CMake ≥ 3.16, Boost ≥ 1.75 (headers +
+### Docker (Debian bookworm)
+
+The provided `Dockerfile` builds everything — including the three DSP
+dependencies Debian doesn't package (mbelib, DSDcc, dsd-fme, pinned to
+the commits the backends were verified against) — and produces a slim
+runtime image containing both server variants plus the real dsd-fme:
+
+```bash
+docker build -t dsd-server .
+docker run --rm -p 8765:8765 dsd-server                     # subprocess backend (default)
+docker run --rm -p 8765:8765 dsd-server dsd-server-dsdcc 0.0.0.0 8765 4   # in-process DSDcc backend
+```
+
+`docker build --target test .` additionally runs the entire ctest suite
+(including the real-capture tests against the just-built dsd-fme and
+DSDcc) inside the image and fails the build if anything fails — usable
+as CI.
+
+### Native
+
+Dependencies: a C++17 compiler, CMake ≥ 3.16, Boost ≥ 1.74 (headers +
 `boost_system`), and `dsd-fme` built/installed separately
 (https://github.com/lwvmobile/dsd-fme). liquid-dsp
 (https://github.com/jgaeddert/liquid-dsp) is optional — see below.

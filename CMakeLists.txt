@@ -9,7 +9,11 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 
-find_package(Boost 1.75 REQUIRED COMPONENTS system)
+# 1.74 floor so Debian bookworm's stock libboost-dev satisfies it (the
+# Docker image builds on bookworm; see Dockerfile). Everything this
+# project uses from Beast/Asio long predates 1.74, and the full test
+# suite passes when built against it.
+find_package(Boost 1.74 REQUIRED COMPONENTS system)
 find_package(Threads REQUIRED)
 
 add_executable(dsd-server
