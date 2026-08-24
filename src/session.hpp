@@ -25,11 +25,16 @@
 //
 //   Server -> Client:
 //     - Binary frame, 1-byte tag + payload:
-//         tag 0x01: decoded voice PCM (int16 LE) from dsd-fme's UDP output
-//     - Text frame, JSON: event records parsed from dsd-fme's stdout, e.g.
-//         {"type":"event","kind":"voice","talkgroup":"12345",
-//          "source_id":"6789","slot":"1","raw":"..."}
+//         tag 0x01: decoded voice PCM (int16 LE; 8 kHz -- stereo from
+//         dsd-fme's DMR mode, mono from the DSDcc backend)
+//     - Text frame, JSON: event records from the DSD backend, e.g.
+//         {"type":"event","kind":"call","talkgroup":"19535",
+//          "source_id":"2222223","slot":"2","extra":"","raw":"..."}
 //     - Text frame, JSON: {"type":"error","message":"..."} on problems.
+//
+//   PROTOCOL.md at the repo root is the full reference -- exact shapes,
+//   all error texts, per-backend event semantics, real captured
+//   examples. Keep it in step with any change to this file's JSON.
 
 #pragma once
 

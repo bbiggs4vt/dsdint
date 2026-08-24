@@ -449,6 +449,11 @@ own captured log output.
 
 ## Protocol
 
+**Full reference: [PROTOCOL.md](PROTOCOL.md)** — every JSON frame the
+server can send with exact field-by-field shapes, real captured
+examples from both backends, the complete list of error messages, and
+the binary audio formats. The tables below are the quick summary.
+
 **Client → Server**
 
 | Frame | Payload | Purpose |
@@ -464,9 +469,9 @@ own captured log output.
 | Frame | Payload | Purpose |
 |---|---|---|
 | text | `{"type":"started","udp_audio_port":47213}` | Pipeline is up. |
-| text | `{"type":"event","kind":"voice","talkgroup":"12345","source_id":"6789","slot":"1","raw":"..."}` | Parsed from a `dsd-fme` stdout line. `kind` is a best-effort classification (`voice`, `sync`, `call`, `unknown`) — tighten `classify_line()` once you've seen your build's real log format. |
-| text | `{"type":"error","message":"..."}` | Something went wrong (bad control message, dsd-fme failed to start, malformed binary frame). |
-| binary | `0x01` + `int16` LE PCM | Decoded voice audio from `dsd-fme`'s UDP output. Sample rate depends on your `dsd-fme` build (often 8000 Hz mono) — verify against your version. |
+| text | `{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","extra":"","raw":"..."}` | Decoder activity, parsed from a dsd-fme log line (or synthesized from DSDcc state). `kind` is `voice`/`sync`/`call`/`unknown`; all fields always present, `""` when unknown. See PROTOCOL.md for per-backend semantics and real examples. |
+| text | `{"type":"error","message":"..."}` | Something was rejected (bad control message, DSD backend failed to start, malformed binary frame). Connection stays open. PROTOCOL.md lists all four message texts. |
+| binary | `0x01` + `int16` LE PCM | Decoded voice audio. 8000 Hz; **stereo interleaved** (slot1 left / slot2 right) from real dsd-fme's DMR mode, mono per-burst from the DSDcc backend — see PROTOCOL.md. |
 
 ## Tuning notes
 

@@ -224,6 +224,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
                 .field("talkgroup", ev.talkgroup)
                 .field("source_id", ev.source_id)
                 .field("slot", ev.slot)
+                .field("extra", ev.extra)
                 .field("raw", ev.raw_line)
                 .str();
             // This inner lambda IS safe to capture shared_ptr in: it's
