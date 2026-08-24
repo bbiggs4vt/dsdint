@@ -144,6 +144,26 @@ int main(int argc, char** argv) {
     check(kinds.count("call") == 1, "call-kind events were emitted");
     check(!saw_ansi_or_cr, "no ANSI escapes or CRs leak into raw_line");
 
+    // A child that dies immediately must NOT take the process down: the
+    // next write hits a broken pipe, and before DsdProcess ignored
+    // SIGPIPE that raised the default TERMINATE action -- one crashed
+    // dsd-fme killed the whole server. Now the write just returns false.
+    {
+        DsdProcess dead;
+        DsdProcessConfig dcfg2;
+        dcfg2.dsd_fme_path = "/bin/false"; // exits instantly, reads nothing
+        bool started2 = dead.start(dcfg2, nullptr, nullptr);
+        check(started2, "spawns a child that exits immediately");
+        std::this_thread::sleep_for(std::chrono::milliseconds(200)); // let it die
+        int16_t junk[256] = {0};
+        bool any_ok = true;
+        for (int i = 0; i < 50 && any_ok; ++i) {
+            any_ok = dead.write_audio(junk, 256); // must fail, not SIGPIPE-kill us
+        }
+        check(!any_ok, "write to a dead child's pipe fails gracefully (no SIGPIPE death)");
+        dead.stop();
+    }
+
     // Audio through the real -o udp path. Ground truth from dsd-fme run
     // directly on this file: ~315k int16s (8 kHz stereo, ~19 s of
     // voice). Same generous banding as the DSDcc tests.

@@ -10,6 +10,7 @@
 #include <cctype>
 #include <cstring>
 #include <cerrno>
+#include <csignal>
 #include <regex>
 #include <sstream>
 #include <iostream>
@@ -98,6 +99,20 @@ std::vector<std::string> DsdProcess::build_argv() const {
 }
 
 bool DsdProcess::start(const DsdProcessConfig& cfg, EventCallback on_event, AudioCallback on_audio) {
+    // Writing to a pipe whose reader died raises SIGPIPE, whose default
+    // action TERMINATES THE PROCESS -- so without this, one crashed
+    // dsd-fme child would take down the whole server, every session
+    // included, the moment its session's next write_audio() ran. With
+    // SIGPIPE ignored the write fails with EPIPE instead and
+    // write_audio() reports it as the ordinary false return the callers
+    // already handle. Process-wide and idempotent; nothing in this
+    // server wants SIGPIPE's default (Asio sockets suppress it on their
+    // own). Found the hard way: under QEMU user-mode emulation without
+    // binfmt the child exec fails instantly, and every subprocess test
+    // died of SIGPIPE -- the same fate a dsd-fme crash would inflict in
+    // production.
+    std::signal(SIGPIPE, SIG_IGN);
+
     cfg_ = cfg;
     on_event_ = std::move(on_event);
     on_audio_ = std::move(on_audio);

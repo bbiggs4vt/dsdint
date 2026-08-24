@@ -107,6 +107,19 @@ int main(int argc, char** argv) {
 
     // Modulate and stream, paced -- same rationale as
     // test_session_dsdcc.cpp (IQ queue caps at 64 blocks and drops).
+    // Pacing between 85 ms IQ blocks. The 10 ms default (~8.5x realtime)
+    // assumes native execution speed; on a slow target -- QEMU user-mode
+    // emulation runs this pipeline ~40x slower than native -- the demod
+    // worker falls behind, the session's 64-block IQ queue drops the
+    // oldest blocks by design, and the dropped IQ shows up here as
+    // missing decoded audio. DSD_TEST_PACE_MS overrides the pace for
+    // such environments (the arm64/QEMU runs use 100).
+    int pace_ms = 10;
+    if (const char* pace_env = std::getenv("DSD_TEST_PACE_MS")) {
+        int v = std::atoi(pace_env);
+        if (v > 0) pace_ms = v;
+    }
+
     double phase = 0.0;
     std::vector<int16_t> disc(4096);
     std::size_t total_in = 0, nread;
@@ -123,7 +136,7 @@ int main(int argc, char** argv) {
         }
         if (!client.send_binary(frame)) { send_failed = true; break; }
         total_in += nread;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::milliseconds(pace_ms));
     }
     std::fclose(f);
     check(!send_failed, "streamed the full capture as IQ frames");
