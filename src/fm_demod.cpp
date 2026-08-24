@@ -58,6 +58,19 @@ void FmDemodulator::set_freq_offset(double hz) {
     apply_nco_frequency();
 }
 
+// Effective NCO frequencies below this are treated as exactly zero, so
+// the per-sample mix (cos/sin at the FULL input rate -- measured at
+// ~2.4x the whole demod's cost) stays off when there is nothing worth
+// correcting. The threshold is chosen to be harmless by a wide margin:
+// a 10 Hz residual is ~34 counts of DC at the default gain, noise-level
+// against the ~2200-count inner 4FSK symbol spacing, and two orders of
+// magnitude inside the measured +/-1 kHz decode tolerance. This matters
+// specifically for AFC: its correction settles at some tiny nonzero
+// value on a well-centered signal, and without the deadband that alone
+// kept the NCO permanently on (52x -> 21x realtime for zero benefit).
+// Same constant in fm_demod_liquid.cpp.
+static constexpr double kNcoDeadbandHz = 10.0;
+
 void FmDemodulator::apply_nco_frequency() {
     // NEGATIVE increment: a channel at +f is brought to baseband by
     // multiplying with e^{-j2*pi*f*t}. The original code used a positive
@@ -67,7 +80,11 @@ void FmDemodulator::apply_nco_frequency() {
     // with a nonzero offset behaved oppositely between dsd-server and
     // dsd-server-liquid. Pinned by test_afc.cpp for both classes.
     const double effective_hz = cfg_.freq_offset_hz + afc_correction_hz_;
-    nco_incr_ = -2.0 * kPi * effective_hz / cfg_.input_sample_rate_hz;
+    if (std::fabs(effective_hz) < kNcoDeadbandHz) {
+        nco_incr_ = 0.0; // mix_and_filter_decimate skips the NCO entirely
+    } else {
+        nco_incr_ = -2.0 * kPi * effective_hz / cfg_.input_sample_rate_hz;
+    }
 }
 
 void FmDemodulator::design_lowpass() {

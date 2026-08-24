@@ -140,7 +140,9 @@ void FmDemodulatorLiquid::process(const cf32* in, std::size_t n, std::vector<int
     // dot-product kernels are expected to matter most at higher session
     // counts (see the architecture discussion in-chat for the reasoning).
     mixed_.resize(n);
-    if (cfg_.freq_offset_hz + afc_correction_hz_ != 0.0) {
+    // Deadband matches fm_demod.cpp's kNcoDeadbandHz (see the comment
+    // there): sub-10 Hz effective offsets aren't worth the mixing cost.
+    if (std::fabs(cfg_.freq_offset_hz + afc_correction_hz_) >= 10.0) {
         // reinterpret_cast between std::complex<float> and liquid's
         // liquid_float_complex (a C99 `float complex`) relies on the
         // standard-guaranteed layout compatibility of std::complex<float>

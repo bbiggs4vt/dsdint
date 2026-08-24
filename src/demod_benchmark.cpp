@@ -61,13 +61,16 @@ namespace {
 // tests, we're not checking the output values here), it just needs to
 // be realistic-shaped input so neither implementation gets an unfair
 // shortcut from e.g. a constant signal.
-std::vector<cf32> make_test_signal(std::size_t n_samples, double fs, double tone_hz, double deviation_hz) {
+std::vector<cf32> make_test_signal(std::size_t n_samples, double fs, double tone_hz, double deviation_hz,
+                                   double carrier_offset_hz = 0.0) {
     std::vector<cf32> iq(n_samples);
     double phase = 0.0;
     for (std::size_t i = 0; i < n_samples; ++i) {
         const double t = static_cast<double>(i) / fs;
-        const double inst_freq = deviation_hz * std::sin(2.0 * M_PI * tone_hz * t);
+        const double inst_freq = carrier_offset_hz + deviation_hz * std::sin(2.0 * M_PI * tone_hz * t);
         phase += 2.0 * M_PI * inst_freq / fs;
+        if (phase > M_PI) phase -= 2.0 * M_PI;
+        if (phase < -M_PI) phase += 2.0 * M_PI;
         iq[i] = cf32{static_cast<float>(std::cos(phase)), static_cast<float>(std::sin(phase))};
     }
     return iq;
@@ -96,6 +99,15 @@ BenchResult benchmark_single_thread(const FmDemodConfig& cfg, const std::vector<
         DemodT demod(cfg);
         std::vector<int16_t> out;
         out.reserve(signal.size()); // rough upper bound, avoids reallocation noise in the timed region
+
+        // Untimed warmup pass: primes caches and -- important for the
+        // AFC rows -- lets the AFC lock before the clock starts, so the
+        // timed region measures steady-state tracking cost rather than
+        // a mix of pre-lock (NCO off) and post-lock (NCO maybe on).
+        for (std::size_t off = 0; off < signal.size(); off += block_size) {
+            demod.process(signal.data() + off, std::min(block_size, signal.size() - off), out);
+        }
+        out.clear();
 
         auto t0 = std::chrono::steady_clock::now();
         for (std::size_t off = 0; off < signal.size(); off += block_size) {
@@ -234,6 +246,35 @@ int main(int argc, char** argv) {
                     speedup >= 1.0 ? speedup : 1.0 / speedup,
                     speedup >= 1.0 ? "faster" : "slower");
 #endif
+    }
+
+    // --- Phase 1b: AFC cost ---
+    // Two AFC scenarios against the afc-off baseline above:
+    //   centered -- the signal needs no correction; thanks to the NCO
+    //     deadband (see fm_demod.cpp's kNcoDeadbandHz) the correction
+    //     settles inside the deadband and the NCO stays OFF, so this
+    //     should track the freq_offset=0 row. (Before the deadband,
+    //     AFC's near-zero-but-nonzero correction kept the NCO
+    //     permanently on: 2.4x the cost for nothing.)
+    //   locked at +2 kHz -- AFC has real work; the NCO is on, so this
+    //     should track the freq_offset=1500 row: the AFC loop's own
+    //     bookkeeping (a mean/variance pass over the decimated output)
+    //     is measured to be free, the cost is all NCO.
+    std::printf("\n=== Phase 1b: AFC cost (hand-rolled; afc:true vs the rows above) ===\n");
+    {
+        FmDemodConfig acfg;
+        acfg.input_sample_rate_hz = input_rate;
+        acfg.output_sample_rate_hz = 48'000.0;
+        acfg.channel_bandwidth_hz = 12'500.0;
+        acfg.freq_offset_hz = 0.0;
+        acfg.afc_enabled = true;
+
+        auto centered = benchmark_single_thread<FmDemodulator>(acfg, signal, block_size, trials);
+        print_row("afc on, signal centered (NCO idle)", centered);
+
+        auto offset_signal = make_test_signal(n_samples, input_rate, 1000.0, 2000.0, 2000.0);
+        auto locked = benchmark_single_thread<FmDemodulator>(acfg, offset_signal, block_size, trials);
+        print_row("afc on, locked at +2 kHz (NCO on)", locked);
     }
 
     // --- Phase 2: concurrency scaling ---
