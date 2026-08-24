@@ -470,6 +470,28 @@ the stdout-parsing regexes in `classify_line()` are both marked with
 comments pointing at exactly what to check against `dsd-fme -h` and your
 own captured log output.
 
+## Test client: MIDAS BLUE files
+
+`tools/midas_ws_client.py` is a ready-made client for feeding the server
+from an X-Midas BLUE file: it parses the (attached) header, extracts
+complex IQ — formats CB/CI/CL/CF/CD, either endianness, sample rate from
+`xdelta` — streams it over the WebSocket, prints every JSON frame the
+server sends to stdout, and writes the decoded audio to a WAV file
+(8 kHz; stereo/mono inferred automatically from which backend answered).
+Stdlib-only Python 3 — no pip installs.
+
+```bash
+python3 tools/midas_ws_client.py capture.tmp --port 8765 --wav out.wav --afc
+python3 tools/midas_ws_client.py capture.tmp --info   # just dump the header
+```
+
+Useful knobs: `--speed N` (streaming pace as a multiple of realtime,
+default 4; 0 = unpaced), `--freq-offset`, `--gain`, `--sample-rate`
+(override the header), `--channels` (override the WAV inference).
+Verified end to end against both server backends with a real DMR
+signal wrapped as CI and big-endian CF BLUE files — the WAV comes out
+sample-exact in both cases.
+
 ## Protocol
 
 **Full reference: [PROTOCOL.md](PROTOCOL.md)** — every JSON frame the
