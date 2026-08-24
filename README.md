@@ -492,6 +492,17 @@ Verified end to end against both server backends with a real DMR
 signal wrapped as CI and big-endian CF BLUE files — the WAV comes out
 sample-exact in both cases.
 
+`tools/stream_load_test.py` builds on the client to answer capacity
+questions: it drives N concurrent realtime streams at a server binary
+and reports the measured CPU cost per stream-second (process-tree
+accounting, so dsd-fme children count), peak RSS, and a streams-per-box
+estimate for the machine it ran on. Run it on the actual deployment
+hardware — measured reference points from this repo's verification
+environment (2.1 GHz Xeon core, 32 ksps DMR streams, all server
+overhead included): ~35 CPU-ms per stream-second voice-active / ~21
+idle on the DSDcc backend, ~53 voice-active / ~21 idle on the dsd-fme
+backend; ~1.5 MB RSS per DSDcc session vs ~6 MB per dsd-fme session.
+
 ## Protocol
 
 **Full reference: [PROTOCOL.md](PROTOCOL.md)** — every JSON frame the
