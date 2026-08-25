@@ -149,7 +149,7 @@ int main(int argc, char** argv) {
     // Collect what came back. Audio arrives as many small tagged binary
     // frames (one per ~20 ms voice frame); events as JSON text frames.
     std::size_t audio_samples = 0;
-    std::set<std::string> talkgroups, kinds;
+    std::set<std::string> talkgroups, kinds, color_codes;
     // Generous frame budget: ~950 audio frames plus events; the loop
     // also ends on the first quiet 3 s once the pipeline has drained.
     for (int i = 0; i < 4000; ++i) {
@@ -162,6 +162,8 @@ int main(int argc, char** argv) {
                     kinds.insert(json::get_string(obj, "kind"));
                     auto tg = json::get_string(obj, "talkgroup");
                     if (!tg.empty()) talkgroups.insert(tg);
+                    auto cc = json::get_string(obj, "color_code");
+                    if (!cc.empty()) color_codes.insert(cc);
                 }
             } catch (const std::exception&) {}
         } else if (!r.empty() && static_cast<uint8_t>(r[0]) == 0x01) {
@@ -178,6 +180,8 @@ int main(int argc, char** argv) {
           "received a substantial amount of decoded voice (>100k samples)");
     check(talkgroups.count("150607") == 1,
           "an event carries the capture's real talkgroup (150607)");
+    check(color_codes.count("4") == 1,
+          "an event carries the capture's DMR color code (4)");
     check(kinds.count("voice") == 1, "voice-kind events were relayed");
 
     // Note: client.read's timeout closes the connection (see

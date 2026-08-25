@@ -344,6 +344,7 @@ DsdEvent DsdProcess::classify_line(const std::string& line) const {
     static const std::regex src_re(R"((?:SRC|RID|Source)[:=]?\s*(\d+))", std::regex::icase);
     static const std::regex slot_bracket_re(R"(\[slot\s*(\d)\])", std::regex::icase);
     static const std::regex slot_re(R"((?:TS|Slot)[:=]?\s*(\d))", std::regex::icase);
+    static const std::regex cc_re(R"(Colou?r\s*Code[:=]?\s*(\d+))", std::regex::icase);
     static const std::regex sync_re(R"(sync|no sync|nosync)", std::regex::icase);
     static const std::regex voice_re(R"(voice|ambe)", std::regex::icase);
 
@@ -352,6 +353,13 @@ DsdEvent DsdProcess::classify_line(const std::string& line) const {
     if (std::regex_search(line, m, src_re)) ev.source_id = m[1].str();
     if (std::regex_search(line, m, slot_bracket_re)) ev.slot = m[1].str();
     else if (std::regex_search(line, m, slot_re)) ev.slot = m[1].str();
+    if (std::regex_search(line, m, cc_re)) {
+        // dsd-fme zero-pads ("Color Code=04"); normalize to match the
+        // DSDcc backend's bare decimal so clients see one format.
+        std::string cc = m[1].str();
+        std::size_t nz = cc.find_first_not_of('0');
+        ev.color_code = (nz == std::string::npos) ? "0" : cc.substr(nz);
+    }
 
     if (std::regex_search(line, voice_re)) ev.kind = "voice";
     else if (std::regex_search(line, sync_re)) ev.kind = "sync";

@@ -112,11 +112,11 @@ kind; treat the remainder as free text.
 
 One frame per line the DSD backend reports (subprocess backend: one per
 line dsd-fme writes to its log, post-cleanup; DSDcc backend: one per
-detected state change). All six data fields are always present; empty
+detected state change). All seven data fields are always present; empty
 string means "not present in this event".
 
 ```json
-{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","extra":"","raw":" SLOT 2 TGT=19535 SRC=2222223 Group Call  "}
+{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","color_code":"","extra":"","raw":" SLOT 2 TGT=19535 SRC=2222223 Group Call  "}
 ```
 
 | field | type | meaning |
@@ -126,6 +126,7 @@ string means "not present in this event".
 | `talkgroup` | string | Decimal talkgroup / group-call target ID, or `""`. Kept as a string because IDs can exceed what a client might assume about integer width, and `""` is the natural "absent". |
 | `source_id` | string | Decimal source radio ID, or `""`. |
 | `slot` | string | TDMA slot, `"1"` or `"2"`, or `""` when the event isn't slot-specific. |
+| `color_code` | string | DMR color code as bare decimal (`"4"`, not `"04"` — both backends normalize away leading zeros), or `""` when the event doesn't carry one. Which event kinds carry it differs by backend: dsd-fme prints it on its per-burst sync lines, DSDcc's slot status text carries it on `voice`/`call` events. |
 | `extra` | string | Backend-specific detail that doesn't fit the fields above, or `""`. Currently used by the DSDcc backend for unit-to-unit calls: `"unit_target=<id>"` (the target of a private call is not a talkgroup, so it is surfaced here instead of in `talkgroup`). |
 | `raw` | string | The underlying decoder output this event was parsed from, so nothing is lost to the classification: the cleaned log line (subprocess backend) or a synthesized description (DSDcc backend). Free text; formats below are examples from real decodes, and they **vary across dsd-fme versions/forks** — parse the structured fields, fall back to `raw` only for display/debugging. |
 
@@ -141,9 +142,9 @@ Captured from lwvmobile/dsd-fme decoding a real DMR group call
 (the test suite's `session_real_fme_test`):
 
 ```json
-{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"2","extra":"","raw":"20:37:20 Sync: +DMR   slot1  [SLOT2] | Color Code=04 | VC6 "}
-{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","extra":"","raw":" SLOT 2 TGT=19535 SRC=2222223 Group Call  "}
-{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","extra":"","raw":"Decoding DMR BS/MS Simplex"}
+{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"2","color_code":"4","extra":"","raw":"20:37:20 Sync: +DMR   slot1  [SLOT2] | Color Code=04 | VC6 "}
+{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","color_code":"","extra":"","raw":" SLOT 2 TGT=19535 SRC=2222223 Group Call  "}
+{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","extra":"","raw":"Decoding DMR BS/MS Simplex"}
 ```
 
 - `kind:"sync"` — any line containing "Sync" (dsd-fme's per-burst sync
@@ -165,8 +166,8 @@ Captured from DSDcc 1.9.0 decoding the same call
 (`session_dsdcc_test`):
 
 ```json
-{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"","extra":"","raw":"(dsdcc: sync acquired)"}
-{"type":"event","kind":"voice","talkgroup":"150607","source_id":"2222223","slot":"2","extra":"","raw":"(dsdcc slot2) *04 VOX 02222223>G00150607"}
+{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"","color_code":"","extra":"","raw":"(dsdcc: sync acquired)"}
+{"type":"event","kind":"voice","talkgroup":"150607","source_id":"2222223","slot":"2","color_code":"4","extra":"","raw":"(dsdcc slot2) *04 VOX 02222223>G00150607"}
 ```
 
 - `kind:"sync"` — sync acquisition/loss transitions only (`raw` is

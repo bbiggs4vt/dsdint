@@ -146,7 +146,7 @@ int main(int argc, char** argv) {
     // Collect. Real dsd-fme's voice lags the input slightly (it decodes
     // as bursts complete), so keep reading until a 3 s quiet gap.
     std::size_t audio_samples = 0;
-    std::set<std::string> talkgroups, sources, slots, kinds;
+    std::set<std::string> talkgroups, sources, slots, kinds, color_codes;
     bool saw_ansi = false;
     for (int i = 0; i < 6000; ++i) {
         std::string r; bool text = false;
@@ -162,6 +162,8 @@ int main(int argc, char** argv) {
                     if (!src.empty()) sources.insert(src);
                     auto slot = json::get_string(obj, "slot");
                     if (!slot.empty()) slots.insert(slot);
+                    auto cc = json::get_string(obj, "color_code");
+                    if (!cc.empty()) color_codes.insert(cc);
                     if (json::get_string(obj, "raw").find('\x1b') != std::string::npos) {
                         saw_ansi = true;
                     }
@@ -189,6 +191,8 @@ int main(int argc, char** argv) {
     check(sources.count("2222223") == 1,
           "an event carries the capture's source (2222223)");
     check(slots.count("2") == 1, "call activity attributed to TDMA slot 2");
+    check(color_codes.count("4") == 1,
+          "an event carries the capture's DMR color code (4, from Color Code=04)");
     check(kinds.count("sync") == 1, "sync events were relayed");
     check(!saw_ansi, "no ANSI escapes reach the client in raw event text");
 

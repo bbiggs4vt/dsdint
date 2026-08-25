@@ -83,12 +83,14 @@ struct SlotInfo {
     std::string target;
     bool group = false;
     bool has_addresses = false;
-    std::string burst; // "VOX", "IDL", ...
+    std::string burst;      // "VOX", "IDL", ...
+    std::string color_code; // decimal, no leading zeros ("04" in the text -> "4")
 };
 
 SlotInfo parse_slot_text(const char* text) {
     SlotInfo info;
     info.burst.assign(text + 4, 3);
+    info.color_code = digits_at(text, 1, 2);
     if (text[16] == '>') {
         info.source = digits_at(text, 8, 8);
         info.target = digits_at(text, 18, 8);
@@ -230,6 +232,7 @@ void DsdccDecoder::check_for_state_change() {
         ev.talkgroup = info.group ? info.target : "";
         ev.source_id = info.source;
         ev.slot = (s == 0) ? "1" : "2";
+        ev.color_code = info.color_code;
         // For unit-to-unit calls the target isn't a talkgroup; surface
         // it in extra instead so the talkgroup field stays honest.
         if (!info.group && !info.target.empty()) {

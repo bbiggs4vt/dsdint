@@ -16,6 +16,7 @@ struct DsdEvent {
     std::string talkgroup;     // parsed TG/dst id if present
     std::string source_id;     // parsed source/radio id if present
     std::string slot;          // TDMA slot (0/1) if present
+    std::string color_code;    // DMR color code if present, decimal without leading zeros
     std::string extra;         // any other parsed detail, free-form
 };
 
