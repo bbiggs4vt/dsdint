@@ -172,6 +172,16 @@ docker run --rm -p 8765:8765 dsd-server dsd-server-dsdcc 0.0.0.0 8765 4   # in-p
 DSDcc) inside the image and fails the build if anything fails — usable
 as CI.
 
+`docker build --target loadtest -t dsd-server-loadtest .` builds a
+capacity-measurement image; `docker run --rm dsd-server-loadtest` then
+measures 8 concurrent realtime 32 ksps streams against the DSDcc
+backend **on whatever machine the container runs on** and prints the
+measured CPU per stream plus a streams-per-box estimate — the intended
+way to get real capacity numbers on deployment hardware (e.g. an ARM64
+box). Arguments override the defaults: server binary, BLUE file
+(mount your own with `-v`), stream count. See the loadtest stage in
+the Dockerfile.
+
 ### Native
 
 Dependencies: a C++17 compiler, CMake ≥ 3.16, Boost ≥ 1.74 (headers +

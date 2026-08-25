@@ -24,6 +24,11 @@
 #                   fails, so this doubles as CI)
 # Run:              docker run --rm -p 8765:8765 dsd-server
 #                   docker run --rm -p 8765:8765 dsd-server dsd-server-dsdcc 0.0.0.0 8765 4
+# Capacity test:    docker build --target loadtest -t dsd-server-loadtest .
+#                   docker run --rm dsd-server-loadtest
+#                   (measures N concurrent realtime streams ON THIS
+#                   MACHINE and prints CPU per stream + streams-per-box;
+#                   see the loadtest stage below for arguments)
 #
 # Boost note: bookworm ships Boost 1.74, which is why the project's
 # CMakeLists floor is 1.74. If you rebase this image onto trixie or
@@ -127,3 +132,41 @@ EXPOSE 8765
 # or name a different binary entirely (dsd-server-dsdcc ...).
 ENTRYPOINT ["tini", "--"]
 CMD ["dsd-server", "0.0.0.0", "8765", "4"]
+
+# ------------------------------------------------------------- loadtest
+# Self-contained capacity measurement: runs tools/stream_load_test.py
+# INSIDE the container (the tool spawns the server itself and measures
+# its process tree, so it has to share the machine and PID view with
+# it). Ships a ready-made 20 s test capture -- the repo's verified real
+# DMR signal FM-wrapped as 32 ksps IQ -- so the zero-argument form just
+# works:
+#
+#   docker build --target loadtest -t dsd-server-loadtest .
+#   docker run --rm dsd-server-loadtest
+#     -> 8 realtime streams against the DSDcc backend, prints measured
+#        CPU-ms per stream-second and a streams-per-box estimate for
+#        the machine the container is running on
+#
+# Arguments replace the CMD (server binary, BLUE file, stream count):
+#
+#   docker run --rm dsd-server-loadtest \
+#       /usr/local/bin/dsd-server /opt/dsd-server/testdata/dmr_32k.tmp 8
+#   docker run --rm -v $PWD/mycapture.tmp:/data/c.tmp dsd-server-loadtest \
+#       /usr/local/bin/dsd-server-dsdcc /data/c.tmp 16
+#
+# Run it on the DEPLOYMENT machine -- the numbers describe wherever the
+# container executes. Give the container all cores (no --cpus limit) for
+# a whole-box answer, or set --cpus to measure a deliberate budget.
+FROM runtime AS loadtest
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 \
+    && rm -rf /var/lib/apt/lists/*
+COPY tools/ /opt/dsd-server/tools/
+COPY --from=build /opt/src/dsdcc/samples/dmr_it_8.dis /opt/dsd-server/testdata/
+RUN python3 /opt/dsd-server/tools/make_test_bluefile.py \
+        /opt/dsd-server/testdata/dmr_it_8.dis \
+        /opt/dsd-server/testdata/dmr_32k.tmp --rate 32000
+USER dsd
+ENTRYPOINT ["tini", "--", "python3", "/opt/dsd-server/tools/stream_load_test.py"]
+CMD ["/usr/local/bin/dsd-server-dsdcc", "/opt/dsd-server/testdata/dmr_32k.tmp", "8"]
