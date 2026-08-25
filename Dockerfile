@@ -192,3 +192,11 @@ RUN python3 /opt/dsd-server/tools/make_test_bluefile.py \
 USER dsd
 ENTRYPOINT ["tini", "--", "python3", "/opt/dsd-server/tools/stream_load_test.py"]
 CMD ["/usr/local/bin/dsd-server-dsdcc", "/opt/dsd-server/testdata/dmr_32k.tmp", "8"]
+
+# -------------------------------------------------------------- default
+# Docker builds the LAST stage when no --target is given, and loadtest
+# has to sit after runtime (it derives FROM it) — so without this, a
+# plain `docker build .` would produce the load-test image instead of
+# the server. This empty re-selection makes the default build the
+# runtime image, as every usage example above assumes.
+FROM runtime
