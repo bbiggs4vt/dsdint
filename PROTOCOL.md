@@ -122,12 +122,12 @@ string means "not present in this event".
 | field | type | meaning |
 |---|---|---|
 | `type` | string | `"event"` |
-| `kind` | string | Best-effort classification: `"voice"`, `"sync"`, `"call"`, or `"unknown"`. See the per-backend notes below for exactly when each occurs. |
+| `kind` | string | Best-effort classification: `"voice"`, `"sync"`, `"call"`, `"burst"` (DSDcc backend only), or `"unknown"`. See the per-backend notes below for exactly when each occurs. |
 | `talkgroup` | string | Decimal talkgroup / group-call target ID, or `""`. Kept as a string because IDs can exceed what a client might assume about integer width, and `""` is the natural "absent". |
 | `source_id` | string | Decimal source radio ID, or `""`. |
 | `slot` | string | TDMA slot, `"1"` or `"2"`, or `""` when the event isn't slot-specific. |
 | `color_code` | string | DMR color code as bare decimal (`"4"`, not `"04"` — both backends normalize away leading zeros), or `""` when the event doesn't carry one. Which event kinds carry it differs by backend: dsd-fme prints it on its per-burst sync lines, DSDcc's slot status text carries it on `voice`/`call` events. |
-| `extra` | string | Backend-specific detail that doesn't fit the fields above, or `""`. Currently used by the DSDcc backend for unit-to-unit calls: `"unit_target=<id>"` (the target of a private call is not a talkgroup, so it is surfaced here instead of in `talkgroup`). |
+| `extra` | string | Backend-specific detail that doesn't fit the fields above, or `""`. Used by the DSDcc backend for: `"unit_target=<id>"` on unit-to-unit calls (the target of a private call is not a talkgroup, so it is surfaced here instead of in `talkgroup`); `"burst=<type>"` on `burst` events (DSDcc's three-letter slot burst type: `IDL` idle, `CSB` CSBK control, `VLC`/`TLC` voice/terminator link control, `VOX` voice, `UNK` unknown, ...); `"sync_type=<flavor>"` on sync-acquisition events (see below). |
 | `raw` | string | The underlying decoder output this event was parsed from, so nothing is lost to the classification: the cleaned log line (subprocess backend) or a synthesized description (DSDcc backend). Free text; formats below are examples from real decodes, and they **vary across dsd-fme versions/forks** — parse the structured fields, fall back to `raw` only for display/debugging. |
 
 Encoding guarantee: strings are JSON-escaped per RFC 8259 including
@@ -166,17 +166,34 @@ Captured from DSDcc 1.9.0 decoding the same call
 (`session_dsdcc_test`):
 
 ```json
-{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"","color_code":"","extra":"","raw":"(dsdcc: sync acquired)"}
+{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"","color_code":"","extra":"sync_type=dmr_bs_data","raw":"(dsdcc: sync acquired, dmr_bs_data)"}
+{"type":"event","kind":"burst","talkgroup":"","source_id":"","slot":"1","color_code":"4","extra":"burst=IDL","raw":"(dsdcc slot1) .04 IDL                   "}
 {"type":"event","kind":"voice","talkgroup":"150607","source_id":"2222223","slot":"2","color_code":"4","extra":"","raw":"(dsdcc slot2) *04 VOX 02222223>G00150607"}
 ```
 
-- `kind:"sync"` — sync acquisition/loss transitions only (`raw` is
-  `"(dsdcc: sync acquired)"` / `"(dsdcc: sync lost)"`), not per-burst
-  like dsd-fme — expect far fewer of these.
+- `kind:"sync"` — sync acquisition/loss transitions only, not
+  per-burst like dsd-fme — expect far fewer of these. On acquisition,
+  `extra` carries the sync flavor as `"sync_type=<flavor>"`, the DSDcc
+  equivalent of dsd-fme's `+DMR MS/DM` detail: `dmr_bs_data`,
+  `dmr_bs_voice` (base station / repeater), `dmr_ms_data`,
+  `dmr_ms_voice` (mobile station — also what direct/simplex mode
+  shows), `other` (non-DMR sync in auto mode). Only the acquiring
+  burst's flavor is reported; within a held sync the flavor alternates
+  per burst (voice on one slot, data on the other) and is deliberately
+  not re-reported. On loss, `extra` is `""` and `raw` is
+  `"(dsdcc: sync lost)"`.
 - `kind:"voice"` / `kind:"call"` — a change in a slot's call state,
   `voice` while that slot's voice channel is active, `call` otherwise.
   `raw` is `"(dsdcc slot<n>) "` followed by DSDcc's 26-character slot
   status text (activity flag, color code, burst type, `source>G|Utarget`).
+- `kind:"burst"` — a change in a slot's burst type or color code
+  **before/without call addresses** (DSDcc only learns addresses from
+  voice embedded signalling). `extra` is `"burst=<type>"`, and
+  `color_code` is filled once the slot-type PDU decodes. This is all
+  the visibility DSDcc has into control-only traffic — e.g. a capture
+  of CSBK signalling produces `burst=CSB` events with the color code,
+  where dsd-fme would additionally decode the CSBK payload (source /
+  target / opcode). Idle slots show as `burst=IDL`.
 - For **unit-to-unit** (private) calls, `talkgroup` stays `""` and the
   target lands in `extra` as `"unit_target=<id>"`.
 - `kind:"unknown"` is not currently produced by this backend.

@@ -104,6 +104,22 @@ bool sync_present(DSDcc::DSDDecoder::DSDSyncType t) {
     return t != DSDcc::DSDDecoder::DSDSyncNone;
 }
 
+// The DMR sync patterns DSDcc distinguishes: BS (base station /
+// repeater, "P" in the enum names for positive polarity) vs MS (mobile
+// station -- also what direct/simplex mode uses), and data vs voice
+// burst. This is the DSDcc equivalent of the "+DMR MS/DM" flavor in
+// dsd-fme's per-burst sync lines.
+const char* sync_type_name(DSDcc::DSDDecoder::DSDSyncType t) {
+    switch (t) {
+    case DSDcc::DSDDecoder::DSDSyncDMRDataP:  return "dmr_bs_data";
+    case DSDcc::DSDDecoder::DSDSyncDMRDataMS: return "dmr_ms_data";
+    case DSDcc::DSDDecoder::DSDSyncDMRVoiceP: return "dmr_bs_voice";
+    case DSDcc::DSDDecoder::DSDSyncDMRVoiceMS:return "dmr_ms_voice";
+    case DSDcc::DSDDecoder::DSDSyncNone:      return "none";
+    default:                                  return "other";
+    }
+}
+
 } // namespace
 
 DsdccDecoder::DsdccDecoder() = default;
@@ -197,16 +213,28 @@ bool DsdccDecoder::write_audio(const int16_t* pcm, std::size_t n) {
 void DsdccDecoder::check_for_state_change() {
     if (!decoder_ || !on_event_) return;
 
-    const bool sync = sync_present(decoder_->getSyncType());
+    const auto sync_type = decoder_->getSyncType();
+    const bool sync = sync_present(sync_type);
 
     // Sync acquisition/loss is an event of its own (mirrors the
     // subprocess backend, where classify_line tags dsd-fme's "Sync:"
-    // lines as kind "sync").
+    // lines as kind "sync"). On acquisition, the sync flavor (BS vs
+    // MS/direct mode, data vs voice) rides along in extra — that's the
+    // part of dsd-fme's "+DMR MS/DM" detail DSDcc also knows. Only the
+    // acquiring burst's flavor is reported: within a held sync the type
+    // legitimately alternates per 30 ms burst (voice on one slot, data
+    // on the other), and one event per burst would be a storm.
     if (sync != last_sync_) {
         last_sync_ = sync;
         DsdEvent ev;
         ev.kind = "sync";
-        ev.raw_line = sync ? "(dsdcc: sync acquired)" : "(dsdcc: sync lost)";
+        if (sync) {
+            ev.extra = std::string("sync_type=") + sync_type_name(sync_type);
+            ev.raw_line = std::string("(dsdcc: sync acquired, ")
+                          + sync_type_name(sync_type) + ")";
+        } else {
+            ev.raw_line = "(dsdcc: sync lost)";
+        }
         on_event_(ev);
     }
 
@@ -223,22 +251,38 @@ void DsdccDecoder::check_for_state_change() {
         last_slot_text_[s] = text;
 
         SlotInfo info = parse_slot_text(text.c_str());
-        if (!info.has_addresses) continue; // slot text changed but carries no call info yet
-
-        const bool voice = (s == 0) ? decoder_->getVoice1On() : decoder_->getVoice2On();
 
         DsdEvent ev;
-        ev.kind = voice ? "voice" : "call";
-        ev.talkgroup = info.group ? info.target : "";
-        ev.source_id = info.source;
         ev.slot = (s == 0) ? "1" : "2";
         ev.color_code = info.color_code;
-        // For unit-to-unit calls the target isn't a talkgroup; surface
-        // it in extra instead so the talkgroup field stays honest.
-        if (!info.group && !info.target.empty()) {
-            ev.extra = "unit_target=" + info.target;
-        }
         ev.raw_line = "(dsdcc slot" + ev.slot + ") " + text;
+
+        if (info.has_addresses) {
+            const bool voice = (s == 0) ? decoder_->getVoice1On() : decoder_->getVoice2On();
+            ev.kind = voice ? "voice" : "call";
+            ev.talkgroup = info.group ? info.target : "";
+            ev.source_id = info.source;
+            // For unit-to-unit calls the target isn't a talkgroup;
+            // surface it in extra instead so the talkgroup field stays
+            // honest.
+            if (!info.group && !info.target.empty()) {
+                ev.extra = "unit_target=" + info.target;
+            }
+        } else {
+            // No call addresses (DSDcc only learns those from voice
+            // embedded signalling) — but the slot-type PDU still told
+            // us the burst type and color code, and for control-only
+            // traffic (e.g. CSBK bursts) that's ALL the visibility
+            // DSDcc has. Surface it instead of dropping it; dsd-fme
+            // shows the same information on its per-burst sync lines.
+            std::string burst = info.burst;
+            while (!burst.empty() && burst.back() == ' ') burst.pop_back();
+            while (!burst.empty() && burst.front() == ' ') burst.erase(0, 1);
+            if (burst.empty() && info.color_code.empty())
+                continue; // text changed but still carries nothing to report
+            ev.kind = "burst";
+            if (!burst.empty()) ev.extra = "burst=" + burst;
+        }
         on_event_(ev);
     }
 }

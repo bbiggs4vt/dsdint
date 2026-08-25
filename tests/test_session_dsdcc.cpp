@@ -149,7 +149,7 @@ int main(int argc, char** argv) {
     // Collect what came back. Audio arrives as many small tagged binary
     // frames (one per ~20 ms voice frame); events as JSON text frames.
     std::size_t audio_samples = 0;
-    std::set<std::string> talkgroups, kinds, color_codes;
+    std::set<std::string> talkgroups, kinds, color_codes, extras;
     // Generous frame budget: ~950 audio frames plus events; the loop
     // also ends on the first quiet 3 s once the pipeline has drained.
     for (int i = 0; i < 4000; ++i) {
@@ -164,6 +164,8 @@ int main(int argc, char** argv) {
                     if (!tg.empty()) talkgroups.insert(tg);
                     auto cc = json::get_string(obj, "color_code");
                     if (!cc.empty()) color_codes.insert(cc);
+                    auto ex = json::get_string(obj, "extra");
+                    if (!ex.empty()) extras.insert(ex);
                 }
             } catch (const std::exception&) {}
         } else if (!r.empty() && static_cast<uint8_t>(r[0]) == 0x01) {
@@ -183,6 +185,10 @@ int main(int argc, char** argv) {
     check(color_codes.count("4") == 1,
           "an event carries the capture's DMR color code (4)");
     check(kinds.count("voice") == 1, "voice-kind events were relayed");
+    check(kinds.count("burst") == 1,
+          "burst-kind events surface address-free slot activity");
+    check(extras.count("sync_type=dmr_bs_data") == 1,
+          "sync acquisition reports the sync flavor");
 
     // Note: client.read's timeout closes the connection (see
     // test_ws_client.hpp), so the collection loop ending means this

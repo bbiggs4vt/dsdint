@@ -58,7 +58,7 @@ int main(int argc, char** argv) {
     }
 
     std::size_t total_audio_samples = 0;
-    std::set<std::string> talkgroups, sources, slots, kinds;
+    std::set<std::string> talkgroups, sources, slots, call_slots, kinds, extras;
     int event_count = 0;
 
     DsdccDecoder dec;
@@ -71,6 +71,9 @@ int main(int argc, char** argv) {
             if (!ev.talkgroup.empty()) talkgroups.insert(ev.talkgroup);
             if (!ev.source_id.empty()) sources.insert(ev.source_id);
             if (!ev.slot.empty()) slots.insert(ev.slot);
+            if (!ev.slot.empty() && (ev.kind == "voice" || ev.kind == "call"))
+                call_slots.insert(ev.slot);
+            if (!ev.extra.empty()) extras.insert(ev.extra);
             kinds.insert(ev.kind);
         },
         [&](const int16_t* /*pcm*/, std::size_t n) { total_audio_samples += n; });
@@ -115,9 +118,20 @@ int main(int argc, char** argv) {
     check(kinds.count("voice") == 1, "voice-kind events were emitted");
     check(kinds.count("sync") == 1, "sync acquisition was reported");
 
+    // Address-free channel visibility: slot 1 carries only idle bursts
+    // in this capture, and those must surface as burst-kind events (the
+    // same slot-type PDU information dsd-fme shows on its sync lines),
+    // with the sync flavor riding on the acquisition event.
+    check(kinds.count("burst") == 1, "burst-kind events surface address-free slot activity");
+    check(extras.count("burst=IDL") == 1,
+          "slot 1's idle bursts are visible as burst=IDL");
+    check(extras.count("sync_type=dmr_bs_data") == 1,
+          "sync acquisition reports the sync flavor (dmr_bs_data)");
+
     // The reverse checks: things that are NOT in this capture must not
-    // be invented. (Slot 1 carries only idle bursts — no addresses.)
-    check(slots.count("1") == 0, "no call events fabricated for idle slot 1");
+    // be invented. (Slot 1 carries only idle bursts — no addresses, so
+    // no voice/call events may claim it.)
+    check(call_slots.count("1") == 0, "no call events fabricated for idle slot 1");
 
     dec.stop();
     check(!dec.running(), "decoder reports stopped after stop()");
