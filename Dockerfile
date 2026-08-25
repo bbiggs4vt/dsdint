@@ -99,7 +99,7 @@ RUN cmake --build /opt/dsd-server/build -j"$(nproc)" --target \
         test-fake-dsd-fme test_session test_session_concurrency \
         test_dsdcc_decoder test_session_dsdcc \
         test_dsd_process test_session_real_fme \
-        test_fm_demod \
+        test_fm_demod test_afc \
     && cd /opt/dsd-server/build && ctest --output-on-failure
 
 # -------------------------------------------------------------- runtime
