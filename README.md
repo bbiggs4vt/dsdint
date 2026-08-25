@@ -170,7 +170,12 @@ docker run --rm -p 8765:8765 dsd-server dsd-server-dsdcc 0.0.0.0 8765 4   # in-p
 `docker build --target test .` additionally runs the entire ctest suite
 (including the real-capture tests against the just-built dsd-fme and
 DSDcc) inside the image and fails the build if anything fails — usable
-as CI.
+as CI. On hardware that can't decode much faster than realtime (e.g. a
+1.2 GHz ARMv7), add `--build-arg DSD_TEST_PACE_MS=60`: the two
+full-stack session tests stream their capture at ~8.5x realtime by
+default, and a box that can't keep up overflows the session's
+drop-oldest IQ queue, failing those tests with truncated audio even
+though the pipeline is fine at realtime.
 
 `docker build --target loadtest -t dsd-server-loadtest .` builds a
 capacity-measurement image; `docker run --rm dsd-server-loadtest` then

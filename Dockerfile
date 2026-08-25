@@ -94,13 +94,28 @@ RUN cmake -S /opt/dsd-server -B /opt/dsd-server/build \
 # real-capture tests against the real dsd-fme and DSDcc just built
 # above. Not part of the default build path, so plain `docker build .`
 # stays fast.
+#
+# On slow hardware, slow the full-stack tests' IQ feed down to match:
+# the two session tests stream the capture at ~8.5x realtime by default
+# (85 ms of IQ every DSD_TEST_PACE_MS=10 ms), which assumes the machine
+# decodes that much faster than realtime. A box that can't keep up
+# (e.g. a 1.2 GHz ARMv7) overflows the session's 64-block IQ queue —
+# which drops oldest by design — and the tests fail with truncated
+# decoded audio despite the pipeline being healthy at realtime. Raise
+# the pace toward realtime there:
+#
+#   docker build --target test --build-arg DSD_TEST_PACE_MS=60 .
+#
+# (60 ms/block is ~1.4x realtime; the QEMU-emulated ARM64 runs use 100.)
 FROM build AS test
+ARG DSD_TEST_PACE_MS=10
 RUN cmake --build /opt/dsd-server/build -j"$(nproc)" --target \
         test-fake-dsd-fme test_session test_session_concurrency \
         test_dsdcc_decoder test_session_dsdcc \
         test_dsd_process test_session_real_fme \
         test_fm_demod test_afc \
-    && cd /opt/dsd-server/build && ctest --output-on-failure
+    && cd /opt/dsd-server/build \
+    && DSD_TEST_PACE_MS=${DSD_TEST_PACE_MS} ctest --output-on-failure
 
 # -------------------------------------------------------------- runtime
 FROM debian:bookworm-slim AS runtime
