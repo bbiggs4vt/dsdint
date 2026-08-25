@@ -139,6 +139,23 @@ bool DsdProcess::start(const DsdProcessConfig& cfg, EventCallback on_event, Audi
         return false;
     }
 
+    // Exec-status pipe: the classic trick for making fork/exec failure
+    // visible to the caller. Both ends are O_CLOEXEC and the child
+    // never dup2s the write end, so a SUCCESSFUL execvp closes it and
+    // the parent's read() returns 0 (EOF). If execvp fails, the child
+    // writes errno into the pipe before _exit, and the parent's read()
+    // returns that instead. Without this, start() reported success for
+    // a nonexistent dsd-fme (fork worked; the exec failure happened
+    // where the parent couldn't see it), the client got "started" plus
+    // a cryptic unknown-kind event, and the real error frame ("failed
+    // to start DSD backend") was never sent.
+    int exec_pipe[2];
+    if (pipe2(exec_pipe, O_CLOEXEC) != 0) {
+        close(stdin_pipe[0]); close(stdin_pipe[1]);
+        close(stdout_pipe[0]); close(stdout_pipe[1]);
+        return false;
+    }
+
     // Optional UDP socket for decoded voice audio, bound before fork so we
     // know it's ready by the time the child starts sending to it.
     udp_fd_ = -1;
@@ -161,6 +178,7 @@ bool DsdProcess::start(const DsdProcessConfig& cfg, EventCallback on_event, Audi
     if (pid < 0) {
         close(stdin_pipe[0]); close(stdin_pipe[1]);
         close(stdout_pipe[0]); close(stdout_pipe[1]);
+        close(exec_pipe[0]); close(exec_pipe[1]);
         if (udp_fd_ >= 0) close(udp_fd_);
         return false;
     }
@@ -173,6 +191,7 @@ bool DsdProcess::start(const DsdProcessConfig& cfg, EventCallback on_event, Audi
 
         close(stdin_pipe[0]); close(stdin_pipe[1]);
         close(stdout_pipe[0]); close(stdout_pipe[1]);
+        close(exec_pipe[0]); // keep exec_pipe[1]; execvp closes it via CLOEXEC
         if (udp_fd_ >= 0) close(udp_fd_); // child doesn't need our bound socket
 
         auto argv_strs = build_argv();
@@ -182,13 +201,37 @@ bool DsdProcess::start(const DsdProcessConfig& cfg, EventCallback on_event, Audi
         argv_c.push_back(nullptr);
 
         execvp(argv_c[0], argv_c.data());
-        // If execvp returns, it failed.
+        // If execvp returns, it failed: report errno to the parent
+        // through the exec pipe (and to any log reader via stderr).
+        int err = errno;
         std::fprintf(stderr, "dsd-server: failed to exec '%s': %s\n",
-                     argv_c[0], std::strerror(errno));
+                     argv_c[0], std::strerror(err));
+        ssize_t unused = ::write(exec_pipe[1], &err, sizeof(err));
+        (void)unused;
         _exit(127);
     }
 
     // ---- parent ----
+    close(exec_pipe[1]);
+    // Blocks only until the child either execs (CLOEXEC closes the pipe
+    // -> EOF) or reports failure -- microseconds either way.
+    int exec_errno = 0;
+    ssize_t n = ::read(exec_pipe[0], &exec_errno, sizeof(exec_errno));
+    close(exec_pipe[0]);
+    if (n > 0) {
+        // exec failed; the child has already _exit(127)ed. Reap it and
+        // undo everything so the Session's start handler reports the
+        // failure to the client instead of a phantom "started".
+        int status = 0;
+        waitpid(pid, &status, 0);
+        close(stdin_pipe[0]); close(stdin_pipe[1]);
+        close(stdout_pipe[0]); close(stdout_pipe[1]);
+        if (udp_fd_ >= 0) { close(udp_fd_); udp_fd_ = -1; }
+        std::fprintf(stderr, "dsd-server: cannot start '%s': %s\n",
+                     cfg_.dsd_fme_path.c_str(), std::strerror(exec_errno));
+        return false;
+    }
+
     child_pid_ = pid;
     close(stdin_pipe[0]);
     close(stdout_pipe[1]);

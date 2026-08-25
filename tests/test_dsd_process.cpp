@@ -164,6 +164,21 @@ int main(int argc, char** argv) {
         dead.stop();
     }
 
+    // A binary that can't be exec'd at all is different from one that
+    // dies after exec: start() must return false (via the exec-status
+    // pipe), so the Session replies "failed to start DSD backend"
+    // instead of a phantom "started". Seen in the field: running
+    // dsd-server without dsd-fme on PATH produced "started" plus an
+    // unknown-kind event carrying the exec error text.
+    {
+        DsdProcess missing;
+        DsdProcessConfig mcfg;
+        mcfg.dsd_fme_path = "/nonexistent/no-such-dsd-fme";
+        bool started3 = missing.start(mcfg, nullptr, nullptr);
+        check(!started3, "start() fails (not phantom-succeeds) when the binary can't be exec'd");
+        missing.stop(); // must be a safe no-op after a failed start
+    }
+
     // Audio through the real -o udp path. Ground truth from dsd-fme run
     // directly on this file: ~315k int16s (8 kHz stereo, ~19 s of
     // voice). Same generous banding as the DSDcc tests.
