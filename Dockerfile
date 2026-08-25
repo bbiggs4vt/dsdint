@@ -154,6 +154,13 @@ CMD ["dsd-server", "0.0.0.0", "8765", "4"]
 #   docker run --rm -v $PWD/mycapture.tmp:/data/c.tmp dsd-server-loadtest \
 #       /usr/local/bin/dsd-server-dsdcc /data/c.tmp 16
 #
+# To measure at a different IQ sample rate, pass the baked-in raw
+# discriminator capture plus --rate; test IQ at that rate is generated
+# inside the container before the run:
+#
+#   docker run --rm dsd-server-loadtest /usr/local/bin/dsd-server-dsdcc \
+#       /opt/dsd-server/testdata/dmr_it_8.dis 8 --rate 64000
+#
 # Run it on the DEPLOYMENT machine -- the numbers describe wherever the
 # container executes. Give the container all cores (no --cpus limit) for
 # a whole-box answer, or set --cpus to measure a deliberate budget.

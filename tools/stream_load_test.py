@@ -15,6 +15,12 @@ Run it on the deployment hardware itself for real capacity numbers:
     python3 tools/stream_load_test.py build/dsd-server capture_32k.tmp 8 \
         --fme-path /path/to/dsd-fme-dir
 
+To measure at a different IQ sample rate, pass the raw 48 kHz
+discriminator capture plus --rate; the test IQ is generated on the fly:
+
+    python3 tools/stream_load_test.py build/dsd-server-dsdcc dmr_it_8.dis 8 \
+        --rate 64000
+
 Streams/core budget arithmetic: a stream costs the reported CPU-ms per
 stream-second; a core provides 1000 ms per second; keep ~25-30%
 headroom. E.g. 8 cores at 35 ms/stream-s -> 8*1000*0.72/35 ~= 165
@@ -58,8 +64,14 @@ def tree_cpu_and_rss(pid):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("server", help="path to dsd-server or dsd-server-dsdcc")
-    ap.add_argument("bluefile", help="BLUE IQ file to stream (see midas_ws_client.py)")
+    ap.add_argument("bluefile",
+                    help="BLUE IQ file to stream -- or, with --rate, a raw 48 kHz "
+                         "S16LE discriminator capture (.dis) to FM-wrap first")
     ap.add_argument("n", type=int, help="number of concurrent streams")
+    ap.add_argument("--rate", type=float, default=None,
+                    help="treat the input as a 48 kHz discriminator capture and "
+                         "generate the test IQ at this sample rate before the "
+                         "run (uses make_test_bluefile.py; e.g. --rate 64000)")
     ap.add_argument("--port", type=int, default=18910)
     ap.add_argument("--fme-path", default=None,
                     help="directory containing dsd-fme, prepended to the server's PATH")
@@ -70,6 +82,32 @@ def main():
 
     here = os.path.dirname(os.path.abspath(__file__))
     client = os.path.join(here, "midas_ws_client.py")
+
+    # Input handling: a BLUE file streams as-is; with --rate, the input
+    # is a raw discriminator capture that gets FM-wrapped into IQ at the
+    # requested rate first. Mixing them up produces clear errors either
+    # way (a BLUE file plus --rate is ambiguous; a .dis without --rate
+    # fails BLUE parsing with a pointer here).
+    with open(args.bluefile, "rb") as f:
+        is_blue = f.read(4) == b"BLUE"
+    if args.rate is not None:
+        if is_blue:
+            print("error: --rate regenerates IQ from a raw .dis capture, but the "
+                  "input is already a BLUE file -- pass the .dis instead "
+                  "(the loadtest Docker image ships one at "
+                  "/opt/dsd-server/testdata/dmr_it_8.dis)", file=sys.stderr)
+            return 2
+        generated = f"/tmp/stream_load_gen_{args.port}_{int(args.rate)}.tmp"
+        subprocess.run(
+            [sys.executable, os.path.join(here, "make_test_bluefile.py"),
+             args.bluefile, generated, "--rate", str(args.rate)],
+            check=True)
+        args.bluefile = generated
+    elif not is_blue:
+        print("error: input is not a BLUE file; if it is a 48 kHz discriminator "
+              "capture, add --rate <sps> to generate test IQ from it",
+              file=sys.stderr)
+        return 2
 
     # Duration of the capture, for the stream-seconds denominator.
     info = subprocess.run(
