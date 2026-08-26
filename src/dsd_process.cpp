@@ -377,6 +377,30 @@ std::string upper_hex(std::string s) {
     return s;
 }
 
+// Tidy a D-STAR/YSF callsign or text field: collapse internal whitespace
+// runs to a single space, trim the ends, drop non-printable bytes, and
+// treat an all-'*' value (YSF's "unaddressed / group CQ" destination) as
+// empty. Mirrors the DSDcc backend's tidy_cs so both backends present
+// callsigns the same way (e.g. "F1ZIL  B" -> "F1ZIL B").
+std::string tidy_callsign(const std::string& in) {
+    std::string out;
+    bool pending_space = false;
+    bool all_star = true;
+    for (char c : in) {
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (uc < 0x20 || uc > 0x7e) c = ' ';
+        if (c == ' ') {
+            if (!out.empty()) pending_space = true;
+        } else {
+            if (pending_space) { out.push_back(' '); pending_space = false; }
+            if (c != '*') all_star = false;
+            out.push_back(c);
+        }
+    }
+    if (out.empty() || all_star) return std::string();
+    return out;
+}
+
 } // namespace
 
 DsdEvent classify_dsd_fme_line(const std::string& line) {
@@ -477,6 +501,35 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     static const std::regex sysid_re(R"(\bSYS\s*ID\s*(?::\s*|\[\s*)([0-9A-Fa-f]+))", std::regex::icase);
     static const std::regex wacn_re(R"(\bWACN\s*(?::\s*|\[\s*)([0-9A-Fa-f]+))", std::regex::icase);
 
+    // D-STAR / YSF (callsign-based amateur protocols). dsd-fme reprints
+    // the protocol's sync marker ("-DSTAR VOICE", "+YSF") on every frame
+    // line at its default verbosity, so these callsign labels share a
+    // line with the marker -- which is what makes it safe to key the
+    // whole block on the marker's presence (see below) and thereby keep
+    // these labels from ever firing on DMR/P25 numeric-id lines. The
+    // values are fixed-width, space-padded callsigns (which may contain an
+    // internal space, e.g. "F1ZIL  B" = callsign + module), so each field
+    // is captured non-greedily up to the NEXT known label (or end of
+    // line) and then tidied. Formats are dsd-fme's own fprintf strings
+    // (src/dstar.c, src/ysf.c): D-STAR " RPT 2: %s RPT 1: %s DST: %s SRC:
+    // %s"; YSF "DST: %s SRC: %s", "U/L: %s D/L: %s", "DST RID: %s SRC RID:
+    // %s".
+    static const std::regex dstar_ctx_re(R"(DSTAR)", std::regex::icase);
+    static const std::regex ysf_ctx_re(R"(\bYSF\b)", std::regex::icase);
+    static const std::regex cs_src_re(
+        R"(\bSRC:\s*(.*?)\s*(?:DST:|U/?L:|D/?L:|RM\d|DATA\b|REPEATER\b|INTERRUPTED\b|CONTROL\b|URGENT\b|$))",
+        std::regex::icase);
+    static const std::regex cs_dst_re(
+        R"(\bDST:\s*(.*?)\s*(?:SRC:|U/?L:|D/?L:|RPT|DATA\b|REPEATER\b|$))",
+        std::regex::icase);
+    static const std::regex cs_rpt2_re(R"(RPT\s*2:\s*(.*?)\s*(?:RPT\s*1:|DST:|SRC:|$))", std::regex::icase);
+    static const std::regex cs_rpt1_re(R"(RPT\s*1:\s*(.*?)\s*(?:DST:|SRC:|$))", std::regex::icase);
+    static const std::regex dstar_text_re(R"(\bTEXT:\s*(\S.*?)\s*$)", std::regex::icase);
+    static const std::regex ysf_ul_re(R"(\bU/?L:\s*(.*?)\s*(?:D/?L:|RM\d|$))", std::regex::icase);
+    static const std::regex ysf_dl_re(R"(\bD/?L:\s*(.*?)\s*(?:RM\d|$))", std::regex::icase);
+    static const std::regex ysf_dstrid_re(R"(\bDST\s*RID:\s*(\S+))", std::regex::icase);
+    static const std::regex ysf_srcrid_re(R"(\bSRC\s*RID:\s*(\S+))", std::regex::icase);
+
     std::smatch m;
     // strip_leading_zeros normalizes P25's zero-padded "%08d" IDs (and is
     // a no-op on DMR/NXDN's unpadded ones).
@@ -525,7 +578,65 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
         ev.extra += tokens[i];
     }
 
-    if (std::regex_search(line, voice_re)) ev.kind = "voice";
+    // D-STAR / YSF callsign extraction, keyed on the line carrying the
+    // protocol's sync marker (see the regex block above). Kept separate
+    // from the numeric-id path: the callsign labels reuse "SRC:"/"DST:",
+    // so a stray numeric match from the digit regexes above is cleared
+    // first and only the callsign/RID logic below repopulates these
+    // fields.
+    bool cs_call = false;
+    const bool is_dstar = std::regex_search(line, dstar_ctx_re);
+    const bool is_ysf   = std::regex_search(line, ysf_ctx_re);
+    if (is_dstar || is_ysf) {
+        std::smatch cm;
+        std::string src, dst, rpt1, rpt2, ul, dl, text, srcrid, dstrid;
+        if (std::regex_search(line, cm, cs_src_re)) src = tidy_callsign(cm[1].str());
+        if (std::regex_search(line, cm, cs_dst_re)) dst = tidy_callsign(cm[1].str());
+        if (is_dstar) {
+            if (std::regex_search(line, cm, cs_rpt2_re))    rpt2 = tidy_callsign(cm[1].str());
+            if (std::regex_search(line, cm, cs_rpt1_re))    rpt1 = tidy_callsign(cm[1].str());
+            if (std::regex_search(line, cm, dstar_text_re)) text = tidy_callsign(cm[1].str());
+        }
+        std::vector<std::string> cs_extra;
+        if (is_ysf) {
+            if (std::regex_search(line, cm, ysf_ul_re))     ul = tidy_callsign(cm[1].str());
+            if (std::regex_search(line, cm, ysf_dl_re))     dl = tidy_callsign(cm[1].str());
+            if (std::regex_search(line, cm, ysf_srcrid_re)) srcrid = tidy_callsign(cm[1].str());
+            if (std::regex_search(line, cm, ysf_dstrid_re)) dstrid = tidy_callsign(cm[1].str());
+            // FICH call mode / data type, from dsd-fme's textual markers,
+            // mapped to the same tokens the DSDcc backend emits.
+            if (line.find("Group/CQ") != std::string::npos)     cs_extra.push_back("call_mode=group_cq");
+            else if (line.find("RID Mode") != std::string::npos) cs_extra.push_back("call_mode=radio_id");
+            else if (line.find("Private") != std::string::npos)  cs_extra.push_back("call_mode=individual");
+            if (line.find("V/D1") != std::string::npos)      cs_extra.push_back("data_type=vd1");
+            else if (line.find("V/D2") != std::string::npos) cs_extra.push_back("data_type=vd2");
+            else if (line.find("VWFR") != std::string::npos) cs_extra.push_back("data_type=voice_full");
+        }
+        if (is_dstar) {
+            if (!rpt1.empty()) cs_extra.push_back("rpt1=" + rpt1);
+            if (!rpt2.empty()) cs_extra.push_back("rpt2=" + rpt2);
+            if (!text.empty()) cs_extra.push_back("radio_text=" + text);
+        }
+        if (!ul.empty())     cs_extra.push_back("uplink=" + ul);
+        if (!dl.empty())     cs_extra.push_back("downlink=" + dl);
+        if (!srcrid.empty()) cs_extra.push_back("src_rid=" + srcrid);
+        if (!dstrid.empty()) cs_extra.push_back("dst_rid=" + dstrid);
+
+        cs_call = !src.empty() || !dst.empty() || !rpt1.empty() || !rpt2.empty()
+                  || !ul.empty() || !dl.empty() || !text.empty()
+                  || !srcrid.empty() || !dstrid.empty();
+        if (cs_call) {
+            ev.source_id = src; // callsign, not a numeric id
+            ev.talkgroup = dst;
+            for (const auto& t : cs_extra) {
+                if (!ev.extra.empty()) ev.extra += "; ";
+                ev.extra += t;
+            }
+        }
+    }
+
+    if (cs_call) ev.kind = "call"; // callsign call info takes precedence
+    else if (std::regex_search(line, voice_re)) ev.kind = "voice";
     else if (std::regex_search(line, sync_re)) ev.kind = "sync";
     else if (!ev.talkgroup.empty() || !ev.source_id.empty()) ev.kind = "call";
 

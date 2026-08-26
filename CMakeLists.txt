@@ -242,6 +242,29 @@ if(DSD_BUILD_DSDCC_VARIANT)
       set_tests_properties(dpmr_dsdcc_test PROPERTIES TIMEOUT 60)
     endif()
 
+    # DSDcc D-STAR + YSF metadata paths, against DSDcc's bundled real
+    # captures (dstar_f1zil_1.dis, ysf_f5zoo.dis). These are callsign-based
+    # amateur protocols, so the test asserts the real decoded callsigns
+    # (F1NSR/CQCQCQ/F1ZIL B for D-STAR; F1SER/F5ZOO-R1 for YSF).
+    add_executable(test_dstar_ysf_dsdcc EXCLUDE_FROM_ALL
+      src/dsdcc_decoder.cpp
+      tests/test_dstar_ysf_dsdcc.cpp
+    )
+    target_include_directories(test_dstar_ysf_dsdcc PRIVATE src ${DSDCC_INCLUDE_DIR})
+    target_link_libraries(test_dstar_ysf_dsdcc PRIVATE ${DSDCC_LIBRARY} Threads::Threads)
+    if(MBE_LIBRARY)
+      target_link_libraries(test_dstar_ysf_dsdcc PRIVATE ${MBE_LIBRARY})
+    endif()
+    target_compile_options(test_dstar_ysf_dsdcc PRIVATE -Wall -Wextra)
+    if(DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dstar_f1zil_1.dis"
+                        AND EXISTS "${DSDCC_SAMPLES_DIR}/ysf_f5zoo.dis")
+      add_test(NAME dstar_ysf_dsdcc_test
+               COMMAND test_dstar_ysf_dsdcc
+                       "${DSDCC_SAMPLES_DIR}/dstar_f1zil_1.dis"
+                       "${DSDCC_SAMPLES_DIR}/ysf_f5zoo.dis")
+      set_tests_properties(dstar_ysf_dsdcc_test PROPERTIES TIMEOUT 60)
+    endif()
+
     # Full-stack test of the DSDcc server build: session.cpp compiled
     # with DSD_USE_DSDCC_BACKEND (the dsd-server-dsdcc configuration),
     # driven over a real WebSocket with FM-modulated IQ of the same DMR

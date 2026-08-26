@@ -181,7 +181,7 @@ namespace {
 // "not sure" asks the decoder to auto-detect, and anything unrecognized
 // also falls back to auto-detect rather than erroring (a typo shouldn't
 // kill a stream).
-enum class ProtocolHint { Default, Dmr, Nxdn48, Nxdn96, P25p1, P25p2, Dpmr, Auto };
+enum class ProtocolHint { Default, Dmr, Nxdn48, Nxdn96, P25p1, P25p2, Dpmr, Dstar, Ysf, Auto };
 
 ProtocolHint parse_protocol_hint(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -195,6 +195,8 @@ ProtocolHint parse_protocol_hint(std::string s) {
     if (k == "p25p2" || k == "p25phase2") return ProtocolHint::P25p2;
     if (k == "p25" || k == "p25p1" || k == "p25phase1") return ProtocolHint::P25p1;
     if (k == "dpmr") return ProtocolHint::Dpmr;
+    if (k == "dstar") return ProtocolHint::Dstar; // "d-star", "d star" also normalize here
+    if (k == "ysf" || k == "fusion" || k == "systemfusion" || k == "c4fm") return ProtocolHint::Ysf;
     // "auto", "unknown", "notsure", and anything else -> auto-detect
     return ProtocolHint::Auto;
 }
@@ -236,6 +238,8 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         case ProtocolHint::P25p1:
         case ProtocolHint::P25p2:  dcfg.mode = "p25";    break;
         case ProtocolHint::Dpmr:   dcfg.mode = "dpmr";   break;
+        case ProtocolHint::Dstar:  dcfg.mode = "dstar";  break;
+        case ProtocolHint::Ysf:    dcfg.mode = "ysf";    break;
         case ProtocolHint::Auto:   dcfg.mode = "auto";   break;
         case ProtocolHint::Dmr:
         case ProtocolHint::Default:
@@ -253,13 +257,16 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
     // matching the historical behavior; dsd-fme applies the matching
     // input matched-filter for the selected mode automatically. Letters
     // verified against `dsd-fme -h`: s=DMR, i=NXDN48/IDAS, n=NXDN96,
-    // a=auto-detect. P25: 1=Phase 1, 2=Phase 2 (6000 sps TDMA).
+    // a=auto-detect, d=D-STAR, y=YSF, m=dPMR. P25: 1=Phase 1, 2=Phase 2
+    // (6000 sps TDMA).
     switch (hint) {
         case ProtocolHint::Nxdn48: dcfg.mode_flag = "i"; break;
         case ProtocolHint::Nxdn96: dcfg.mode_flag = "n"; break;
         case ProtocolHint::P25p1:  dcfg.mode_flag = "1"; break;
         case ProtocolHint::P25p2:  dcfg.mode_flag = "2"; break;
         case ProtocolHint::Dpmr:   dcfg.mode_flag = "m"; break;
+        case ProtocolHint::Dstar:  dcfg.mode_flag = "d"; break;
+        case ProtocolHint::Ysf:    dcfg.mode_flag = "y"; break;
         case ProtocolHint::Auto:   dcfg.mode_flag = "a"; break;
         case ProtocolHint::Dmr:
         case ProtocolHint::Default:

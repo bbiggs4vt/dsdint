@@ -224,6 +224,65 @@ int main() {
         check(e.emergency.empty(), "dPMR: Emergency = 0 does NOT set the flag");
     }
 
+    // ---- D-STAR (real lines from decoding samples/dstar_f1zil_1.dis) ----
+    // D-STAR / YSF are callsign-based amateur protocols: source_id and
+    // talkgroup carry callsigns (not numeric ids), and the numeric access
+    // codes (color_code/ran/nac) stay blank. Callsign extraction only runs
+    // when the line carries the protocol's sync marker.
+    {
+        DsdEvent e = classify_dsd_fme_line(
+            "18:27:55 Sync: -DSTAR VOICE   RPT 2: F1ZIL  G RPT 1: F1ZIL  B "
+            "DST: CQCQCQ   SRC: F1NSR   ID51 REPEATER");
+        check(e.source_id == "F1NSR ID51", "D-STAR: source callsign (SRC -> source_id)");
+        check(e.talkgroup == "CQCQCQ", "D-STAR: destination callsign (DST -> talkgroup)");
+        check(e.extra.find("rpt1=F1ZIL B") != std::string::npos, "D-STAR: rpt1 in extra");
+        check(e.extra.find("rpt2=F1ZIL G") != std::string::npos, "D-STAR: rpt2 in extra");
+        check(e.kind == "call", "D-STAR: kind call");
+        check(e.color_code.empty() && e.ran.empty() && e.nac.empty(),
+              "D-STAR: no numeric access code");
+    }
+    {
+        // Radio text on its own slow-data frame (same reprinted sync line).
+        DsdEvent e = classify_dsd_fme_line(
+            "18:27:56 Sync: -DSTAR VOICE   TEXT: YANNICK ST RAPHAEL");
+        check(e.extra.find("radio_text=YANNICK ST RAPHAEL") != std::string::npos,
+              "D-STAR: slow-data radio text in extra");
+    }
+    {
+        // A DMR line that happens to contain "SRC:" must NOT be parsed as a
+        // callsign (no DSTAR/YSF marker) -- source stays a numeric id.
+        DsdEvent e = classify_dsd_fme_line(" SLOT 1 TGT=100 SRC=2222223 Group Call ");
+        check(e.source_id == "2222223", "non-amateur line: SRC stays numeric (no callsign path)");
+    }
+
+    // ---- YSF / System Fusion (real lines from samples/ysf_f5zoo.dis) ----
+    {
+        DsdEvent e = classify_dsd_fme_line(
+            "18:28:18 Sync: +YSF  V/D2 Group/CQ -Simplex CC FN: 2/7 SRC: F1SER     ");
+        check(e.source_id == "F1SER", "YSF: source callsign (SRC -> source_id)");
+        check(e.extra.find("call_mode=group_cq") != std::string::npos, "YSF: call_mode group_cq");
+        check(e.extra.find("data_type=vd2") != std::string::npos, "YSF: data_type vd2");
+        check(e.kind == "call", "YSF: kind call");
+    }
+    {
+        // Masked group-CQ destination ("**********") must not become a
+        // bogus talkgroup.
+        DsdEvent e = classify_dsd_fme_line(
+            "18:28:18 Sync: +YSF  V/D2 Group/CQ -Simplex CC FN: 1/7 DST: ********** ");
+        check(e.talkgroup.empty(), "YSF: masked DST (**********) yields no talkgroup");
+    }
+    {
+        DsdEvent e = classify_dsd_fme_line(
+            "18:28:18 Sync: +YSF  V/D2 Group/CQ -Simplex CC FN: 3/7 U/L: F5ZOO-R1  ");
+        check(e.extra.find("uplink=F5ZOO-R1") != std::string::npos, "YSF: uplink callsign in extra");
+        check(e.kind == "call", "YSF: uplink line kind call");
+    }
+    {
+        DsdEvent e = classify_dsd_fme_line(
+            "18:28:18 Sync: +YSF  V/D2 Group/CQ -Simplex CC FN: 4/7 D/L: F5ZOO-R1  ");
+        check(e.extra.find("downlink=F5ZOO-R1") != std::string::npos, "YSF: downlink callsign in extra");
+    }
+
     if (g_failures == 0) {
         std::printf("\nALL DSD-FME PARSE TESTS PASSED\n");
         return 0;

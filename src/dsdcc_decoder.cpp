@@ -40,6 +40,8 @@
 
 #include <dsdcc/dsd_decoder.h>
 #include <dsdcc/dmr.h>
+#include <dsdcc/dstar.h>
+#include <dsdcc/ysf.h>
 
 namespace dsdsrv {
 
@@ -117,6 +119,11 @@ const char* sync_type_name(DSDcc::DSDDecoder::DSDSyncType t) {
     case DSDcc::DSDDecoder::DSDSyncDMRVoiceMS:return "dmr_ms_voice";
     case DSDcc::DSDDecoder::DSDSyncNXDNP:      return "nxdn";
     case DSDcc::DSDDecoder::DSDSyncNXDNN:      return "nxdn";
+    case DSDcc::DSDDecoder::DSDSyncDStarP:        return "dstar";
+    case DSDcc::DSDDecoder::DSDSyncDStarN:        return "dstar";
+    case DSDcc::DSDDecoder::DSDSyncDStarHeaderP:  return "dstar_header";
+    case DSDcc::DSDDecoder::DSDSyncDStarHeaderN:  return "dstar_header";
+    case DSDcc::DSDDecoder::DSDSyncYSF:           return "ysf";
     case DSDcc::DSDDecoder::DSDSyncNone:      return "none";
     default:                                  return "other";
     }
@@ -127,6 +134,50 @@ const char* sync_type_name(DSDcc::DSDDecoder::DSDSyncType t) {
 bool is_nxdn_sync(DSDcc::DSDDecoder::DSDSyncType t) {
     return t == DSDcc::DSDDecoder::DSDSyncNXDNP
         || t == DSDcc::DSDDecoder::DSDSyncNXDNN;
+}
+
+// D-STAR / YSF sync predicates (same "auto"-mode dispatch purpose).
+bool is_dstar_sync(DSDcc::DSDDecoder::DSDSyncType t) {
+    return t == DSDcc::DSDDecoder::DSDSyncDStarP
+        || t == DSDcc::DSDDecoder::DSDSyncDStarN
+        || t == DSDcc::DSDDecoder::DSDSyncDStarHeaderP
+        || t == DSDcc::DSDDecoder::DSDSyncDStarHeaderN;
+}
+
+bool is_ysf_sync(DSDcc::DSDDecoder::DSDSyncType t) {
+    return t == DSDcc::DSDDecoder::DSDSyncYSF;
+}
+
+// Tidy a DSDcc callsign/text field for structured output: DSDcc returns
+// fixed-width, space-padded strings (e.g. "F1ZIL  B", "CQCQCQ  ",
+// "F1NSR   /ID51"). Collapse internal whitespace runs to a single space
+// and trim the ends, so the padded form becomes "F1ZIL B" / "CQCQCQ" /
+// "F1NSR /ID51". Non-printable bytes are treated as spaces, which means a
+// field the decoder hasn't cleanly recovered (garbage from a failed CRC)
+// collapses to empty rather than emitting binary into the JSON. An
+// all-'*' value -- YSF's "unaddressed / group CQ" destination marker --
+// also becomes empty (the call mode already conveys "group call").
+std::string tidy_cs(const std::string& in) {
+    std::string out;
+    bool pending_space = false;
+    bool all_star = true;
+    for (char c : in) {
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (uc < 0x20 || uc > 0x7e) c = ' '; // non-printable -> separator
+        if (c == ' ') {
+            if (!out.empty()) pending_space = true;
+        } else {
+            if (pending_space) { out.push_back(' '); pending_space = false; }
+            if (c != '*') all_star = false;
+            out.push_back(c);
+        }
+    }
+    if (out.empty() || all_star) return std::string();
+    return out;
+}
+
+std::string tidy_cs(const char* in) {
+    return in ? tidy_cs(std::string(in)) : std::string();
 }
 
 } // namespace
@@ -178,6 +229,10 @@ bool DsdccDecoder::start(const DsdccConfig& cfg, EventCallback on_event, AudioCa
         decoder_->setDecodeMode(DSDcc::DSDDecoder::DSDDecodeP25P1, true);
     } else if (cfg_.mode == "dpmr") {
         decoder_->setDecodeMode(DSDcc::DSDDecoder::DSDDecodeDPMR, true);
+    } else if (cfg_.mode == "dstar") {
+        decoder_->setDecodeMode(DSDcc::DSDDecoder::DSDDecodeDStar, true);
+    } else if (cfg_.mode == "ysf") {
+        decoder_->setDecodeMode(DSDcc::DSDDecoder::DSDDecodeYSF, true);
     } else { // "auto" or anything unrecognized
         decoder_->setDecodeMode(DSDcc::DSDDecoder::DSDDecodeAuto, true);
     }
@@ -192,6 +247,8 @@ bool DsdccDecoder::start(const DsdccConfig& cfg, EventCallback on_event, AudioCa
     last_slot_text_[1].clear();
     last_nxdn_sig_.clear();
     last_dpmr_sig_.clear();
+    last_dstar_sig_.clear();
+    last_ysf_sig_.clear();
     last_sync_ = false;
 
     running_ = true;
@@ -280,6 +337,22 @@ void DsdccDecoder::check_for_state_change() {
     if (cfg_.mode == "p25") return;
     if (cfg_.mode == "dpmr") {
         check_for_dpmr_state_change();
+        return;
+    }
+    // D-STAR / YSF: callsign-based amateur protocols, each with its own
+    // metadata path (and its own decoder state, distinct from the DMR
+    // slot text). Dispatch on the configured mode, or in "auto" on the
+    // current sync flavor.
+    const bool dstar = (cfg_.mode == "dstar")
+                       || (cfg_.mode == "auto" && is_dstar_sync(sync_type));
+    if (dstar) {
+        check_for_dstar_state_change();
+        return;
+    }
+    const bool ysf = (cfg_.mode == "ysf")
+                     || (cfg_.mode == "auto" && is_ysf_sync(sync_type));
+    if (ysf) {
+        check_for_ysf_state_change();
         return;
     }
 
@@ -421,6 +494,107 @@ void DsdccDecoder::check_for_dpmr_state_change() {
     char raw[96];
     std::snprintf(raw, sizeof(raw), "(dsdcc dpmr) own %u called %u", own, called);
     ev.raw_line = raw;
+    on_event_(ev);
+}
+
+void DsdccDecoder::check_for_dstar_state_change() {
+    // D-STAR identifies stations by callsign, not numeric id. Map the
+    // transmitting station's callsign (MYCALL/"my sign") to source_id and
+    // the destination ("your sign", e.g. CQCQCQ) to talkgroup, mirroring
+    // the dsd-fme backend's SRC/DST. The repeater path (RPT1/RPT2), the
+    // 20-char slow-data radio text, and any decoded APRS/GPS locator ride
+    // in extra. Numeric access codes (color_code) don't apply to D-STAR.
+    const DSDcc::DSDDstar& d = decoder_->getDStarDecoder();
+    const std::string my   = tidy_cs(d.getMySign());
+    const std::string ur   = tidy_cs(d.getYourSign());
+    const std::string rpt1 = tidy_cs(d.getRpt1());
+    const std::string rpt2 = tidy_cs(d.getRpt2());
+    const std::string text = tidy_cs(d.getInfoText());
+    const std::string loc  = tidy_cs(d.getLocator());
+
+    const std::string sig = my + "|" + ur + "|" + rpt1 + "|" + rpt2 + "|"
+                            + text + "|" + loc;
+    if (sig == last_dstar_sig_) return;
+    last_dstar_sig_ = sig;
+
+    // Nothing identifiable yet (a bare radio-text or repeater fragment
+    // before any callsign is not itself a call event).
+    if (my.empty() && ur.empty()) return;
+
+    DsdEvent ev;
+    ev.kind = "call";
+    ev.source_id = my;
+    ev.talkgroup = ur;
+
+    std::vector<std::string> extra;
+    if (!rpt1.empty()) extra.push_back("rpt1=" + rpt1);
+    if (!rpt2.empty()) extra.push_back("rpt2=" + rpt2);
+    if (!text.empty()) extra.push_back("radio_text=" + text);
+    // Bearing/distance are only meaningful relative to a configured own
+    // position (dsdccx's -P/-Q); the server sets none, so they stay 0 and
+    // only the raw Maidenhead locator is surfaced.
+    if (!loc.empty()) extra.push_back("gps=" + loc);
+    for (std::size_t i = 0; i < extra.size(); ++i) {
+        if (i) ev.extra += "; ";
+        ev.extra += extra[i];
+    }
+
+    ev.raw_line = "(dsdcc dstar) my " + my + " ur " + ur;
+    on_event_(ev);
+}
+
+void DsdccDecoder::check_for_ysf_state_change() {
+    // System Fusion (YSF), like D-STAR, is callsign-based. SRC/DST map to
+    // source_id/talkgroup; the repeater uplink/downlink callsigns and the
+    // FICH call mode / data type ride in extra. In Radio ID call mode the
+    // 5-digit numeric DSQ ids are carried as src_rid/dst_rid tokens.
+    const DSDcc::DSDYSF& y = decoder_->getYSFDecoder();
+    const std::string src = tidy_cs(y.getSrc());
+    const std::string dst = tidy_cs(y.getDest());     // "**********" -> ""
+    const std::string up  = tidy_cs(y.getUplink());
+    const std::string dn  = tidy_cs(y.getDownlink());
+
+    const DSDcc::DSDYSF::FICH& fich = y.getFICH();
+    // Descriptive tokens matching the dsd-fme backend's YSF vocabulary.
+    static const char* call_mode_tok[4] = {"group_cq", "radio_id", "reserved", "individual"};
+    static const char* data_type_tok[4] = {"vd1", "data_full", "vd2", "voice_full"};
+    const std::string cmode = call_mode_tok[fich.getCallMode() & 3];
+    const std::string dtype = data_type_tok[fich.getDataType() & 3];
+
+    std::string src_rid, dst_rid;
+    if (y.radioIdMode()) {
+        src_rid = tidy_cs(y.getSrcId());
+        dst_rid = tidy_cs(y.getDestId());
+    }
+
+    const std::string sig = src + "|" + dst + "|" + up + "|" + dn + "|"
+                            + cmode + "|" + dtype + "|" + src_rid + "|" + dst_rid;
+    if (sig == last_ysf_sig_) return;
+    last_ysf_sig_ = sig;
+
+    // Only a FICH so far (call mode / data type decode before any
+    // callsign): nothing addressable to report yet.
+    if (src.empty() && dst.empty() && up.empty() && dn.empty()
+        && src_rid.empty() && dst_rid.empty()) return;
+
+    DsdEvent ev;
+    ev.kind = "call";
+    ev.source_id = src;
+    ev.talkgroup = dst;
+
+    std::vector<std::string> extra;
+    extra.push_back("call_mode=" + cmode);
+    extra.push_back("data_type=" + dtype);
+    if (!up.empty()) extra.push_back("uplink=" + up);
+    if (!dn.empty()) extra.push_back("downlink=" + dn);
+    if (!src_rid.empty()) extra.push_back("src_rid=" + src_rid);
+    if (!dst_rid.empty()) extra.push_back("dst_rid=" + dst_rid);
+    for (std::size_t i = 0; i < extra.size(); ++i) {
+        if (i) ev.extra += "; ";
+        ev.extra += extra[i];
+    }
+
+    ev.raw_line = "(dsdcc ysf) src " + src + " dst " + dst;
     on_event_(ev);
 }
 

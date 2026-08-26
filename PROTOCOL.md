@@ -52,6 +52,8 @@ case-insensitive, and spaces/underscores/hyphens are ignored:
 | `p25` (or `p25p1`) | P25 Phase 1 | `-f1` | P25p1 (mode only, no fields) |
 | `p25p2` | P25 Phase 2 (6000 sps TDMA) | `-f2` | P25p1 (mode only, no fields) |
 | `dpmr` | dPMR (6.25 kHz FDMA) | `-fm` | dPMR |
+| `dstar` (or `d-star`) | D-STAR | `-fd` | D-STAR |
+| `ysf` (or `fusion`, `c4fm`) | Yaesu System Fusion | `-fy` | YSF |
 | `auto` / `unknown` / `not sure` / anything else | auto-detect | `-fa` | auto |
 
 The hint only steers mode selection; it does not change the wire format
@@ -168,24 +170,28 @@ protocol; this table says which ones ever carry a non-`""` value for a
 given protocol (driven by the `protocol` start hint). A blank cell means
 the field stays `""` for that protocol — not that it is omitted.
 
-| field | DMR | NXDN | P25 | dPMR | notes |
-|---|:---:|:---:|:---:|:---:|---|
-| `type` | ✓ | ✓ | ✓ | ✓ | always `"event"` |
-| `kind` | ✓ | ✓ | ✓ | ✓ | `burst` is DSDcc/DMR-only; NXDN/P25 control messages are `unknown` |
-| `talkgroup` | ✓ | ✓ | ✓ | ✓ | DMR `TGT=`; NXDN `Dst/TG=`; P25 `TGT:`; dPMR `TG=` (zero-padding stripped) |
-| `source_id` | ✓ | ✓ | ✓ | ✓ | `Src=` / `SRC:` (zero-padding stripped) |
-| `slot` | ✓ | — | — | — | DMR TDMA slot `1`/`2` |
-| `color_code` | ✓ | — | — | ✓* | DMR color code / dPMR channel code; *dPMR: dsd-fme backend only |
-| `ran` | — | ✓ | — | — | NXDN Radio Access Number |
-| `nac` | — | — | ✓* | — | P25 Network Access Code (hex); *dsd-fme backend only |
-| `emergency` | ✓* | ✓* | ✓* | ✓* | emergency flag; *dsd-fme backend only |
-| `alias` | ✓* | — | — | — | DMR talker alias; *dsd-fme backend only |
-| `crc_error` | ✓ | ✓ | ✓ | ✓ | FEC/CRC-failure flag (dsd-fme, and DSDcc for DMR/NXDN) |
-| `extra` | ✓ | ✓ | ✓ | — | protocol/backend-specific `key=value` tokens (see below) |
-| `raw` | ✓ | ✓ | ✓ | ✓ | always the source line/description |
+| field | DMR | NXDN | P25 | dPMR | D-STAR | YSF | notes |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|---|
+| `type` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | always `"event"` |
+| `kind` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `burst` is DSDcc/DMR-only; NXDN/P25 control messages are `unknown` |
+| `talkgroup` | ✓ | ✓ | ✓ | ✓ | ‡ | ‡ | DMR `TGT=`; NXDN `Dst/TG=`; P25 `TGT:`; dPMR `TG=` (zero-padding stripped). ‡ D-STAR/YSF: a **callsign** (the destination — e.g. `CQCQCQ`), not a numeric id |
+| `source_id` | ✓ | ✓ | ✓ | ✓ | ‡ | ‡ | `Src=` / `SRC:` (zero-padding stripped). ‡ D-STAR/YSF: the transmitting station's **callsign** |
+| `slot` | ✓ | — | — | — | — | — | DMR TDMA slot `1`/`2` |
+| `color_code` | ✓ | — | — | ✓* | — | — | DMR color code / dPMR channel code; *dPMR: dsd-fme backend only |
+| `ran` | — | ✓ | — | — | — | — | NXDN Radio Access Number |
+| `nac` | — | — | ✓* | — | — | — | P25 Network Access Code (hex); *dsd-fme backend only |
+| `emergency` | ✓* | ✓* | ✓* | ✓* | — | — | emergency flag; *dsd-fme backend only |
+| `alias` | ✓* | — | — | — | — | — | DMR talker alias; *dsd-fme backend only |
+| `crc_error` | ✓ | ✓ | ✓ | ✓ | ✓* | ✓* | FEC/CRC-failure flag (dsd-fme, and DSDcc for DMR/NXDN); *D-STAR/YSF: dsd-fme only |
+| `extra` | ✓ | ✓ | ✓ | — | ✓ | ✓ | protocol/backend-specific `key=value` tokens (see below) |
+| `raw` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | always the source line/description |
 
 (`color_code`/`ran`/`nac` are the per-protocol access codes — DMR & dPMR,
-NXDN, P25 respectively — so at most one is populated for a given signal.)
+NXDN, P25 respectively — so at most one is populated for a given signal.
+D-STAR and YSF are amateur protocols that identify stations by **callsign**,
+so none of the numeric access codes apply; `source_id`/`talkgroup` carry
+callsign text instead of numbers, and the repeater/routing detail rides in
+`extra`.)
 
 `extra` token vocabulary by protocol/backend:
 
@@ -209,6 +215,15 @@ NXDN, P25 respectively — so at most one is populated for a given signal.)
 | `system_code=<n>` | NXDN | both | trunked system code |
 | `location_id=<hex>` | NXDN | both | site location ID |
 | `category=<name>` | NXDN | dsd-fme | system scope, e.g. `Global` |
+| `rpt1=<call>` | D-STAR | both | uplink repeater callsign (RPT1) |
+| `rpt2=<call>` | D-STAR | both | gateway/link repeater callsign (RPT2) |
+| `radio_text=<text>` | D-STAR | both | slow-data message text (free text) |
+| `gps=<locator>` | D-STAR | DSDcc | Maidenhead locator from slow-data GPS |
+| `uplink=<call>` | YSF | both | repeater uplink callsign (U/L) |
+| `downlink=<call>` | YSF | both | repeater downlink callsign (D/L) |
+| `call_mode=<mode>` | YSF | both | FICH call mode: `group_cq` / `radio_id` / `individual` |
+| `data_type=<type>` | YSF | both | FICH data type: `vd1` / `vd2` / `voice_full` / `data_full` |
+| `src_rid=<n>` / `dst_rid=<n>` | YSF | both | numeric DSQ radio IDs (Radio ID call mode) |
 
 Both backends emit the NXDN fields (`ran`, `source_id`, `talkgroup`, and
 the `site_code`/`system_code`/`location_id` tokens) with the same shape,
@@ -252,8 +267,27 @@ against DSDcc's bundled `samples/dpmr.dis`): the dsd-fme backend reports
 `Channel Code=NN`), the DSDcc backend reports `talkgroup`/`source_id`
 from its own/called ids (its channel-code accessor is unreliable, so it
 omits `color_code`). As with DMR, the two backends can report different
-ids for the same call (they read different frame fields). Anything else
-auto-detects into `raw` under `kind:"unknown"`.
+ids for the same call (they read different frame fields).
+
+**D-STAR** and **YSF** decode on both backends (both verified live against
+DSDcc's bundled `samples/dstar_f1zil_1.dis` and `samples/ysf_f5zoo.dis`,
+and the dsd-fme parsing pinned against real lines from the same captures
+in `tests/test_dsd_fme_parse.cpp`). These are amateur protocols keyed on
+**callsigns**, so `source_id`/`talkgroup` carry callsign text and the
+numeric access codes stay `""`. D-STAR surfaces the transmitting callsign
+(`source_id`), the "your call" destination (`talkgroup`, e.g. `CQCQCQ`),
+the repeater path (`rpt1`/`rpt2`), slow-data `radio_text`, and — DSDcc
+only — a Maidenhead `gps` locator. YSF surfaces `source_id`/`talkgroup`
+callsigns, the repeater `uplink`/`downlink`, and the FICH `call_mode` /
+`data_type`; in Radio-ID call mode the numeric `src_rid`/`dst_rid` DSQ ids
+appear instead of callsigns. Two backend-shape differences worth noting:
+the DSDcc backend emits one consolidated `call` event per state change,
+while dsd-fme emits a separate event per frame (source on one, repeater on
+the next, …) because its metadata arrives on separate log lines; and the
+two decoders can disagree on a repeater's module letter or a partly-copied
+callsign, the same cross-backend caveat as the numeric protocols.
+
+Anything else auto-detects into `raw` under `kind:"unknown"`.
 
 Encoding guarantee: strings are JSON-escaped per RFC 8259 including
 control characters (`\u00XX`), and the subprocess backend strips ANSI
@@ -351,6 +385,42 @@ CRC-flagged bad frame); the third is the DSDcc backend (own/called ids,
 no channel code). Both are from the same file — the id disagreement
 (10011/243 vs 14653/302) is the usual cross-backend decode-layer
 difference.
+
+##### D-STAR (`protocol:"dstar"`) — real, both backends
+
+Real frames from decoding `samples/dstar_f1zil_1.dis` (F1NSR calling CQ
+through the F1ZIL repeater). `source_id`/`talkgroup` carry **callsigns**;
+the numeric access codes stay `""`:
+
+```json
+{"type":"event","kind":"call","talkgroup":"CQCQCQ","source_id":"F1NSR ID51","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"rpt1=F1ZIL B; rpt2=F1ZIL G","raw":"18:27:55 Sync: -DSTAR VOICE   RPT 2: F1ZIL  G RPT 1: F1ZIL  B DST: CQCQCQ   SRC: F1NSR   ID51 REPEATER"}
+{"type":"event","kind":"call","talkgroup":"CQCQCQ","source_id":"F1NSR /ID51","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"rpt1=F1ZIL B; rpt2=F1ZIL B; radio_text=YANNICK ST RAPHAEL","raw":"(dsdcc dstar) my F1NSR /ID51 ur CQCQCQ"}
+```
+
+The first is the dsd-fme backend (the call info shares its reprinted sync
+line); the second is the DSDcc backend, which consolidates the callsigns,
+repeater path, and the assembled slow-data `radio_text` into one event.
+(The two decoders copy the repeater module letter differently — `F1ZIL G`
+vs `F1ZIL B` — the same cross-backend caveat as the numeric protocols.)
+
+##### YSF / System Fusion (`protocol:"ysf"`) — real, both backends
+
+Real frames from decoding `samples/ysf_f5zoo.dis` (F1SER/F6FCE via the
+F5ZOO-R1 repeater, group CQ, V/D type 2). dsd-fme's metadata arrives on
+separate frame lines (source, then uplink/downlink), so it emits one event
+each; the DSDcc backend consolidates:
+
+```json
+{"type":"event","kind":"call","talkgroup":"","source_id":"F1SER","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"call_mode=group_cq; data_type=vd2","raw":"18:28:18 Sync: +YSF  V/D2 Group/CQ -Simplex CC FN: 2/7 SRC: F1SER     "}
+{"type":"event","kind":"call","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"call_mode=group_cq; data_type=vd2; uplink=F5ZOO-R1","raw":"18:28:18 Sync: +YSF  V/D2 Group/CQ -Simplex CC FN: 3/7 U/L: F5ZOO-R1  "}
+{"type":"event","kind":"call","talkgroup":"","source_id":"F1SER","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"call_mode=group_cq; data_type=vd2; uplink=F5ZOO-R1; downlink=F5ZOO-R1","raw":"(dsdcc ysf) src F1SER dst "}
+```
+
+The first two are the dsd-fme backend (source on one frame, uplink on the
+next); the third is the DSDcc backend, carrying source, repeater
+uplink/downlink, and the FICH call mode / data type together. The masked
+group-CQ destination (`**********`) is normalized to an empty `talkgroup`
+rather than an invented id.
 
 ##### NXDN / IDAS (subprocess backend with `protocol:"nxdn48"`)
 

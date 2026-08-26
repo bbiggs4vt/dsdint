@@ -112,6 +112,12 @@ private:
     void check_for_nxdn_state_change();
     // dPMR metadata path (own/called ids).
     void check_for_dpmr_state_change();
+    // D-STAR / YSF metadata paths. These are amateur protocols that
+    // identify stations by callsign (text), not numeric ids, so
+    // source_id/talkgroup carry callsigns and the numeric access-code
+    // fields (color_code/ran/nac) stay blank -- see PROTOCOL.md.
+    void check_for_dstar_state_change();
+    void check_for_ysf_state_change();
 
     std::unique_ptr<DSDcc::DSDDecoder> decoder_;
     DsdccConfig cfg_;
@@ -128,6 +134,10 @@ private:
     // same change-detection purpose as last_slot_text_ on the DMR path.
     std::string last_nxdn_sig_;
     std::string last_dpmr_sig_;
+    // Last-reported D-STAR/YSF call-info signatures (callsigns + text),
+    // same change-detection purpose as the paths above.
+    std::string last_dstar_sig_;
+    std::string last_ysf_sig_;
 };
 
 } // namespace dsdsrv
