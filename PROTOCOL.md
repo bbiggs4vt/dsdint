@@ -26,7 +26,7 @@ back to the defaults shown (see `handle_text_message` in `session.cpp`).
 
 | type | fields | effect |
 |---|---|---|
-| `start` | `sample_rate` (default 2000000), `channel_bandwidth` (12500), `freq_offset` (0), `gain` (26000), `afc` (false), `protocol` ("") | Builds the demod + DSD pipeline. If a pipeline is already running it is stopped and rebuilt (clean restart). Replies with `started` on success, `error` on failure. |
+| `start` | `sample_rate` (default 2000000), `channel_bandwidth` (12500), `freq_offset` (0), `gain` (26000), `afc` (false), `protocol` (""), `key_type` (""), `key` ("") | Builds the demod + DSD pipeline. If a pipeline is already running it is stopped and rebuilt (clean restart). Replies with `started` on success, `error` on failure. |
 | `set_gain` | `gain` (26000) | Live-adjusts discriminator gain. No reply. Ignored (silently) if no pipeline is running. |
 | `set_freq_offset` | `hz` (0) | Live-adjusts the NCO shift. No reply. Ignored if no pipeline is running. Also resets any accumulated AFC correction (an explicit retune is a statement of new truth). |
 | `stop` | — | Tears down the pipeline (kills the dsd-fme child / destroys the decoder). No reply. The WebSocket stays open; a new `start` is accepted afterwards. |
@@ -65,6 +65,41 @@ codes and adjacent-site info). The in-process **DSDcc backend's NXDN
 support is fragile on real signals** — it locks on clean/synthetic input
 but drops sync on real captures — so prefer the dsd-fme backend for
 anything but DMR.
+
+`key_type` / `key`: an **optional decryption key**. `key_type` names the
+scheme and `key` is its value; both absent/`""` (the default) means no key
+and unchanged behavior. `key_type` parsing is forgiving (case-insensitive,
+spaces/underscores/hyphens ignored). A named `key_type` with a
+missing/invalid `key` is rejected with an `error` reply and the pipeline
+is not started. A valid `key` is decimal or hex digits (AES/Hytera keys
+may contain the spaces that separate dsd-fme's 64-bit hex words); no other
+characters are accepted.
+
+| `key_type` | scheme | value format | dsd-fme | DSDcc |
+|---|---|---|---|---|
+| `bp` (or `basic_privacy`) | DMR Basic Privacy | key **number**, decimal `1`–`255` | `-b` | ✅ `setDMRBasicPrivacyKey` |
+| `rc4` | RC4 (DMR/P25/NXDN) | hex | `-1` | — |
+| `des` | DES | hex | `-1` | — |
+| `aes` (or `aes128`/`aes256`) | AES-128 / AES-256 | hex (space-separated 64-bit words) | `-H` | — |
+| `hytera` | Hytera Basic Privacy | hex | `-H` | — |
+| `scrambler` (or `nxdn_scrambler`, `dpmr_scrambler`) | NXDN/dPMR EHR scrambler | decimal | `-R` | — |
+
+**Capability gap — read before relying on this.** Only **DMR Basic
+Privacy** decrypts on **both** backends; every other scheme is
+**dsd-fme-backend only** (the in-process DSDcc library has no
+RC4/AES/DES/scrambler support — its sole decryption is the BP key table).
+On the DSDcc backend a non-`bp` `key_type` is ignored (logged to stderr)
+and the stream decodes without a key. DMR Basic Privacy is not an
+arbitrary key: the number selects one of DSDcc's / dsd-fme's built-in
+well-known BP keys. Because BP carries no reliable in-band "encrypted"
+flag, a BP key is XOR-applied to **every** DMR voice frame — so setting
+one on an *unencrypted* channel garbles the audio; only set it when the
+channel actually uses BP. The BP path is verified end-to-end on the DSDcc
+backend (`tests/test_bp_key_dsdcc.cpp`); the dsd-fme key flags are
+verified against dsd-fme's own `-h`/source and confirmed accepted by the
+real binary, but — lacking an encrypted capture with a known key — actual
+decryption of a live encrypted signal is not asserted here. The key value
+is passed to dsd-fme as a separate argv token (never a shell string).
 
 `afc`: when `true`, the demod continuously measures the residual carrier
 offset in its own discriminator output and steers the NCO to remove it —

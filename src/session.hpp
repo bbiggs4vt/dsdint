@@ -81,7 +81,8 @@ private:
     void handle_binary_message(const uint8_t* data, std::size_t len);
 
     void start_pipeline(double sample_rate, double channel_bw, double freq_offset, float gain, bool afc,
-                        const std::string& protocol = "");
+                        const std::string& protocol = "",
+                        const std::string& key_type = "", const std::string& key = "");
     void stop_pipeline();
 
     // Thread-safe send of a text/binary frame; queues if a write is

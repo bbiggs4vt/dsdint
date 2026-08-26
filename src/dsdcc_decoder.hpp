@@ -73,6 +73,17 @@ struct DsdccConfig {
     // enum is the protocol baud rate — 2400/4800/9600 — not this; DMR's
     // 4800 baud is set internally by setDecodeMode.)
     int input_sample_rate_hz = 48000;
+
+    // DMR Basic Privacy key NUMBER (1–255), or 0 for "no key" (default).
+    // This is the ONLY encryption DSDcc can decrypt: the number selects
+    // one of DSDcc's built-in table of well-known BP keys (see
+    // DSDDMR::BasicPrivacyKeys), which it XORs into the DMR voice frames.
+    // It is not an arbitrary key, and DSDcc has no RC4/AES/DES/scrambler
+    // support — those are dsd-fme-backend only. When set, the XOR is
+    // applied to every DMR voice frame (BP carries no reliable in-band
+    // "encrypted" flag), so pointing it at an unencrypted DMR stream
+    // garbles the audio; leave it 0 unless the channel actually uses BP.
+    unsigned bp_key = 0;
 };
 
 class DsdccDecoder {

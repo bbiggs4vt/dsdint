@@ -237,6 +237,14 @@ bool DsdccDecoder::start(const DsdccConfig& cfg, EventCallback on_event, AudioCa
         decoder_->setDecodeMode(DSDcc::DSDDecoder::DSDDecodeAuto, true);
     }
 
+    // DMR Basic Privacy: if the client supplied a BP key number, hand it
+    // to DSDcc's DMR decoder, which XORs the corresponding built-in key
+    // into the voice frames. 0 (the default) leaves BP off. Only DMR uses
+    // it; it is harmless in other modes (the DMR voice path isn't run).
+    if (cfg_.bp_key != 0) {
+        decoder_->setDMRBasicPrivacyKey(static_cast<unsigned char>(cfg_.bp_key));
+    }
+
     // mbelib-based voice synthesis is enabled by default in DSDDecoder's
     // constructor (m_mbelibEnable(true)); audio comes out at the MBE
     // decoder's native 8 kHz. setUpsampling(0) makes the "no upsampling"

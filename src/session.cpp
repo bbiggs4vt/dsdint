@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <cstring>
+#include <cstdlib>
 #include <cctype>
 #include <random>
 #include <set>
@@ -125,7 +126,12 @@ void Session::handle_text_message(const std::string& msg) {
             // instead of guessing. Absent/"" keeps the historical DMR
             // default (no behavior change for existing clients).
             std::string protocol = json::get_string(obj, "protocol");
-            start_pipeline(sample_rate, bw, offset, gain, afc, protocol);
+            // Optional decryption key. key_type names the scheme (e.g.
+            // "bp" for DMR Basic Privacy); key is its value. Absent/""
+            // means no key (unchanged behavior). See start_pipeline.
+            std::string key_type = json::get_string(obj, "key_type");
+            std::string key = json::get_string(obj, "key");
+            start_pipeline(sample_rate, bw, offset, gain, afc, protocol, key_type, key);
         } else if (type == "set_gain") {
             std::lock_guard<std::mutex> lock(demod_mutex_);
             if (demod_) demod_->set_gain(static_cast<float>(json::get_number(obj, "gain", 26000.0)));
@@ -201,13 +207,65 @@ ProtocolHint parse_protocol_hint(std::string s) {
     return ProtocolHint::Auto;
 }
 
+// Optional decryption key scheme from the client's "key_type" field. Only
+// DMR Basic Privacy (`Bp`) is decryptable on both backends; the rest are
+// dsd-fme-backend only (DSDcc has no RC4/AES/DES/scrambler support). An
+// empty/absent/unrecognized value means "no key" (leave decryption off).
+enum class KeyType { None, Bp, Rc4, Des, Aes, Hytera, Scrambler };
+
+KeyType parse_key_type(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    std::string k;
+    for (char c : s) if (c != ' ' && c != '_' && c != '-') k.push_back(c);
+    if (k.empty()) return KeyType::None;
+    if (k == "bp" || k == "basicprivacy" || k == "dmrbp") return KeyType::Bp;
+    if (k == "rc4") return KeyType::Rc4;
+    if (k == "des") return KeyType::Des;
+    if (k == "aes" || k == "aes128" || k == "aes256") return KeyType::Aes;
+    if (k == "hytera" || k == "hyterabp") return KeyType::Hytera;
+    if (k == "scrambler" || k == "nxdnscrambler" || k == "dpmrscrambler" || k == "ehr")
+        return KeyType::Scrambler;
+    return KeyType::None; // unknown scheme -> don't guess, run without a key
+}
+
+// Every key scheme we expose takes a numeric value: decimal for
+// Bp/Scrambler, hex for Rc4/Des/Aes/Hytera. AES-128/256 and Hytera keys
+// are given to dsd-fme as space-separated 64-bit hex words (its own
+// documented format, e.g. "736B9A9C5645288B 243AD5CB8701EF8A"), so an
+// internal space is allowed; every other character is rejected. This
+// validates client input and guarantees only hex digits and spaces ever
+// reach dsd-fme's argv (a space in a single argv token is inert — there
+// is no shell — so this is not an injection surface). At least one hex
+// digit must be present.
+bool key_value_is_valid(const std::string& v) {
+    bool saw_digit = false;
+    for (char c : v) {
+        if (std::isxdigit(static_cast<unsigned char>(c))) saw_digit = true;
+        else if (c != ' ') return false;
+    }
+    return saw_digit;
+}
+
 } // namespace
 
 void Session::start_pipeline(double sample_rate, double channel_bw, double freq_offset,
-                             float gain, bool afc, const std::string& protocol) {
+                             float gain, bool afc, const std::string& protocol,
+                             const std::string& key_type, const std::string& key) {
     stop_pipeline(); // clean slate if already running
 
     const ProtocolHint hint = parse_protocol_hint(protocol);
+
+    // Validate the optional decryption key up front: a named key_type with
+    // a missing or non-hex/decimal value is a client error, and rejecting
+    // it here also guarantees only a digits-only token can ever reach
+    // dsd-fme's argv.
+    const KeyType key_type_enum = parse_key_type(key_type);
+    if (key_type_enum != KeyType::None && !key_value_is_valid(key)) {
+        send_text(json::Writer().field("type", std::string("error"))
+                      .field("message", std::string("invalid or missing key for key_type '")
+                             + key_type + "' (expected decimal/hex digits)").str());
+        return;
+    }
 
     FmDemodConfig cfg;
     cfg.input_sample_rate_hz = sample_rate;
@@ -246,6 +304,16 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         default:                   dcfg.mode = "dmr";    break;
     }
     dcfg.input_sample_rate_hz = 48000;
+    // DMR Basic Privacy is the only decryption DSDcc can do; the key value
+    // is the BP key NUMBER (decimal 1–255). Any other scheme is dsd-fme
+    // only, so warn and run without a key rather than pretending.
+    if (key_type_enum == KeyType::Bp) {
+        unsigned long n = std::strtoul(key.c_str(), nullptr, 10);
+        dcfg.bp_key = (n > 255) ? 255u : static_cast<unsigned>(n);
+    } else if (key_type_enum != KeyType::None) {
+        std::cerr << "dsd-server: DSDcc backend supports only DMR Basic Privacy "
+                     "('bp') keys; ignoring key_type='" << key_type << "'\n";
+    }
     // DsdccDecoder is in-process, so there's no UDP audio port to
     // allocate -- udp_audio_port_ stays 0 and the "started" message
     // below reports that accurately (0 meaning "not applicable here",
@@ -273,6 +341,28 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         default:                   dcfg.mode_flag = "s"; break;
     }
     dcfg.udp_audio_port = udp_audio_port_;
+    // Decryption key -> the matching dsd-fme flag, appended as a separate
+    // argv token (never a shell string, and key was validated digits-only
+    // above). Flag/value formats verified against dsd-fme's source
+    // (dsd_main.c): -b <dec> DMR Basic Privacy key number; -1 <hex>
+    // RC4/DES; -H <hex> Hytera BP or AES-128/256 (disambiguated by length
+    // inside dsd-fme); -R <dec> NXDN/dPMR EHR scrambler.
+    {
+        std::string kflag;
+        switch (key_type_enum) {
+            case KeyType::Bp:        kflag = "b"; break;
+            case KeyType::Rc4:
+            case KeyType::Des:       kflag = "1"; break;
+            case KeyType::Aes:
+            case KeyType::Hytera:    kflag = "H"; break;
+            case KeyType::Scrambler: kflag = "R"; break;
+            case KeyType::None:      break;
+        }
+        if (!kflag.empty()) {
+            dcfg.extra_args.push_back("-" + kflag);
+            dcfg.extra_args.push_back(key);
+        }
+    }
 #endif
 
     auto self = shared_from_this();

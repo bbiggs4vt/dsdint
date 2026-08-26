@@ -265,6 +265,24 @@ if(DSD_BUILD_DSDCC_VARIANT)
       set_tests_properties(dstar_ysf_dsdcc_test PROPERTIES TIMEOUT 60)
     endif()
 
+    # DSDcc DMR Basic Privacy key plumbing, against the bundled
+    # (unencrypted) DMR capture -- proves the key reaches the voice path.
+    add_executable(test_bp_key_dsdcc EXCLUDE_FROM_ALL
+      src/dsdcc_decoder.cpp
+      tests/test_bp_key_dsdcc.cpp
+    )
+    target_include_directories(test_bp_key_dsdcc PRIVATE src ${DSDCC_INCLUDE_DIR})
+    target_link_libraries(test_bp_key_dsdcc PRIVATE ${DSDCC_LIBRARY} Threads::Threads)
+    if(MBE_LIBRARY)
+      target_link_libraries(test_bp_key_dsdcc PRIVATE ${MBE_LIBRARY})
+    endif()
+    target_compile_options(test_bp_key_dsdcc PRIVATE -Wall -Wextra)
+    if(DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
+      add_test(NAME bp_key_dsdcc_test
+               COMMAND test_bp_key_dsdcc "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
+      set_tests_properties(bp_key_dsdcc_test PROPERTIES TIMEOUT 60)
+    endif()
+
     # Full-stack test of the DSDcc server build: session.cpp compiled
     # with DSD_USE_DSDCC_BACKEND (the dsd-server-dsdcc configuration),
     # driven over a real WebSocket with FM-modulated IQ of the same DMR
