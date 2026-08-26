@@ -94,6 +94,54 @@ int main() {
         check(e.talkgroup == "0", "NXDN idle: talkgroup 0 (broadcast/none)");
     }
 
+    // ---- DMR trunking / LC (Con+/Cap+/Tier III, emergency, talker alias) ----
+    // These input strings are dsd-fme's own printf formats (dmr_csbk.c,
+    // dmr_flco.c, dsd_alias.c); the project has no trunking capture, so
+    // these pin the parser against dsd-fme's source formats.
+    {
+        DsdEvent e = classify_dsd_fme_line(
+            " Connect Plus Group Voice Channel Grant; Target: 100; Source: 2048; LCN: 3; TS: 1;");
+        check(e.source_id == "2048", "Con+ grant: source 2048");
+        check(e.extra.find("network_type=con+") != std::string::npos, "Con+ grant: network_type=con+");
+        check(e.extra.find("lcn=3") != std::string::npos, "Con+ grant: lcn=3");
+    }
+    {
+        DsdEvent e = classify_dsd_fme_line(
+            " Capacity Plus Channel Status - FL: 1 TS: 1 RS: 0 - Rest LSN: 5");
+        check(e.extra.find("network_type=cap+") != std::string::npos, "Cap+ status: network_type=cap+");
+        check(e.extra.find("rest_channel=5") != std::string::npos, "Cap+ status: rest_channel=5");
+    }
+    {
+        DsdEvent e = classify_dsd_fme_line(
+            " C_ALOHA_SYS_PARMS: Tier III; Net ID: 9; Site ID: 1;");
+        check(e.extra.find("network_id=9") != std::string::npos, "Aloha: network_id=9");
+        check(e.extra.find("site_id=1") != std::string::npos, "Aloha: site_id=1");
+    }
+    {
+        DsdEvent e = classify_dsd_fme_line(" TG: 100; SRC: 2048; Talker Alias: JOHN SMITH");
+        check(e.alias == "JOHN SMITH", "talker alias captured to end of line");
+        check(e.source_id == "2048", "alias line: source still parsed");
+    }
+    {
+        DsdEvent e = classify_dsd_fme_line(" SLOT 1 TGT=100 SRC=2048 Group Emergency");
+        check(e.emergency == "1", "emergency flag set on 'Group Emergency'");
+    }
+    {
+        // The negative-lookahead cases: these must NOT set emergency (the
+        // value forms are a timer table and a dPMR field, not a flag).
+        DsdEvent e1 = classify_dsd_fme_line(
+            " Timers - Emergency: 3; Packet: 5; MS-MS: 2; Line: 1; ");
+        check(e1.emergency.empty(), "'Emergency: <timer>' does NOT set the flag");
+        DsdEvent e2 = classify_dsd_fme_line("Emergency = 1 - ");
+        check(e2.emergency.empty(), "'Emergency = <n>' does NOT set the flag");
+    }
+    {
+        // Alias regex must not fire on the header/error lines (no colon
+        // right after "Alias").
+        DsdEvent e = classify_dsd_fme_line(" Slot 1 - Talker Alias LC Header; Format 1;");
+        check(e.alias.empty(), "'Talker Alias LC Header' is not an alias value");
+    }
+
     if (g_failures == 0) {
         std::printf("\nALL DSD-FME PARSE TESTS PASSED\n");
         return 0;

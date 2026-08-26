@@ -427,6 +427,22 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     // Require a word boundary AND the colon: without them "Cat" matches
     // inside "Lo(cat)ion", pulling a bogus category out of "Location ID".
     static const std::regex cat_re(R"(\bCat(?:egory)?\s*:\s*([A-Za-z]+))", std::regex::icase);
+    // DMR trunking (Con+/Cap+/Tier III) and LC fields. These formats come
+    // from lwvmobile/dsd-fme's own printf strings (dmr_csbk.c, dmr_flco.c,
+    // dsd_alias.c) -- the project has no trunking capture to exercise them
+    // live, so they are pinned against those exact source formats in
+    // tests/test_dsd_fme_parse.cpp rather than against a decode.
+    static const std::regex netid_re(R"(Net\s*ID:\s*(\d+))", std::regex::icase);
+    static const std::regex siteid_re(R"(Site\s*ID:\s*(\d+(?:\.\d+)?))", std::regex::icase);
+    static const std::regex rest_re(R"(Rest\s*LSN:\s*(\d+))", std::regex::icase);
+    static const std::regex lcn_re(R"(\bLP?CN:\s*(\d+))", std::regex::icase);
+    // Emergency as a flag, but NOT the "Emergency: <timer>" / "Emergency =
+    // <n>" value forms (a timer table and dPMR field), hence the negative
+    // lookahead.
+    static const std::regex emerg_re(R"(\bEmergency\b(?!\s*[:=]))", std::regex::icase);
+    // Talker alias text runs to end of line after "Alias: "; the colon
+    // keeps it off "Alias CRC Error" / "Talker Alias LC Header" lines.
+    static const std::regex alias_re(R"(\bAlias:\s*(\S.*?)\s*$)", std::regex::icase);
 
     std::smatch m;
     if (std::regex_search(line, m, tg_re)) ev.talkgroup = m[1].str();
@@ -439,14 +455,23 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
         ev.color_code = strip_leading_zeros(m[1].str());
     }
     if (std::regex_search(line, m, ran_re)) ev.ran = strip_leading_zeros(m[1].str());
+    if (std::regex_search(line, emerg_re)) ev.emergency = "1";
+    if (std::regex_search(line, m, alias_re)) ev.alias = m[1].str();
     if (std::regex_search(line, err_re)) ev.crc_error = "1";
 
-    // Assemble NXDN trunking detail into extra as key=value tokens.
+    // Assemble trunking/site detail into extra as key=value tokens.
     std::vector<std::string> tokens;
     if (std::regex_search(line, m, site_re))   tokens.push_back("site_code=" + m[1].str());
     if (std::regex_search(line, m, sys_re))     tokens.push_back("system_code=" + m[1].str());
     if (std::regex_search(line, m, loc_re))     tokens.push_back("location_id=" + m[1].str());
     if (std::regex_search(line, m, cat_re))     tokens.push_back("category=" + m[1].str());
+    // DMR trunking (dsd-fme only; DSDcc doesn't decode CSBK payloads).
+    if (line.find("Connect Plus") != std::string::npos)  tokens.push_back("network_type=con+");
+    else if (line.find("Capacity Plus") != std::string::npos) tokens.push_back("network_type=cap+");
+    if (std::regex_search(line, m, netid_re))   tokens.push_back("network_id=" + m[1].str());
+    if (std::regex_search(line, m, siteid_re))  tokens.push_back("site_id=" + m[1].str());
+    if (std::regex_search(line, m, rest_re))    tokens.push_back("rest_channel=" + m[1].str());
+    if (std::regex_search(line, m, lcn_re))     tokens.push_back("lcn=" + m[1].str());
     for (std::size_t i = 0; i < tokens.size(); ++i) {
         if (i) ev.extra += "; ";
         ev.extra += tokens[i];

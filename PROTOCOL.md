@@ -135,11 +135,11 @@ kind; treat the remainder as free text.
 
 One frame per line the DSD backend reports (subprocess backend: one per
 line dsd-fme writes to its log, post-cleanup; DSDcc backend: one per
-detected state change). All nine data fields are always present; empty
+detected state change). All eleven data fields are always present; empty
 string means "not present in this event".
 
 ```json
-{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","color_code":"","ran":"","crc_error":"","extra":"","raw":" SLOT 2 TGT=19535 SRC=2222223 Group Call  "}
+{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","color_code":"","ran":"","emergency":"","alias":"","crc_error":"","extra":"","raw":" SLOT 2 TGT=19535 SRC=2222223 Group Call  "}
 ```
 
 | field | type | meaning |
@@ -151,6 +151,8 @@ string means "not present in this event".
 | `slot` | string | TDMA slot, `"1"` or `"2"`, or `""` when the event isn't slot-specific. |
 | `color_code` | string | DMR color code as bare decimal (`"4"`, not `"04"` — both backends normalize away leading zeros), or `""` when the event doesn't carry one. Which event kinds carry it differs by backend: dsd-fme prints it on its per-burst sync lines, DSDcc's slot status text carries it on `voice`/`call` events. |
 | `ran` | string | NXDN Radio Access Number as bare decimal (`"2"`, not `"02"`), or `""`. The NXDN analog of `color_code` — a repeater-access/filter code — surfaced by the dsd-fme backend on NXDN sync lines that carry `RAN NN`. DMR events leave it `""`, NXDN events leave `color_code` `""`. |
+| `emergency` | string | `"1"` when the line flags the call as an emergency (high-priority traffic), else `""`. dsd-fme backend only. |
+| `alias` | string | DMR talker-alias text (the operator's over-the-air alias) when dsd-fme has assembled and printed it, else `""`. Free text. dsd-fme backend only. |
 | `crc_error` | string | `"1"` when the decoder itself marked this line/burst as failing an FEC/CRC check, else `""`. Subprocess backend: set when the cleaned dsd-fme line carries a `CRC ERR`, `FEC ERR`, or `EMB ERR` marker. DSDcc backend: set on `burst` events whose slot-type PDU failed its Golay(20,8) FEC (`burst=UNK`). Treat the flagged event's other fields (especially `color_code`) as unreliable; note the reverse does not hold — a marginal burst can decode "cleanly" to a wrong value without being flagged. |
 | `extra` | string | Backend-specific detail that doesn't fit the fields above, or `""`. **Format: zero or more `key=value` tokens joined by `"; "`.** DSDcc backend tokens: `unit_target=<id>` (unit-to-unit call target — not a talkgroup, so kept out of `talkgroup`), `burst=<type>` on `burst` events (three-letter slot burst type: `IDL` idle, `CSB` CSBK control, `VLC`/`TLC` voice/terminator link control, `VOX` voice, `UNK` unknown, …), `sync_type=<flavor>` on sync-acquisition events (see below). dsd-fme backend NXDN trunking tokens: `site_code=<n>`, `system_code=<n>`, `location_id=<hex>`, `category=<name>` (e.g. `Global`). Because the same label can mean different things per line (a `Site Code` is the home site on a Site ID line but an adjacent site on an Adjacent Information line), read the accompanying `raw` for context. |
 | `raw` | string | The underlying decoder output this event was parsed from, so nothing is lost to the classification: the cleaned log line (subprocess backend) or a synthesized description (DSDcc backend). Free text; formats below are examples from real decodes, and they **vary across dsd-fme versions/forks** — parse the structured fields, fall back to `raw` only for display/debugging. |
@@ -171,6 +173,8 @@ the field stays `""` for that protocol — not that it is omitted.
 | `slot` | ✓ | — | TDMA slot `1`/`2`; NXDN48 is single-channel, so blank |
 | `color_code` | ✓ | — | DMR color code |
 | `ran` | — | ✓ | NXDN Radio Access Number (the NXDN analog of `color_code`) |
+| `emergency` | ✓* | ✓* | emergency flag; *dsd-fme backend only |
+| `alias` | ✓* | — | DMR talker alias; *dsd-fme backend only |
 | `crc_error` | ✓ | ✓ | FEC/CRC-failure flag; both protocols on the dsd-fme backend |
 | `extra` | ✓ | ✓ | protocol/backend-specific `key=value` tokens (see below) |
 | `raw` | ✓ | ✓ | always the source line/description |
@@ -182,6 +186,11 @@ the field stays `""` for that protocol — not that it is omitted.
 | `unit_target=<id>` | DMR | DSDcc | private-call target (not a talkgroup) |
 | `burst=<type>` | DMR | DSDcc | slot burst type (`IDL`/`CSB`/`VLC`/`TLC`/`VOX`/`UNK`) |
 | `sync_type=<flavor>` | DMR | DSDcc | `dmr_bs_data` / `dmr_ms_voice` / … |
+| `network_type=<con+\|cap+>` | DMR | dsd-fme | Motorola trunking flavor (Connect Plus / Capacity Plus) |
+| `network_id=<n>` | DMR | dsd-fme | trunked network ID (Tier III / Con+ / Cap+) |
+| `site_id=<n>` | DMR | dsd-fme | trunked site ID (may be `N.M` form) |
+| `rest_channel=<n>` | DMR | dsd-fme | rest channel / rest LSN |
+| `lcn=<n>` | DMR | dsd-fme | logical channel number (`LCN`/`LPCN`) |
 | `site_code=<n>` | NXDN | both | site code (home or adjacent — see `raw`) |
 | `system_code=<n>` | NXDN | both | trunked system code |
 | `location_id=<hex>` | NXDN | both | site location ID |
@@ -193,6 +202,18 @@ so a client sees a consistent structure regardless of which backend
 decoded. The DSDcc backend derives `system_code`/`site_code` from the
 high/low 12 bits of its decoded location ID (the same split dsd-fme
 prints); it does not currently surface `category`.
+
+The DMR trunking / LC fields (`emergency`, `alias`, and the
+`network_type` / `network_id` / `site_id` / `rest_channel` / `lcn`
+tokens) are **dsd-fme backend only**: they come from DMR CSBK, data, and
+talker-alias layers that the DSDcc backend does not decode (DSDcc's DMR
+decoder handles voice, slot type / color code, and source/target from
+the embedded LC, but not the CSBK payload). On the DSDcc backend these
+stay `""`. Because the project has no Con+/Cap+/Tier-III capture to drive
+them, these patterns are verified against lwvmobile/dsd-fme's own printf
+formats (pinned in `tests/test_dsd_fme_parse.cpp`) rather than a live
+decode; like all `raw`-derived parsing they may vary across dsd-fme
+versions.
 
 Protocol vs. backend: **DMR** decodes on both the dsd-fme and DSDcc
 backends. **NXDN** parses on both, but is only *reliable* on the dsd-fme
@@ -215,10 +236,10 @@ Captured from lwvmobile/dsd-fme decoding a real DMR group call
 (the test suite's `session_real_fme_test`):
 
 ```json
-{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"2","color_code":"4","ran":"","crc_error":"","extra":"","raw":"20:37:20 Sync: +DMR   slot1  [SLOT2] | Color Code=04 | VC6 "}
-{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","color_code":"","ran":"","crc_error":"","extra":"","raw":" SLOT 2 TGT=19535 SRC=2222223 Group Call  "}
-{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","crc_error":"","extra":"","raw":"Decoding DMR BS/MS Simplex"}
-{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"1","color_code":"5","ran":"","crc_error":"1","extra":"","raw":"13:37:43 Sync: +DMR  [slot1]  slot2  | Color Code=05 | MBCC (FEC ERR)"}
+{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"2","color_code":"4","ran":"","emergency":"","alias":"","crc_error":"","extra":"","raw":"20:37:20 Sync: +DMR   slot1  [SLOT2] | Color Code=04 | VC6 "}
+{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","color_code":"","ran":"","emergency":"","alias":"","crc_error":"","extra":"","raw":" SLOT 2 TGT=19535 SRC=2222223 Group Call  "}
+{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","emergency":"","alias":"","crc_error":"","extra":"","raw":"Decoding DMR BS/MS Simplex"}
+{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"1","color_code":"5","ran":"","emergency":"","alias":"","crc_error":"1","extra":"","raw":"13:37:43 Sync: +DMR  [slot1]  slot2  | Color Code=05 | MBCC (FEC ERR)"}
 ```
 
 - `kind:"sync"` — any line containing "Sync" (dsd-fme's per-burst sync
@@ -239,17 +260,36 @@ Captured from lwvmobile/dsd-fme decoding a real DMR group call
   summary. These are deliberate pass-throughs (the `raw` field is the
   point), not noise to be alarmed by.
 
+##### DMR trunking / talker alias / emergency (dsd-fme backend)
+
+Shapes from dsd-fme's Con+/Cap+/Tier-III and LC output (source-format
+verified — see the backend note above). `raw` is illustrative:
+
+```json
+{"type":"event","kind":"call","talkgroup":"","source_id":"2048","slot":"","color_code":"","ran":"","emergency":"","alias":"","crc_error":"","extra":"network_type=con+; lcn=3","raw":" Connect Plus Group Voice Channel Grant; Target: 100; Source: 2048; LCN: 3; TS: 1;"}
+{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","emergency":"","alias":"","crc_error":"","extra":"network_type=cap+; rest_channel=5","raw":" Capacity Plus Channel Status - FL: 1 TS: 1 RS: 0 - Rest LSN: 5"}
+{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","emergency":"","alias":"","crc_error":"","extra":"network_id=9; site_id=1","raw":" C_ALOHA_SYS_PARMS: Tier III; Net ID: 9; Site ID: 1;"}
+{"type":"event","kind":"call","talkgroup":"","source_id":"2048","slot":"","color_code":"","ran":"","emergency":"","alias":"JOHN SMITH","crc_error":"","extra":"","raw":" TG: 100; SRC: 2048; Talker Alias: JOHN SMITH"}
+{"type":"event","kind":"call","talkgroup":"100","source_id":"2048","slot":"1","color_code":"","ran":"","emergency":"1","alias":"","crc_error":"","extra":"","raw":" SLOT 1 TGT=100 SRC=2048 Group Emergency"}
+```
+
+- `emergency:"1"` flags a line carrying an emergency marker (the value
+  forms `Emergency: <timer>` / `Emergency = <n>` do **not** trip it).
+- `alias` is the talker-alias text once dsd-fme assembles it.
+- `network_type`/`network_id`/`site_id`/`rest_channel`/`lcn` ride in
+  `extra`; DSDcc leaves all of these empty (it doesn't decode CSBK).
+
 ##### NXDN / IDAS (subprocess backend with `protocol:"nxdn48"`)
 
 Captured from dsd-fme decoding a real off-air NXDN48/IDAS trunked
 control channel (the same signal used to verify the `protocol` hint):
 
 ```json
-{"type":"event","kind":"voice","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"2","crc_error":"","extra":"","raw":"Sync: NXDN48  RTCH Voice  RAN 02 PF X/4"}
-{"type":"event","kind":"call","talkgroup":"2043","source_id":"958","slot":"","color_code":"","ran":"","crc_error":"","extra":"","raw":" Session Call - ... - Src=958 - Dst/TG=2043 - Prefix Ch: 3 "}
-{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","crc_error":"","extra":"site_code=1","raw":"Site ID Message - Area: 0; Site Type: 8 Narrow; Site Code: 1 Open Access;  FACCH3"}
-{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","crc_error":"","extra":"site_code=2; system_code=8; category=Global","raw":"Adjacent Information - Cat: Global - Sys Code: 8 - Site Code 2 "}
-{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","crc_error":"","extra":"location_id=008002","raw":"Service Information - Location ID [008002] SVC [01A8] RST [000000] "}
+{"type":"event","kind":"voice","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"2","emergency":"","alias":"","crc_error":"","extra":"","raw":"Sync: NXDN48  RTCH Voice  RAN 02 PF X/4"}
+{"type":"event","kind":"call","talkgroup":"2043","source_id":"958","slot":"","color_code":"","ran":"","emergency":"","alias":"","crc_error":"","extra":"","raw":" Session Call - ... - Src=958 - Dst/TG=2043 - Prefix Ch: 3 "}
+{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","emergency":"","alias":"","crc_error":"","extra":"site_code=1","raw":"Site ID Message - Area: 0; Site Type: 8 Narrow; Site Code: 1 Open Access;  FACCH3"}
+{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","emergency":"","alias":"","crc_error":"","extra":"site_code=2; system_code=8; category=Global","raw":"Adjacent Information - Cat: Global - Sys Code: 8 - Site Code 2 "}
+{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","emergency":"","alias":"","crc_error":"","extra":"location_id=008002","raw":"Service Information - Location ID [008002] SVC [01A8] RST [000000] "}
 ```
 
 - `ran` carries the NXDN Radio Access Number from `RTCH ... RAN NN`
@@ -270,9 +310,9 @@ Captured from DSDcc 1.9.0 decoding the same call
 (`session_dsdcc_test`):
 
 ```json
-{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","crc_error":"","extra":"sync_type=dmr_bs_data","raw":"(dsdcc: sync acquired, dmr_bs_data)"}
-{"type":"event","kind":"burst","talkgroup":"","source_id":"","slot":"1","color_code":"4","ran":"","crc_error":"","extra":"burst=IDL","raw":"(dsdcc slot1) .04 IDL                   "}
-{"type":"event","kind":"voice","talkgroup":"150607","source_id":"2222223","slot":"2","color_code":"4","ran":"","crc_error":"","extra":"","raw":"(dsdcc slot2) *04 VOX 02222223>G00150607"}
+{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","emergency":"","alias":"","crc_error":"","extra":"sync_type=dmr_bs_data","raw":"(dsdcc: sync acquired, dmr_bs_data)"}
+{"type":"event","kind":"burst","talkgroup":"","source_id":"","slot":"1","color_code":"4","ran":"","emergency":"","alias":"","crc_error":"","extra":"burst=IDL","raw":"(dsdcc slot1) .04 IDL                   "}
+{"type":"event","kind":"voice","talkgroup":"150607","source_id":"2222223","slot":"2","color_code":"4","ran":"","emergency":"","alias":"","crc_error":"","extra":"","raw":"(dsdcc slot2) *04 VOX 02222223>G00150607"}
 ```
 
 - `kind:"sync"` — sync acquisition/loss transitions only, not
@@ -309,7 +349,7 @@ target) or `extra: unit_target=<id>` (private), and, on site messages,
 `extra: system_code=<n>; site_code=<n>; location_id=<hex>`:
 
 ```json
-{"type":"event","kind":"call","talkgroup":"200","source_id":"100","slot":"","color_code":"","ran":"9","crc_error":"","extra":"","raw":"(dsdcc nxdn) RAN 9 src 100 dst 200 group"}
+{"type":"event","kind":"call","talkgroup":"200","source_id":"100","slot":"","color_code":"","ran":"9","emergency":"","alias":"","crc_error":"","extra":"","raw":"(dsdcc nxdn) RAN 9 src 100 dst 200 group"}
 ```
 
 Remember the reliability caveat: DSDcc decodes NXDN only on clean signals
