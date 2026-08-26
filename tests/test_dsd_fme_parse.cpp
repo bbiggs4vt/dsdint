@@ -175,6 +175,33 @@ int main() {
         DsdEvent e = classify_dsd_fme_line(" P25 LCW  Group Call; Emergency");
         check(e.emergency == "1", "P25 LCW: emergency flag");
     }
+    // P25 trunking system identity -- these are REAL lines from a P25
+    // Phase 1 control-channel capture (both dsd-fme forms: colon and
+    // bracketed), so this pins the parser against a live decode.
+    {
+        DsdEvent e = classify_dsd_fme_line("17:30:46 Sync: +P25p1 NAC/CC: 717; RFSS: 001; Site: 097;  TSBK");
+        check(e.nac == "717", "P25 CC: NAC 717");
+        check(e.extra.find("rfss=1") != std::string::npos, "P25 CC: rfss=1 (colon form)");
+        check(e.extra.find("site_id=97") != std::string::npos, "P25 CC: site_id=97 (colon form)");
+    }
+    {
+        DsdEvent e = classify_dsd_fme_line(" LRA [00] CFVA [3] RFSS[001] SITE [091] SYSID [715]");
+        check(e.extra.find("rfss=1") != std::string::npos, "P25 netsts: rfss=1 (bracket form)");
+        check(e.extra.find("site_id=91") != std::string::npos, "P25 netsts: site_id=91 (bracket form)");
+        check(e.extra.find("system_id=715") != std::string::npos, "P25 netsts: system_id=715");
+    }
+    {
+        DsdEvent e = classify_dsd_fme_line(" CHAN-T [52E6] CHAN-R [50D7] SSC [70] WACN [BEE0A]");
+        check(e.extra.find("wacn=BEE0A") != std::string::npos, "P25: wacn=BEE0A");
+    }
+    {
+        // NXDN "Site Code" must still NOT be captured as site_id.
+        DsdEvent e = classify_dsd_fme_line(
+            "Adjacent Information - Cat: Global - Sys Code: 8 - Site Code 2 ");
+        check(e.extra.find("site_id=") == std::string::npos,
+              "NXDN 'Site Code' is not mis-parsed as P25 site_id");
+        check(e.extra.find("site_code=2") != std::string::npos, "NXDN site_code still works");
+    }
 
     if (g_failures == 0) {
         std::printf("\nALL DSD-FME PARSE TESTS PASSED\n");

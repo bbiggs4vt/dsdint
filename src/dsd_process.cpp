@@ -371,6 +371,12 @@ std::string strip_leading_zeros(const std::string& s) {
     return (nz == std::string::npos) ? "0" : s.substr(nz);
 }
 
+// Uppercase a hex string in place ("bee0a" -> "BEE0A").
+std::string upper_hex(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return s;
+}
+
 } // namespace
 
 DsdEvent classify_dsd_fme_line(const std::string& line) {
@@ -433,7 +439,11 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     // live, so they are pinned against those exact source formats in
     // tests/test_dsd_fme_parse.cpp rather than against a decode.
     static const std::regex netid_re(R"(Net\s*ID:\s*(\d+))", std::regex::icase);
-    static const std::regex siteid_re(R"(Site\s*ID:\s*(\d+(?:\.\d+)?))", std::regex::icase);
+    // Combined site regex: DMR "Site ID: N[.M]", P25 "Site: N" and the
+    // bracketed "SITE [N]". The ":" or "[" delimiter is REQUIRED -- without
+    // it, "Site Code" (NXDN, its own token) and prose like "Site active"
+    // would false-match.
+    static const std::regex siteid_re(R"(\bSite(?:\s*ID)?\s*(?::\s*|\[\s*)(\d+(?:\.\d+)?))", std::regex::icase);
     static const std::regex rest_re(R"(Rest\s*LSN:\s*(\d+))", std::regex::icase);
     static const std::regex lcn_re(R"(\bLP?CN:\s*(\d+))", std::regex::icase);
     // Emergency as a flag, but NOT the "Emergency: <timer>" / "Emergency =
@@ -450,6 +460,16 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     static const std::regex nac_re(R"(\bNAC(?:/CC)?:\s*([0-9A-Fa-f]+))", std::regex::icase);
     static const std::regex algid_re(R"(\bALG(?:\s*ID)?:\s*0x([0-9A-Fa-f]+))", std::regex::icase);
     static const std::regex keyid_re(R"(\bKEY(?:\s*ID)?:\s*0x([0-9A-Fa-f]+))", std::regex::icase);
+    // P25 trunking system identity, in dsd-fme's two forms: colon
+    // ("RFSS: 001; Site: 097;") and bracketed ("RFSS[001] SITE [091]
+    // SYSID [715]", "WACN [BEE0A]") -- both verified against a real P25
+    // control-channel capture.
+    // The ":" or "[" delimiter is REQUIRED (a bare "RFSS" is captured
+    // without it -- e.g. "Valid RFSS Connection" grabbed the 'C' of
+    // "Connection", a valid hex digit).
+    static const std::regex rfss_re(R"(\bRFSS\s*(?::\s*|\[\s*)([0-9A-Fa-f]+))", std::regex::icase);
+    static const std::regex sysid_re(R"(\bSYS\s*ID\s*(?::\s*|\[\s*)([0-9A-Fa-f]+))", std::regex::icase);
+    static const std::regex wacn_re(R"(\bWACN\s*(?::\s*|\[\s*)([0-9A-Fa-f]+))", std::regex::icase);
 
     std::smatch m;
     // strip_leading_zeros normalizes P25's zero-padded "%08d" IDs (and is
@@ -482,9 +502,13 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     if (line.find("Connect Plus") != std::string::npos)  tokens.push_back("network_type=con+");
     else if (line.find("Capacity Plus") != std::string::npos) tokens.push_back("network_type=cap+");
     if (std::regex_search(line, m, netid_re))   tokens.push_back("network_id=" + m[1].str());
-    if (std::regex_search(line, m, siteid_re))  tokens.push_back("site_id=" + m[1].str());
+    if (std::regex_search(line, m, siteid_re))  tokens.push_back("site_id=" + strip_leading_zeros(m[1].str()));
     if (std::regex_search(line, m, rest_re))    tokens.push_back("rest_channel=" + m[1].str());
     if (std::regex_search(line, m, lcn_re))     tokens.push_back("lcn=" + m[1].str());
+    // P25 trunking system identity (rfss/system id/wacn; wacn+sysid hex).
+    if (std::regex_search(line, m, rfss_re))    tokens.push_back("rfss=" + strip_leading_zeros(m[1].str()));
+    if (std::regex_search(line, m, sysid_re))   tokens.push_back("system_id=" + upper_hex(m[1].str()));
+    if (std::regex_search(line, m, wacn_re))    tokens.push_back("wacn=" + upper_hex(m[1].str()));
     // P25 encryption identifiers (bare hex; alg 0x80=clear, 0xAA=ADP, etc.;
     // key 0x0000=unencrypted). crc_error flags the FEC-ERR variants.
     if (std::regex_search(line, m, algid_re))   tokens.push_back("alg_id=" + m[1].str());

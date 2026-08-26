@@ -198,6 +198,10 @@ P25 respectively — so exactly one is populated for a given signal.)
 | `site_id=<n>` | DMR | dsd-fme | trunked site ID (may be `N.M` form) |
 | `rest_channel=<n>` | DMR | dsd-fme | rest channel / rest LSN |
 | `lcn=<n>` | DMR | dsd-fme | logical channel number (`LCN`/`LPCN`) |
+| `rfss=<n>` | P25 | dsd-fme | RF Sub-System id (trunking) |
+| `site_id=<n>` | DMR/P25 | dsd-fme | site id (DMR `Site ID:`, P25 `Site:`/`SITE [ ]`) |
+| `system_id=<hex>` | P25 | dsd-fme | P25 System ID |
+| `wacn=<hex>` | P25 | dsd-fme | Wide Area Communications Network id |
 | `alg_id=<hex>` | P25 | dsd-fme | encryption algorithm id (`80`=clear, `84`=AES256, `AA`=ADP, …) |
 | `key_id=<hex>` | P25 | dsd-fme | encryption key id (`0000`=unencrypted) |
 | `site_code=<n>` | NXDN | both | site code (home or adjacent — see `raw`) |
@@ -224,14 +228,17 @@ formats (pinned in `tests/test_dsd_fme_parse.cpp`) rather than a live
 decode; like all `raw`-derived parsing they may vary across dsd-fme
 versions.
 
-**P25** (`nac`, `alg_id`/`key_id`, plus the shared `talkgroup`/
-`source_id`/`emergency`) is **dsd-fme backend only**. dsd-fme has full
-P25 Phase 1/2 + trunking decode; the DSDcc backend has a P25 Phase 1
-*decoder* but this wrapper does not yet read its metadata, so on the
-DSDcc backend a P25 stream produces sync events only and these fields
-stay `""`. As with the DMR trunking cluster, the project has no P25
-capture, so the P25 patterns are verified against dsd-fme's source
-formats (pinned in `tests/test_dsd_fme_parse.cpp`), not a live decode.
+**P25** (`nac`, `rfss`/`site_id`/`system_id`/`wacn`, `alg_id`/`key_id`,
+plus the shared `talkgroup`/`source_id`/`emergency`) is **dsd-fme backend
+only**. dsd-fme has full P25 Phase 1/2 + trunking decode; the DSDcc
+backend has a P25 Phase 1 *decoder* but this wrapper does not yet read
+its metadata, so on the DSDcc backend a P25 stream produces sync events
+only and these fields stay `""`. The P25 patterns are verified against a
+real P25 Phase 1 control-channel capture (`nac`, `rfss`, `site_id`,
+`system_id`, `wacn` all confirmed live end to end); the encryption
+`alg_id`/`key_id` and `emergency` shapes, which that capture did not
+exercise, are pinned against dsd-fme's source formats in
+`tests/test_dsd_fme_parse.cpp`.
 
 Protocol vs. backend: **DMR** decodes on both the dsd-fme and DSDcc
 backends. **NXDN** parses on both, but is only *reliable* on the dsd-fme
@@ -298,20 +305,26 @@ verified — see the backend note above). `raw` is illustrative:
 
 ##### P25 (subprocess backend with `protocol:"p25"` / `"p25p2"`)
 
-Shapes from dsd-fme's P25 output (source-format verified — no P25
-capture in the project). `nac` is the P25 access code; `alg_id`/`key_id`
-are the encryption identifiers:
+The first two frames are **real** — from a P25 Phase 1 control-channel
+capture; the rest (a voice call with encryption) are source-format
+shapes:
 
 ```json
-{"type":"event","kind":"call","talkgroup":"100","source_id":"2048","slot":"","color_code":"","ran":"","nac":"293","emergency":"","alias":"","crc_error":"","extra":"","raw":"2023/10/02 10:23:18 P25 TGT: 00000100; SRC: 00002048; NAC: 293;"}
+{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","nac":"717","emergency":"","alias":"","crc_error":"","extra":"rfss=1; site_id=97","raw":"17:30:46 Sync: +P25p1 NAC/CC: 717; RFSS: 001; Site: 097;  TSBK"}
+{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"site_id=91; rfss=1; system_id=715","raw":" LRA [00] CFVA [3] RFSS[001] SITE [091] SYSID [715]"}
+{"type":"event","kind":"call","talkgroup":"100","source_id":"2048","slot":"","color_code":"","ran":"","nac":"293","emergency":"","alias":"","crc_error":"","extra":"","raw":"P25 TGT: 00000100; SRC: 00002048; NAC: 293;"}
 {"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"alg_id=84; key_id=0001","raw":" HDU  ALG ID: 0x84 KEY ID: 0x0001 MI: 0x0123456789ABCDEF"}
-{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"alg_id=80; key_id=0000","raw":" LDU2 ALG ID: 0x80 KEY ID: 0x0000 MI: 0x0..."}
 ```
 
 - `nac` (hex) is the P25 network access code — the P25 analog of DMR
   `color_code` and NXDN `ran`.
+- `rfss` / `site_id` / `system_id` / `wacn` are the P25 trunking system
+  identity, decoded from control-channel broadcasts (both dsd-fme's
+  `RFSS: 001`/`Site: 097` and `RFSS[001]`/`SITE [091]`/`WACN [BEE0A]`
+  forms). As on NXDN, the same label can be home vs. adjacent — read
+  `raw`.
 - `alg_id=80`/`key_id=0000` means clear/unencrypted; `alg_id=84` AES256,
-  `alg_id=aa` Motorola ADP, etc. (the values are as dsd-fme reports).
+  `alg_id=aa` Motorola ADP, etc. (values as dsd-fme reports).
 - Zero-padded IDs (`TGT: 00000100`) are normalized (`talkgroup:"100"`).
 
 ##### NXDN / IDAS (subprocess backend with `protocol:"nxdn48"`)
