@@ -443,10 +443,19 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     // Talker alias text runs to end of line after "Alias: "; the colon
     // keeps it off "Alias CRC Error" / "Talker Alias LC Header" lines.
     static const std::regex alias_re(R"(\bAlias:\s*(\S.*?)\s*$)", std::regex::icase);
+    // P25 (dsd-fme formats: dsd_frame.c "NAC: %03X;" / "NAC/CC: %03llX;",
+    // p25p1_hdu.c/ldu2.c "ALG ID: 0x%02X KEY ID: 0x%04X", plus the
+    // "ALG: 0x.. KEY ID: 0x.." error form). NAC is the P25 network access
+    // code (its color-code/RAN analog); ALG/KEY are the encryption ids.
+    static const std::regex nac_re(R"(\bNAC(?:/CC)?:\s*([0-9A-Fa-f]+))", std::regex::icase);
+    static const std::regex algid_re(R"(\bALG(?:\s*ID)?:\s*0x([0-9A-Fa-f]+))", std::regex::icase);
+    static const std::regex keyid_re(R"(\bKEY(?:\s*ID)?:\s*0x([0-9A-Fa-f]+))", std::regex::icase);
 
     std::smatch m;
-    if (std::regex_search(line, m, tg_re)) ev.talkgroup = m[1].str();
-    if (std::regex_search(line, m, src_re)) ev.source_id = m[1].str();
+    // strip_leading_zeros normalizes P25's zero-padded "%08d" IDs (and is
+    // a no-op on DMR/NXDN's unpadded ones).
+    if (std::regex_search(line, m, tg_re)) ev.talkgroup = strip_leading_zeros(m[1].str());
+    if (std::regex_search(line, m, src_re)) ev.source_id = strip_leading_zeros(m[1].str());
     if (std::regex_search(line, m, slot_bracket_re)) ev.slot = m[1].str();
     else if (std::regex_search(line, m, slot_re)) ev.slot = m[1].str();
     if (std::regex_search(line, m, cc_re)) {
@@ -455,6 +464,10 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
         ev.color_code = strip_leading_zeros(m[1].str());
     }
     if (std::regex_search(line, m, ran_re)) ev.ran = strip_leading_zeros(m[1].str());
+    if (std::regex_search(line, m, nac_re)) {
+        ev.nac = m[1].str();
+        for (char& c : ev.nac) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    }
     if (std::regex_search(line, emerg_re)) ev.emergency = "1";
     if (std::regex_search(line, m, alias_re)) ev.alias = m[1].str();
     if (std::regex_search(line, err_re)) ev.crc_error = "1";
@@ -472,6 +485,10 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     if (std::regex_search(line, m, siteid_re))  tokens.push_back("site_id=" + m[1].str());
     if (std::regex_search(line, m, rest_re))    tokens.push_back("rest_channel=" + m[1].str());
     if (std::regex_search(line, m, lcn_re))     tokens.push_back("lcn=" + m[1].str());
+    // P25 encryption identifiers (bare hex; alg 0x80=clear, 0xAA=ADP, etc.;
+    // key 0x0000=unencrypted). crc_error flags the FEC-ERR variants.
+    if (std::regex_search(line, m, algid_re))   tokens.push_back("alg_id=" + m[1].str());
+    if (std::regex_search(line, m, keyid_re))   tokens.push_back("key_id=" + m[1].str());
     for (std::size_t i = 0; i < tokens.size(); ++i) {
         if (i) ev.extra += "; ";
         ev.extra += tokens[i];

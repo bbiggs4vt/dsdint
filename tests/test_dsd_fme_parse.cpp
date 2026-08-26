@@ -142,6 +142,40 @@ int main() {
         check(e.alias.empty(), "'Talker Alias LC Header' is not an alias value");
     }
 
+    // ---- P25 (NAC, encryption ALG/KEY, zero-padded IDs) ----
+    // Input strings are dsd-fme's P25 printf formats (dsd_frame.c,
+    // p25p1_hdu.c, p25p1_ldu2.c).
+    {
+        DsdEvent e = classify_dsd_fme_line(
+            "2023/10/02 10:23:18 P25 TGT: 00000100; SRC: 00002048; NAC: 293; ");
+        check(e.nac == "293", "P25: NAC 293");
+        check(e.talkgroup == "100", "P25: talkgroup 100 (zero-padding stripped)");
+        check(e.source_id == "2048", "P25: source 2048 (zero-padding stripped)");
+    }
+    {
+        DsdEvent e = classify_dsd_fme_line(
+            " HDU  ALG ID: 0x84 KEY ID: 0x0001 MI: 0x0123456789ABCDEF");
+        check(e.extra.find("alg_id=84") != std::string::npos, "P25 HDU: alg_id=84 (AES256)");
+        check(e.extra.find("key_id=0001") != std::string::npos, "P25 HDU: key_id=0001");
+    }
+    {
+        DsdEvent e = classify_dsd_fme_line(
+            " LDU2 ALG ID: 0x80 KEY ID: 0x0000 MI: 0x00000000000000000000");
+        check(e.extra.find("alg_id=80") != std::string::npos, "P25 LDU2: alg_id=80 (clear)");
+        check(e.extra.find("key_id=0000") != std::string::npos, "P25 LDU2: key_id=0000 (unencrypted)");
+    }
+    {
+        // FEC-ERR encryption line: alg/key still lifted, and crc_error set.
+        DsdEvent e = classify_dsd_fme_line(
+            " LDU2/ESS_B FEC ERR - ALG: 0xAA KEY ID: 0x0042 LFSR MI: 0x0000000000000000");
+        check(e.extra.find("alg_id=AA") != std::string::npos, "P25 ESS FEC ERR: alg_id=AA (ADP)");
+        check(e.crc_error == "1", "P25 ESS FEC ERR: crc_error flagged");
+    }
+    {
+        DsdEvent e = classify_dsd_fme_line(" P25 LCW  Group Call; Emergency");
+        check(e.emergency == "1", "P25 LCW: emergency flag");
+    }
+
     if (g_failures == 0) {
         std::printf("\nALL DSD-FME PARSE TESTS PASSED\n");
         return 0;

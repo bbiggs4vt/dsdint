@@ -18,6 +18,7 @@ struct DsdEvent {
     std::string slot;          // TDMA slot (0/1) if present
     std::string color_code;    // DMR color code if present, decimal without leading zeros
     std::string ran;           // NXDN Radio Access Number if present, decimal without leading zeros
+    std::string nac;           // P25 Network Access Code if present, uppercase hex without "0x"
     std::string emergency;     // "1" when the line marks the call an emergency, else ""
     std::string alias;         // DMR talker alias text if present, else "" (free text)
     std::string crc_error;     // "1" when the decoder marked this line/burst as failing CRC/FEC, else ""

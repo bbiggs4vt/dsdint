@@ -170,6 +170,12 @@ bool DsdccDecoder::start(const DsdccConfig& cfg, EventCallback on_event, AudioCa
         decoder_->setDecodeMode(DSDcc::DSDDecoder::DSDDecodeNXDN48, true);
     } else if (cfg_.mode == "nxdn96") {
         decoder_->setDecodeMode(DSDcc::DSDDecoder::DSDDecodeNXDN96, true);
+    } else if (cfg_.mode == "p25") {
+        // DSDcc has a P25 Phase 1 decoder, but this wrapper does not yet
+        // read its metadata (no getP25... polling below), so a P25 stream
+        // produces sync events only. The dsd-fme backend is the P25
+        // decoder that emits structured fields.
+        decoder_->setDecodeMode(DSDcc::DSDDecoder::DSDDecodeP25P1, true);
     } else { // "auto" or anything unrecognized
         decoder_->setDecodeMode(DSDcc::DSDDecoder::DSDDecodeAuto, true);
     }
@@ -266,6 +272,9 @@ void DsdccDecoder::check_for_state_change() {
         check_for_nxdn_state_change();
         return;
     }
+    // P25: no metadata extraction in this backend yet -- don't run the DMR
+    // slot-text path on a P25 signal (it would read stale slot text).
+    if (cfg_.mode == "p25") return;
 
     // Per-TDMA-slot state, from DSDcc's fixed-layout status text (see
     // parse_slot_text above). Index 0 = slot #1, 1 = slot #2.

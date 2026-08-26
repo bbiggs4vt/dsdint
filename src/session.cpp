@@ -181,7 +181,7 @@ namespace {
 // "not sure" asks the decoder to auto-detect, and anything unrecognized
 // also falls back to auto-detect rather than erroring (a typo shouldn't
 // kill a stream).
-enum class ProtocolHint { Default, Dmr, Nxdn48, Nxdn96, Auto };
+enum class ProtocolHint { Default, Dmr, Nxdn48, Nxdn96, P25p1, P25p2, Auto };
 
 ProtocolHint parse_protocol_hint(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -192,6 +192,8 @@ ProtocolHint parse_protocol_hint(std::string s) {
     if (k == "dmr") return ProtocolHint::Dmr;
     if (k == "nxdn48" || k == "nxdn" || k == "idas") return ProtocolHint::Nxdn48;
     if (k == "nxdn96") return ProtocolHint::Nxdn96;
+    if (k == "p25p2" || k == "p25phase2") return ProtocolHint::P25p2;
+    if (k == "p25" || k == "p25p1" || k == "p25phase1") return ProtocolHint::P25p1;
     // "auto", "unknown", "notsure", and anything else -> auto-detect
     return ProtocolHint::Auto;
 }
@@ -226,6 +228,12 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
     switch (hint) {
         case ProtocolHint::Nxdn48: dcfg.mode = "nxdn48"; break;
         case ProtocolHint::Nxdn96: dcfg.mode = "nxdn96"; break;
+        // DSDcc has a P25 Phase 1 decode mode; there's no separate Phase 2
+        // decoder, so both P25 hints select it. The DSDcc wrapper does not
+        // yet extract P25 metadata into fields (it emits sync only) -- the
+        // dsd-fme backend is the P25 decoder to use.
+        case ProtocolHint::P25p1:
+        case ProtocolHint::P25p2:  dcfg.mode = "p25";    break;
         case ProtocolHint::Auto:   dcfg.mode = "auto";   break;
         case ProtocolHint::Dmr:
         case ProtocolHint::Default:
@@ -243,10 +251,12 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
     // matching the historical behavior; dsd-fme applies the matching
     // input matched-filter for the selected mode automatically. Letters
     // verified against `dsd-fme -h`: s=DMR, i=NXDN48/IDAS, n=NXDN96,
-    // a=auto-detect.
+    // a=auto-detect. P25: 1=Phase 1, 2=Phase 2 (6000 sps TDMA).
     switch (hint) {
         case ProtocolHint::Nxdn48: dcfg.mode_flag = "i"; break;
         case ProtocolHint::Nxdn96: dcfg.mode_flag = "n"; break;
+        case ProtocolHint::P25p1:  dcfg.mode_flag = "1"; break;
+        case ProtocolHint::P25p2:  dcfg.mode_flag = "2"; break;
         case ProtocolHint::Auto:   dcfg.mode_flag = "a"; break;
         case ProtocolHint::Dmr:
         case ProtocolHint::Default:
@@ -286,6 +296,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
                 .field("slot", ev.slot)
                 .field("color_code", ev.color_code)
                 .field("ran", ev.ran)
+                .field("nac", ev.nac)
                 .field("emergency", ev.emergency)
                 .field("alias", ev.alias)
                 .field("crc_error", ev.crc_error)

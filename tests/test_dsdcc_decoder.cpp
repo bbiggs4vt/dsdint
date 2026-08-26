@@ -157,7 +157,7 @@ int main(int argc, char** argv) {
     // cleanly. Decode quality on non-DMR is not asserted here -- that is
     // the backend-capability point documented in PROTOCOL.md -- only that
     // the mode strings are accepted and the decoder comes up.
-    for (const char* m : {"dmr", "nxdn48", "nxdn96", "auto", "bogus-mode"}) {
+    for (const char* m : {"dmr", "nxdn48", "nxdn96", "p25", "auto", "bogus-mode"}) {
         DsdccDecoder d;
         DsdccConfig c; c.mode = m;
         bool ok = d.start(c, nullptr, nullptr);
