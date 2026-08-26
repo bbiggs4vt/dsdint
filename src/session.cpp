@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <cstring>
+#include <cctype>
 #include <random>
 #include <set>
 
@@ -119,7 +120,12 @@ void Session::handle_text_message(const std::string& msg) {
             double offset = json::get_number(obj, "freq_offset", 0.0);
             float gain = static_cast<float>(json::get_number(obj, "gain", 26000.0));
             bool afc = json::get_bool(obj, "afc", false);
-            start_pipeline(sample_rate, bw, offset, gain, afc);
+            // Advisory protocol hint: the client tells us what it thinks
+            // the signal is so the decoder can be told which mode to run
+            // instead of guessing. Absent/"" keeps the historical DMR
+            // default (no behavior change for existing clients).
+            std::string protocol = json::get_string(obj, "protocol");
+            start_pipeline(sample_rate, bw, offset, gain, afc, protocol);
         } else if (type == "set_gain") {
             std::lock_guard<std::mutex> lock(demod_mutex_);
             if (demod_) demod_->set_gain(static_cast<float>(json::get_number(obj, "gain", 26000.0)));
@@ -167,8 +173,36 @@ void Session::handle_binary_message(const uint8_t* data, std::size_t len) {
     iq_cv_.notify_one();
 }
 
-void Session::start_pipeline(double sample_rate, double channel_bw, double freq_offset, float gain, bool afc) {
+namespace {
+
+// Canonical protocol hint from the client's free-form "protocol" field.
+// The hint is advisory ("tip"), so it is forgiving: an empty/absent hint
+// keeps the server's historical default, an explicit "auto"/"unknown"/
+// "not sure" asks the decoder to auto-detect, and anything unrecognized
+// also falls back to auto-detect rather than erroring (a typo shouldn't
+// kill a stream).
+enum class ProtocolHint { Default, Dmr, Nxdn48, Nxdn96, Auto };
+
+ProtocolHint parse_protocol_hint(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    // strip spaces/underscores/hyphens so "nxdn 48", "nxdn_48", "not_sure" all match
+    std::string k;
+    for (char c : s) if (c != ' ' && c != '_' && c != '-') k.push_back(c);
+    if (k.empty()) return ProtocolHint::Default;
+    if (k == "dmr") return ProtocolHint::Dmr;
+    if (k == "nxdn48" || k == "nxdn" || k == "idas") return ProtocolHint::Nxdn48;
+    if (k == "nxdn96") return ProtocolHint::Nxdn96;
+    // "auto", "unknown", "notsure", and anything else -> auto-detect
+    return ProtocolHint::Auto;
+}
+
+} // namespace
+
+void Session::start_pipeline(double sample_rate, double channel_bw, double freq_offset,
+                             float gain, bool afc, const std::string& protocol) {
     stop_pipeline(); // clean slate if already running
+
+    const ProtocolHint hint = parse_protocol_hint(protocol);
 
     FmDemodConfig cfg;
     cfg.input_sample_rate_hz = sample_rate;
@@ -184,7 +218,19 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
 
     ActiveDsdBackendConfig dcfg;
 #if defined(DSD_USE_DSDCC_BACKEND)
-    dcfg.mode = "dmr";
+    // Map the hint to DsdccDecoder's mode string (see DsdccDecoder::start,
+    // which forwards it to DSDDecoder::setDecodeMode). Default -> "dmr",
+    // matching the historical behavior. NOTE: DSDcc's NXDN symbol recovery
+    // is fragile on real off-air signals (verified against a real NXDN48
+    // capture); the dsd-fme backend is the reliable NXDN decoder.
+    switch (hint) {
+        case ProtocolHint::Nxdn48: dcfg.mode = "nxdn48"; break;
+        case ProtocolHint::Nxdn96: dcfg.mode = "nxdn96"; break;
+        case ProtocolHint::Auto:   dcfg.mode = "auto";   break;
+        case ProtocolHint::Dmr:
+        case ProtocolHint::Default:
+        default:                   dcfg.mode = "dmr";    break;
+    }
     dcfg.input_sample_rate_hz = 48000;
     // DsdccDecoder is in-process, so there's no UDP audio port to
     // allocate -- udp_audio_port_ stays 0 and the "started" message
@@ -193,7 +239,19 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
 #else
     udp_audio_port_ = acquire_udp_port();
     dcfg.input_sample_rate_hz = 48000;
-    dcfg.mode_flag = "s"; // dsd-fme's DMR TDMA mode (-fs); "-fd" would be D-STAR
+    // Map the hint to dsd-fme's "-f<letter>" mode. Default -> "s" (DMR),
+    // matching the historical behavior; dsd-fme applies the matching
+    // input matched-filter for the selected mode automatically. Letters
+    // verified against `dsd-fme -h`: s=DMR, i=NXDN48/IDAS, n=NXDN96,
+    // a=auto-detect.
+    switch (hint) {
+        case ProtocolHint::Nxdn48: dcfg.mode_flag = "i"; break;
+        case ProtocolHint::Nxdn96: dcfg.mode_flag = "n"; break;
+        case ProtocolHint::Auto:   dcfg.mode_flag = "a"; break;
+        case ProtocolHint::Dmr:
+        case ProtocolHint::Default:
+        default:                   dcfg.mode_flag = "s"; break;
+    }
     dcfg.udp_audio_port = udp_audio_port_;
 #endif
 

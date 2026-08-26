@@ -150,10 +150,18 @@ bool DsdccDecoder::start(const DsdccConfig& cfg, EventCallback on_event, AudioCa
     // The second argument is on/off for the given mode (verified in
     // dsd_decoder.cpp: DMR case sets m_opts.frame_dmr = on and, when
     // enabling, the 4800 baud data rate). dsdccx passes true for the
-    // mode selected on its command line; so do we.
+    // mode selected on its command line; so do we. The mode string comes
+    // from the client's protocol hint (see session.cpp). NOTE: DSDcc's
+    // NXDN symbol recovery is fragile on real off-air signals — it locks
+    // on clean/synthetic signals but drops sync on real captures where
+    // the dsd-fme backend decodes cleanly; prefer that backend for NXDN.
     if (cfg_.mode == "dmr") {
         decoder_->setDecodeMode(DSDcc::DSDDecoder::DSDDecodeDMR, true);
-    } else {
+    } else if (cfg_.mode == "nxdn48") {
+        decoder_->setDecodeMode(DSDcc::DSDDecoder::DSDDecodeNXDN48, true);
+    } else if (cfg_.mode == "nxdn96") {
+        decoder_->setDecodeMode(DSDcc::DSDDecoder::DSDDecodeNXDN96, true);
+    } else { // "auto" or anything unrecognized
         decoder_->setDecodeMode(DSDcc::DSDDecoder::DSDDecodeAuto, true);
     }
 

@@ -268,6 +268,10 @@ def main():
                     help="channel offset in Hz (positive = channel above 0 Hz)")
     ap.add_argument("--gain", type=float, default=26000.0)
     ap.add_argument("--afc", action="store_true", help="enable server-side AFC")
+    ap.add_argument("--protocol", default=None,
+                    help="advisory protocol hint for the server "
+                         "(dmr, nxdn48, nxdn96, auto/unknown); omit to use the "
+                         "server default")
     ap.add_argument("--speed", type=float, default=4.0,
                     help="streaming speed as a multiple of realtime; 0 = unpaced (default 4)")
     ap.add_argument("--block", type=int, default=4096, help="complex samples per frame (default 4096)")
@@ -340,14 +344,17 @@ def main():
     t = threading.Thread(target=reader, daemon=True)
     t.start()
 
-    ws.send_text(json.dumps({
+    start_msg = {
         "type": "start",
         "sample_rate": sample_rate,
         "channel_bandwidth": args.channel_bandwidth,
         "freq_offset": args.freq_offset,
         "gain": args.gain,
         "afc": bool(args.afc),
-    }))
+    }
+    if args.protocol is not None:
+        start_msg["protocol"] = args.protocol
+    ws.send_text(json.dumps(start_msg))
 
     block_seconds = args.block / sample_rate
     pace = block_seconds / args.speed if args.speed > 0 else 0.0

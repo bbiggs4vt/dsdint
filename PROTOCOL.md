@@ -26,7 +26,7 @@ back to the defaults shown (see `handle_text_message` in `session.cpp`).
 
 | type | fields | effect |
 |---|---|---|
-| `start` | `sample_rate` (default 2000000), `channel_bandwidth` (12500), `freq_offset` (0), `gain` (26000), `afc` (false) | Builds the demod + DSD pipeline. If a pipeline is already running it is stopped and rebuilt (clean restart). Replies with `started` on success, `error` on failure. |
+| `start` | `sample_rate` (default 2000000), `channel_bandwidth` (12500), `freq_offset` (0), `gain` (26000), `afc` (false), `protocol` ("") | Builds the demod + DSD pipeline. If a pipeline is already running it is stopped and rebuilt (clean restart). Replies with `started` on success, `error` on failure. |
 | `set_gain` | `gain` (26000) | Live-adjusts discriminator gain. No reply. Ignored (silently) if no pipeline is running. |
 | `set_freq_offset` | `hz` (0) | Live-adjusts the NCO shift. No reply. Ignored if no pipeline is running. Also resets any accumulated AFC correction (an explicit retune is a statement of new truth). |
 | `stop` | — | Tears down the pipeline (kills the dsd-fme child / destroys the decoder). No reply. The WebSocket stays open; a new `start` is accepted afterwards. |
@@ -37,6 +37,29 @@ baseband. (Before AFC was added, the two demod implementations disagreed
 on this sign — the hand-rolled demod had it inverted relative to the
 liquid variant; it is now unified as stated and pinned by
 `tests/test_afc.cpp`.)
+
+`protocol`: an **advisory hint** telling the server which digital voice
+protocol the client believes the signal is, so the decoder is told which
+mode to run instead of relying on auto-detection. It is forgiving —
+case-insensitive, and spaces/underscores/hyphens are ignored:
+
+| value | selects | dsd-fme | DSDcc |
+|---|---|---|---|
+| `""` / absent | server default (**DMR**) — no change for existing clients | `-fs` | DMR |
+| `dmr` | DMR | `-fs` | DMR |
+| `nxdn48` (or `nxdn`, `idas`) | NXDN48 / IDAS (6.25 kHz) | `-fi` | NXDN48 |
+| `nxdn96` | NXDN96 (12.5 kHz) | `-fn` | NXDN96 |
+| `auto` / `unknown` / `not sure` / anything else | auto-detect | `-fa` | auto |
+
+The hint only steers mode selection; it does not change the wire format
+or the `event` shape. Note the two backends differ in NXDN capability:
+the subprocess **dsd-fme backend decodes NXDN reliably** (it applies the
+matching input matched-filter per mode and was verified against a real
+off-air NXDN48 capture — recovering source, talkgroup, RAN, site/system
+codes and adjacent-site info). The in-process **DSDcc backend's NXDN
+support is fragile on real signals** — it locks on clean/synthetic input
+but drops sync on real captures — so prefer the dsd-fme backend for
+anything but DMR.
 
 `afc`: when `true`, the demod continuously measures the residual carrier
 offset in its own discriminator output and steers the NCO to remove it —

@@ -152,6 +152,19 @@ int main(int argc, char** argv) {
     check(!dec2.start(bad, nullptr, nullptr),
           "start rejects a non-48kHz input rate");
 
+    // Protocol-hint modes (from the client's "protocol" field, mapped in
+    // session.cpp) must all map to a valid setDecodeMode call and start
+    // cleanly. Decode quality on non-DMR is not asserted here -- that is
+    // the backend-capability point documented in PROTOCOL.md -- only that
+    // the mode strings are accepted and the decoder comes up.
+    for (const char* m : {"dmr", "nxdn48", "nxdn96", "auto", "bogus-mode"}) {
+        DsdccDecoder d;
+        DsdccConfig c; c.mode = m;
+        bool ok = d.start(c, nullptr, nullptr);
+        check(ok, std::string("start accepts protocol mode \"") + m + "\"");
+        d.stop();
+    }
+
     if (g_failures == 0) {
         std::printf("\nALL DSDCC DECODER TESTS PASSED\n");
         return 0;
