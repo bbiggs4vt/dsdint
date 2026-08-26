@@ -17,6 +17,7 @@ struct DsdEvent {
     std::string source_id;     // parsed source/radio id if present
     std::string slot;          // TDMA slot (0/1) if present
     std::string color_code;    // DMR color code if present, decimal without leading zeros
+    std::string crc_error;     // "1" when the decoder marked this line/burst as failing CRC/FEC, else ""
     std::string extra;         // any other parsed detail, free-form
 };
 

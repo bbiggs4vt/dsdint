@@ -148,6 +148,7 @@ int main(int argc, char** argv) {
     std::size_t audio_samples = 0;
     std::set<std::string> talkgroups, sources, slots, kinds, color_codes;
     bool saw_ansi = false;
+    bool saw_crc_flag = false, saw_unflagged_bad_cc = false;
     for (int i = 0; i < 6000; ++i) {
         std::string r; bool text = false;
         if (!client.read(r, text, std::chrono::seconds(3))) break;
@@ -164,6 +165,11 @@ int main(int argc, char** argv) {
                     if (!slot.empty()) slots.insert(slot);
                     auto cc = json::get_string(obj, "color_code");
                     if (!cc.empty()) color_codes.insert(cc);
+                    auto crc = json::get_string(obj, "crc_error");
+                    if (crc == "1") saw_crc_flag = true;
+                    // The capture's true color code is 4; any other
+                    // value is a misdecode and must be flagged.
+                    if (!cc.empty() && cc != "4" && crc != "1") saw_unflagged_bad_cc = true;
                     if (json::get_string(obj, "raw").find('\x1b') != std::string::npos) {
                         saw_ansi = true;
                     }
@@ -193,6 +199,10 @@ int main(int argc, char** argv) {
     check(slots.count("2") == 1, "call activity attributed to TDMA slot 2");
     check(color_codes.count("4") == 1,
           "an event carries the capture's DMR color code (4, from Color Code=04)");
+    check(saw_crc_flag,
+          "crc_error=1 flags dsd-fme's CRC/FEC ERR lines");
+    check(!saw_unflagged_bad_cc,
+          "every wrong color code (not 4) is on a crc_error-flagged event");
     check(kinds.count("sync") == 1, "sync events were relayed");
     check(!saw_ansi, "no ANSI escapes reach the client in raw event text");
 

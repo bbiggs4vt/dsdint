@@ -60,6 +60,7 @@ int main(int argc, char** argv) {
     std::size_t total_audio_samples = 0;
     std::set<std::string> talkgroups, sources, slots, call_slots, kinds, extras;
     int event_count = 0;
+    bool saw_crc_flag = false, unk_unflagged = false;
 
     DsdccDecoder dec;
     DsdccConfig cfg; // defaults: mode "dmr", 48000 Hz — matches the capture
@@ -74,6 +75,8 @@ int main(int argc, char** argv) {
             if (!ev.slot.empty() && (ev.kind == "voice" || ev.kind == "call"))
                 call_slots.insert(ev.slot);
             if (!ev.extra.empty()) extras.insert(ev.extra);
+            if (ev.extra == "burst=UNK" && ev.crc_error != "1") unk_unflagged = true;
+            if (ev.crc_error == "1") saw_crc_flag = true;
             kinds.insert(ev.kind);
         },
         [&](const int16_t* /*pcm*/, std::size_t n) { total_audio_samples += n; });
@@ -127,6 +130,8 @@ int main(int argc, char** argv) {
           "slot 1's idle bursts are visible as burst=IDL");
     check(extras.count("sync_type=dmr_bs_data") == 1,
           "sync acquisition reports the sync flavor (dmr_bs_data)");
+    check(saw_crc_flag, "FEC-failed slot-type PDUs are flagged with crc_error");
+    check(!unk_unflagged, "every burst=UNK event carries crc_error=1");
 
     // The reverse checks: things that are NOT in this capture must not
     // be invented. (Slot 1 carries only idle bursts — no addresses, so

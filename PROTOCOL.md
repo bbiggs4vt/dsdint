@@ -112,11 +112,11 @@ kind; treat the remainder as free text.
 
 One frame per line the DSD backend reports (subprocess backend: one per
 line dsd-fme writes to its log, post-cleanup; DSDcc backend: one per
-detected state change). All seven data fields are always present; empty
+detected state change). All eight data fields are always present; empty
 string means "not present in this event".
 
 ```json
-{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","color_code":"","extra":"","raw":" SLOT 2 TGT=19535 SRC=2222223 Group Call  "}
+{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","color_code":"","crc_error":"","extra":"","raw":" SLOT 2 TGT=19535 SRC=2222223 Group Call  "}
 ```
 
 | field | type | meaning |
@@ -127,6 +127,7 @@ string means "not present in this event".
 | `source_id` | string | Decimal source radio ID, or `""`. |
 | `slot` | string | TDMA slot, `"1"` or `"2"`, or `""` when the event isn't slot-specific. |
 | `color_code` | string | DMR color code as bare decimal (`"4"`, not `"04"` — both backends normalize away leading zeros), or `""` when the event doesn't carry one. Which event kinds carry it differs by backend: dsd-fme prints it on its per-burst sync lines, DSDcc's slot status text carries it on `voice`/`call` events. |
+| `crc_error` | string | `"1"` when the decoder itself marked this line/burst as failing an FEC/CRC check, else `""`. Subprocess backend: set when the cleaned dsd-fme line carries a `CRC ERR`, `FEC ERR`, or `EMB ERR` marker. DSDcc backend: set on `burst` events whose slot-type PDU failed its Golay(20,8) FEC (`burst=UNK`). Treat the flagged event's other fields (especially `color_code`) as unreliable; note the reverse does not hold — a marginal burst can decode "cleanly" to a wrong value without being flagged. |
 | `extra` | string | Backend-specific detail that doesn't fit the fields above, or `""`. Used by the DSDcc backend for: `"unit_target=<id>"` on unit-to-unit calls (the target of a private call is not a talkgroup, so it is surfaced here instead of in `talkgroup`); `"burst=<type>"` on `burst` events (DSDcc's three-letter slot burst type: `IDL` idle, `CSB` CSBK control, `VLC`/`TLC` voice/terminator link control, `VOX` voice, `UNK` unknown, ...); `"sync_type=<flavor>"` on sync-acquisition events (see below). |
 | `raw` | string | The underlying decoder output this event was parsed from, so nothing is lost to the classification: the cleaned log line (subprocess backend) or a synthesized description (DSDcc backend). Free text; formats below are examples from real decodes, and they **vary across dsd-fme versions/forks** — parse the structured fields, fall back to `raw` only for display/debugging. |
 
@@ -142,9 +143,10 @@ Captured from lwvmobile/dsd-fme decoding a real DMR group call
 (the test suite's `session_real_fme_test`):
 
 ```json
-{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"2","color_code":"4","extra":"","raw":"20:37:20 Sync: +DMR   slot1  [SLOT2] | Color Code=04 | VC6 "}
-{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","color_code":"","extra":"","raw":" SLOT 2 TGT=19535 SRC=2222223 Group Call  "}
-{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","extra":"","raw":"Decoding DMR BS/MS Simplex"}
+{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"2","color_code":"4","crc_error":"","extra":"","raw":"20:37:20 Sync: +DMR   slot1  [SLOT2] | Color Code=04 | VC6 "}
+{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","color_code":"","crc_error":"","extra":"","raw":" SLOT 2 TGT=19535 SRC=2222223 Group Call  "}
+{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","crc_error":"","extra":"","raw":"Decoding DMR BS/MS Simplex"}
+{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"1","color_code":"5","crc_error":"1","extra":"","raw":"13:37:43 Sync: +DMR  [slot1]  slot2  | Color Code=05 | MBCC (FEC ERR)"}
 ```
 
 - `kind:"sync"` — any line containing "Sync" (dsd-fme's per-burst sync
@@ -155,6 +157,11 @@ Captured from lwvmobile/dsd-fme decoding a real DMR group call
   voice/sync keywords (dsd-fme's `TGT=... SRC=...` call summary lines).
 - `kind:"voice"` — a line containing "voice" or "ambe" (e.g. dsd-fme's
   `VOICE CACH/EMB ERR`).
+- `crc_error:"1"` rides on any of the above whose line dsd-fme marked
+  as a failed FEC/CRC check. The flagged example above is real: the
+  reference capture's only wrong Color Code (5 instead of 4, one
+  burst out of 660) sits on a line marked `(FEC ERR)` — filtering on
+  this flag removes it.
 - `kind:"unknown"` — everything else dsd-fme prints: startup banner
   lines, `Activity Update ...` summaries, FEC error notes, the exit
   summary. These are deliberate pass-throughs (the `raw` field is the
@@ -166,9 +173,9 @@ Captured from DSDcc 1.9.0 decoding the same call
 (`session_dsdcc_test`):
 
 ```json
-{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"","color_code":"","extra":"sync_type=dmr_bs_data","raw":"(dsdcc: sync acquired, dmr_bs_data)"}
-{"type":"event","kind":"burst","talkgroup":"","source_id":"","slot":"1","color_code":"4","extra":"burst=IDL","raw":"(dsdcc slot1) .04 IDL                   "}
-{"type":"event","kind":"voice","talkgroup":"150607","source_id":"2222223","slot":"2","color_code":"4","extra":"","raw":"(dsdcc slot2) *04 VOX 02222223>G00150607"}
+{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"","color_code":"","crc_error":"","extra":"sync_type=dmr_bs_data","raw":"(dsdcc: sync acquired, dmr_bs_data)"}
+{"type":"event","kind":"burst","talkgroup":"","source_id":"","slot":"1","color_code":"4","crc_error":"","extra":"burst=IDL","raw":"(dsdcc slot1) .04 IDL                   "}
+{"type":"event","kind":"voice","talkgroup":"150607","source_id":"2222223","slot":"2","color_code":"4","crc_error":"","extra":"","raw":"(dsdcc slot2) *04 VOX 02222223>G00150607"}
 ```
 
 - `kind:"sync"` — sync acquisition/loss transitions only, not

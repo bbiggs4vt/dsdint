@@ -282,6 +282,10 @@ void DsdccDecoder::check_for_state_change() {
                 continue; // text changed but still carries nothing to report
             ev.kind = "burst";
             if (!burst.empty()) ev.extra = "burst=" + burst;
+            // "UNK" is DSDcc's marker for a slot-type PDU whose
+            // Golay(20,8) FEC failed (dmr.cpp writes "-- UNK") -- the
+            // DSDcc-side equivalent of dsd-fme's CRC/FEC ERR flags.
+            if (burst == "UNK") ev.crc_error = "1";
         }
         on_event_(ev);
     }

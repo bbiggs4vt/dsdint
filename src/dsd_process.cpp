@@ -388,6 +388,14 @@ DsdEvent DsdProcess::classify_line(const std::string& line) const {
     static const std::regex slot_bracket_re(R"(\[slot\s*(\d)\])", std::regex::icase);
     static const std::regex slot_re(R"((?:TS|Slot)[:=]?\s*(\d))", std::regex::icase);
     static const std::regex cc_re(R"(Colou?r\s*Code[:=]?\s*(\d+))", std::regex::icase);
+    // dsd-fme marks failed FEC/CRC checks inline in the affected line
+    // (post-ANSI-strip): "CSBK (CRC ERR)", "CACH/Burst FEC ERR",
+    // "SLOT 2 FLCO FEC ERR", "CACH/EMB ERR". Lift that into the
+    // structured crc_error flag so clients can discount the same
+    // event's other fields -- notably color_code: the one wrong
+    // Color Code the reference capture produces sits on a line marked
+    // "(FEC ERR)", so filtering on this flag removes it.
+    static const std::regex err_re(R"((CRC|FEC|EMB)\s*ERR)", std::regex::icase);
     static const std::regex sync_re(R"(sync|no sync|nosync)", std::regex::icase);
     static const std::regex voice_re(R"(voice|ambe)", std::regex::icase);
 
@@ -403,6 +411,7 @@ DsdEvent DsdProcess::classify_line(const std::string& line) const {
         std::size_t nz = cc.find_first_not_of('0');
         ev.color_code = (nz == std::string::npos) ? "0" : cc.substr(nz);
     }
+    if (std::regex_search(line, err_re)) ev.crc_error = "1";
 
     if (std::regex_search(line, voice_re)) ev.kind = "voice";
     else if (std::regex_search(line, sync_re)) ev.kind = "sync";
