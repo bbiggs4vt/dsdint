@@ -82,6 +82,9 @@ RUN git clone https://github.com/lwvmobile/dsd-fme /opt/src/dsd-fme \
 COPY CMakeLists.txt /opt/dsd-server/
 COPY src /opt/dsd-server/src
 COPY tests /opt/dsd-server/tests
+# tools/ carries nxdn_make_sample.cpp, which the NXDN DSDcc test builds to
+# generate its input sample (see CMakeLists). Stdlib-only, no build cost.
+COPY tools /opt/dsd-server/tools
 RUN cmake -S /opt/dsd-server -B /opt/dsd-server/build \
         -DCMAKE_BUILD_TYPE=Release \
         -DDSD_FME_BIN=/usr/local/bin/dsd-fme \
@@ -111,7 +114,7 @@ FROM build AS test
 ARG DSD_TEST_PACE_MS=10
 RUN cmake --build /opt/dsd-server/build -j"$(nproc)" --target \
         test-fake-dsd-fme test_session test_session_concurrency \
-        test_dsdcc_decoder test_session_dsdcc \
+        test_dsdcc_decoder test_session_dsdcc test_nxdn_dsdcc \
         test_dsd_process test_session_real_fme \
         test_dsd_fme_parse \
         test_fm_demod test_afc \

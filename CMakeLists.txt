@@ -196,6 +196,35 @@ if(DSD_BUILD_DSDCC_VARIANT)
       set_tests_properties(dsdcc_decoder_test PROPERTIES TIMEOUT 120)
     endif()
 
+    # NXDN metadata path test. There's no off-air NXDN capture in the
+    # tree (and DSDcc can't decode the real one anyway), so generate a
+    # known-good NXDN48 sample with the repo's synthesizer at build time
+    # and feed it through DsdccDecoder in nxdn48 mode. No external inputs
+    # -- always runs.
+    add_executable(nxdn_make_sample EXCLUDE_FROM_ALL tools/nxdn_make_sample.cpp)
+    add_custom_command(
+      OUTPUT ${CMAKE_BINARY_DIR}/nxdn48_test.dis
+      COMMAND nxdn_make_sample --ran 9 --src 100 --dst 200 --frames 40
+              --out ${CMAKE_BINARY_DIR}/nxdn48_test.dis
+      DEPENDS nxdn_make_sample
+      COMMENT "Generating NXDN48 test sample")
+    add_custom_target(nxdn_test_sample DEPENDS ${CMAKE_BINARY_DIR}/nxdn48_test.dis)
+
+    add_executable(test_nxdn_dsdcc EXCLUDE_FROM_ALL
+      src/dsdcc_decoder.cpp
+      tests/test_nxdn_dsdcc.cpp
+    )
+    target_include_directories(test_nxdn_dsdcc PRIVATE src ${DSDCC_INCLUDE_DIR})
+    target_link_libraries(test_nxdn_dsdcc PRIVATE ${DSDCC_LIBRARY} Threads::Threads)
+    if(MBE_LIBRARY)
+      target_link_libraries(test_nxdn_dsdcc PRIVATE ${MBE_LIBRARY})
+    endif()
+    target_compile_options(test_nxdn_dsdcc PRIVATE -Wall -Wextra)
+    add_dependencies(test_nxdn_dsdcc nxdn_test_sample)
+    add_test(NAME nxdn_dsdcc_test
+             COMMAND test_nxdn_dsdcc ${CMAKE_BINARY_DIR}/nxdn48_test.dis)
+    set_tests_properties(nxdn_dsdcc_test PROPERTIES TIMEOUT 60)
+
     # Full-stack test of the DSDcc server build: session.cpp compiled
     # with DSD_USE_DSDCC_BACKEND (the dsd-server-dsdcc configuration),
     # driven over a real WebSocket with FM-modulated IQ of the same DMR

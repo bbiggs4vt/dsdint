@@ -182,18 +182,26 @@ the field stays `""` for that protocol — not that it is omitted.
 | `unit_target=<id>` | DMR | DSDcc | private-call target (not a talkgroup) |
 | `burst=<type>` | DMR | DSDcc | slot burst type (`IDL`/`CSB`/`VLC`/`TLC`/`VOX`/`UNK`) |
 | `sync_type=<flavor>` | DMR | DSDcc | `dmr_bs_data` / `dmr_ms_voice` / … |
-| `site_code=<n>` | NXDN | dsd-fme | site code (home or adjacent — see `raw`) |
-| `system_code=<n>` | NXDN | dsd-fme | trunked system code |
-| `location_id=<hex>` | NXDN | dsd-fme | site location ID |
+| `site_code=<n>` | NXDN | both | site code (home or adjacent — see `raw`) |
+| `system_code=<n>` | NXDN | both | trunked system code |
+| `location_id=<hex>` | NXDN | both | site location ID |
 | `category=<name>` | NXDN | dsd-fme | system scope, e.g. `Global` |
 
+Both backends emit the NXDN fields (`ran`, `source_id`, `talkgroup`, and
+the `site_code`/`system_code`/`location_id` tokens) with the same shape,
+so a client sees a consistent structure regardless of which backend
+decoded. The DSDcc backend derives `system_code`/`site_code` from the
+high/low 12 bits of its decoded location ID (the same split dsd-fme
+prints); it does not currently surface `category`.
+
 Protocol vs. backend: **DMR** decodes on both the dsd-fme and DSDcc
-backends. **NXDN** is reliable only on the dsd-fme backend (the DSDcc
-backend's NXDN symbol recovery drops sync on real signals — see the
-`protocol` field note above), so all NXDN fields above are populated by
-the dsd-fme backend. P25/other protocols are not yet parsed into
-structured fields — with `protocol:"auto"` an unrecognized protocol's
-output still arrives, but only in `raw` under `kind:"unknown"`.
+backends. **NXDN** parses on both, but is only *reliable* on the dsd-fme
+backend — the DSDcc backend's NXDN symbol recovery drops sync on real
+off-air signals (it decodes clean/synthetic input fine), so prefer
+dsd-fme for real NXDN (see the `protocol` field note above). P25/other
+protocols are not yet parsed into structured fields — with
+`protocol:"auto"` an unrecognized protocol's output still arrives, but
+only in `raw` under `kind:"unknown"`.
 
 Encoding guarantee: strings are JSON-escaped per RFC 8259 including
 control characters (`\u00XX`), and the subprocess backend strips ANSI
@@ -252,7 +260,9 @@ control channel (the same signal used to verify the `protocol` hint):
   `kind:"unknown"` with their structured detail in `extra` and the full
   text in `raw`.
 - Reminder (see the `protocol` field above): this is the **dsd-fme
-  backend**, which decodes NXDN reliably. The DSDcc backend does not.
+  backend**, which decodes NXDN reliably. The DSDcc backend emits the
+  same NXDN fields (see its section below) but only decodes NXDN on
+  clean signals, not real off-air captures.
 
 #### DSDcc backend (`dsd-server-dsdcc`) — real examples
 
@@ -291,6 +301,20 @@ Captured from DSDcc 1.9.0 decoding the same call
 - For **unit-to-unit** (private) calls, `talkgroup` stays `""` and the
   target lands in `extra` as `"unit_target=<id>"`.
 - `kind:"unknown"` is not currently produced by this backend.
+
+In NXDN mode (`protocol:"nxdn48"`/`"nxdn96"`) this backend emits the same
+NXDN fields as the dsd-fme backend, read from DSDcc's NXDN decoder — a
+`kind:"call"` event carrying `ran`, `source_id`, `talkgroup` (group
+target) or `extra: unit_target=<id>` (private), and, on site messages,
+`extra: system_code=<n>; site_code=<n>; location_id=<hex>`:
+
+```json
+{"type":"event","kind":"call","talkgroup":"200","source_id":"100","slot":"","color_code":"","ran":"9","crc_error":"","extra":"","raw":"(dsdcc nxdn) RAN 9 src 100 dst 200 group"}
+```
+
+Remember the reliability caveat: DSDcc decodes NXDN only on clean signals
+(the example is from the repo's synthetic sample); on real off-air NXDN
+it drops sync where dsd-fme succeeds.
 
 Note the two backends can legitimately disagree on metadata for the
 same signal — they decode different link-control layers (for the

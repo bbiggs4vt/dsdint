@@ -107,6 +107,9 @@ private:
     // so we're not emitting an event per processed sample. Called once
     // per write_audio() block.
     void check_for_state_change();
+    // NXDN metadata path (see check_for_state_change's mode dispatch);
+    // mirrors the dsd-fme backend's NXDN event fields.
+    void check_for_nxdn_state_change();
 
     std::unique_ptr<DSDcc::DSDDecoder> decoder_;
     DsdccConfig cfg_;
@@ -119,6 +122,9 @@ private:
     // slot0light/slot1light naming), plus overall sync presence.
     std::string last_slot_text_[2];
     bool last_sync_ = false;
+    // Last-reported NXDN state signature (ran/src/dst/group/loc), for the
+    // same change-detection purpose as last_slot_text_ on the DMR path.
+    std::string last_nxdn_sig_;
 };
 
 } // namespace dsdsrv

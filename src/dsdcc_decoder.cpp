@@ -115,9 +115,18 @@ const char* sync_type_name(DSDcc::DSDDecoder::DSDSyncType t) {
     case DSDcc::DSDDecoder::DSDSyncDMRDataMS: return "dmr_ms_data";
     case DSDcc::DSDDecoder::DSDSyncDMRVoiceP: return "dmr_bs_voice";
     case DSDcc::DSDDecoder::DSDSyncDMRVoiceMS:return "dmr_ms_voice";
+    case DSDcc::DSDDecoder::DSDSyncNXDNP:      return "nxdn";
+    case DSDcc::DSDDecoder::DSDSyncNXDNN:      return "nxdn";
     case DSDcc::DSDDecoder::DSDSyncNone:      return "none";
     default:                                  return "other";
     }
+}
+
+// Is the current sync an NXDN frame sync? (Used in "auto" mode to pick
+// the NXDN metadata path over the DMR slot-text path.)
+bool is_nxdn_sync(DSDcc::DSDDecoder::DSDSyncType t) {
+    return t == DSDcc::DSDDecoder::DSDSyncNXDNP
+        || t == DSDcc::DSDDecoder::DSDSyncNXDNN;
 }
 
 } // namespace
@@ -173,6 +182,7 @@ bool DsdccDecoder::start(const DsdccConfig& cfg, EventCallback on_event, AudioCa
 
     last_slot_text_[0].clear();
     last_slot_text_[1].clear();
+    last_nxdn_sig_.clear();
     last_sync_ = false;
 
     running_ = true;
@@ -246,6 +256,17 @@ void DsdccDecoder::check_for_state_change() {
         on_event_(ev);
     }
 
+    // NXDN vs DMR metadata path. The NXDN decoder and the DMR slot-text
+    // decoder are separate in DSDcc; feeding the DMR path an NXDN signal
+    // would read stale slot text, so dispatch on the configured mode (or,
+    // in "auto", on the current sync).
+    const bool nxdn = (cfg_.mode == "nxdn48" || cfg_.mode == "nxdn96")
+                      || (cfg_.mode == "auto" && is_nxdn_sync(sync_type));
+    if (nxdn) {
+        check_for_nxdn_state_change();
+        return;
+    }
+
     // Per-TDMA-slot state, from DSDcc's fixed-layout status text (see
     // parse_slot_text above). Index 0 = slot #1, 1 = slot #2.
     const char* slot_text[2] = {
@@ -297,6 +318,67 @@ void DsdccDecoder::check_for_state_change() {
         }
         on_event_(ev);
     }
+}
+
+void DsdccDecoder::check_for_nxdn_state_change() {
+    // Mirror the dsd-fme backend's NXDN field conventions using DSDcc's
+    // NXDN accessors, so a client sees the same structured shape from
+    // either backend on NXDN. (DSDcc decodes fewer NXDN messages than
+    // dsd-fme and its symbol recovery is fragile on real signals -- see
+    // PROTOCOL.md -- but when it does decode, the fields line up.)
+    const DSDcc::DSDNXDN& n = decoder_->getNXDNDecoder();
+    const int ran = n.getRAN();
+    const unsigned src = n.getSourceId();
+    const unsigned dst = n.getDestinationId();
+    const bool group = n.isGroupCall();
+    const unsigned loc = n.getLocationId();
+
+    // Collapse the reportable state into one signature; only emit on a
+    // change, exactly like the DMR slot-text path, so we don't fire an
+    // event per processed block.
+    char sig[96];
+    std::snprintf(sig, sizeof(sig), "%d/%u/%u/%d/%u", ran, src, dst, group ? 1 : 0, loc);
+    if (sig == last_nxdn_sig_) return;
+    last_nxdn_sig_ = sig;
+
+    // Nothing worth reporting yet (RAN alone, before any call/site info,
+    // is not an event -- it rides on the events below).
+    if (src == 0 && loc == 0) return;
+
+    DsdEvent ev;
+    ev.kind = "call";
+    ev.ran = (ran != 0) ? std::to_string(ran) : "";
+
+    std::vector<std::string> extra;
+    if (src != 0) {
+        ev.source_id = std::to_string(src);
+        if (dst != 0) {
+            if (group) ev.talkgroup = std::to_string(dst);
+            else       extra.push_back("unit_target=" + std::to_string(dst));
+        }
+    }
+    if (loc != 0) {
+        // NXDN 24-bit location ID splits as system code (high 12 bits) /
+        // site code (low 12 bits) -- verified against dsd-fme, which
+        // prints the same split (e.g. 0x008002 -> "Sys Code: 8 - Site
+        // Code 2"). Emit the decomposition plus the raw id, matching the
+        // dsd-fme backend's tokens.
+        char loch[8];
+        std::snprintf(loch, sizeof(loch), "%06X", loc & 0xFFFFFFu);
+        extra.push_back("system_code=" + std::to_string((loc >> 12) & 0xFFFu));
+        extra.push_back("site_code=" + std::to_string(loc & 0xFFFu));
+        extra.push_back(std::string("location_id=") + loch);
+    }
+    for (std::size_t i = 0; i < extra.size(); ++i) {
+        if (i) ev.extra += "; ";
+        ev.extra += extra[i];
+    }
+
+    char raw[128];
+    std::snprintf(raw, sizeof(raw), "(dsdcc nxdn) RAN %d src %u dst %u %s",
+                  ran, src, dst, group ? "group" : "unit");
+    ev.raw_line = raw;
+    on_event_(ev);
 }
 
 } // namespace dsdsrv
