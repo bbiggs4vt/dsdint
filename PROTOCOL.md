@@ -135,11 +135,11 @@ kind; treat the remainder as free text.
 
 One frame per line the DSD backend reports (subprocess backend: one per
 line dsd-fme writes to its log, post-cleanup; DSDcc backend: one per
-detected state change). All eight data fields are always present; empty
+detected state change). All nine data fields are always present; empty
 string means "not present in this event".
 
 ```json
-{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","color_code":"","crc_error":"","extra":"","raw":" SLOT 2 TGT=19535 SRC=2222223 Group Call  "}
+{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","color_code":"","ran":"","crc_error":"","extra":"","raw":" SLOT 2 TGT=19535 SRC=2222223 Group Call  "}
 ```
 
 | field | type | meaning |
@@ -150,8 +150,9 @@ string means "not present in this event".
 | `source_id` | string | Decimal source radio ID, or `""`. |
 | `slot` | string | TDMA slot, `"1"` or `"2"`, or `""` when the event isn't slot-specific. |
 | `color_code` | string | DMR color code as bare decimal (`"4"`, not `"04"` — both backends normalize away leading zeros), or `""` when the event doesn't carry one. Which event kinds carry it differs by backend: dsd-fme prints it on its per-burst sync lines, DSDcc's slot status text carries it on `voice`/`call` events. |
+| `ran` | string | NXDN Radio Access Number as bare decimal (`"2"`, not `"02"`), or `""`. The NXDN analog of `color_code` — a repeater-access/filter code — surfaced by the dsd-fme backend on NXDN sync lines that carry `RAN NN`. DMR events leave it `""`, NXDN events leave `color_code` `""`. |
 | `crc_error` | string | `"1"` when the decoder itself marked this line/burst as failing an FEC/CRC check, else `""`. Subprocess backend: set when the cleaned dsd-fme line carries a `CRC ERR`, `FEC ERR`, or `EMB ERR` marker. DSDcc backend: set on `burst` events whose slot-type PDU failed its Golay(20,8) FEC (`burst=UNK`). Treat the flagged event's other fields (especially `color_code`) as unreliable; note the reverse does not hold — a marginal burst can decode "cleanly" to a wrong value without being flagged. |
-| `extra` | string | Backend-specific detail that doesn't fit the fields above, or `""`. Used by the DSDcc backend for: `"unit_target=<id>"` on unit-to-unit calls (the target of a private call is not a talkgroup, so it is surfaced here instead of in `talkgroup`); `"burst=<type>"` on `burst` events (DSDcc's three-letter slot burst type: `IDL` idle, `CSB` CSBK control, `VLC`/`TLC` voice/terminator link control, `VOX` voice, `UNK` unknown, ...); `"sync_type=<flavor>"` on sync-acquisition events (see below). |
+| `extra` | string | Backend-specific detail that doesn't fit the fields above, or `""`. **Format: zero or more `key=value` tokens joined by `"; "`.** DSDcc backend tokens: `unit_target=<id>` (unit-to-unit call target — not a talkgroup, so kept out of `talkgroup`), `burst=<type>` on `burst` events (three-letter slot burst type: `IDL` idle, `CSB` CSBK control, `VLC`/`TLC` voice/terminator link control, `VOX` voice, `UNK` unknown, …), `sync_type=<flavor>` on sync-acquisition events (see below). dsd-fme backend NXDN trunking tokens: `site_code=<n>`, `system_code=<n>`, `location_id=<hex>`, `category=<name>` (e.g. `Global`). Because the same label can mean different things per line (a `Site Code` is the home site on a Site ID line but an adjacent site on an Adjacent Information line), read the accompanying `raw` for context. |
 | `raw` | string | The underlying decoder output this event was parsed from, so nothing is lost to the classification: the cleaned log line (subprocess backend) or a synthesized description (DSDcc backend). Free text; formats below are examples from real decodes, and they **vary across dsd-fme versions/forks** — parse the structured fields, fall back to `raw` only for display/debugging. |
 
 Encoding guarantee: strings are JSON-escaped per RFC 8259 including
@@ -166,10 +167,10 @@ Captured from lwvmobile/dsd-fme decoding a real DMR group call
 (the test suite's `session_real_fme_test`):
 
 ```json
-{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"2","color_code":"4","crc_error":"","extra":"","raw":"20:37:20 Sync: +DMR   slot1  [SLOT2] | Color Code=04 | VC6 "}
-{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","color_code":"","crc_error":"","extra":"","raw":" SLOT 2 TGT=19535 SRC=2222223 Group Call  "}
-{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","crc_error":"","extra":"","raw":"Decoding DMR BS/MS Simplex"}
-{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"1","color_code":"5","crc_error":"1","extra":"","raw":"13:37:43 Sync: +DMR  [slot1]  slot2  | Color Code=05 | MBCC (FEC ERR)"}
+{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"2","color_code":"4","ran":"","crc_error":"","extra":"","raw":"20:37:20 Sync: +DMR   slot1  [SLOT2] | Color Code=04 | VC6 "}
+{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","color_code":"","ran":"","crc_error":"","extra":"","raw":" SLOT 2 TGT=19535 SRC=2222223 Group Call  "}
+{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","crc_error":"","extra":"","raw":"Decoding DMR BS/MS Simplex"}
+{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"1","color_code":"5","ran":"","crc_error":"1","extra":"","raw":"13:37:43 Sync: +DMR  [slot1]  slot2  | Color Code=05 | MBCC (FEC ERR)"}
 ```
 
 - `kind:"sync"` — any line containing "Sync" (dsd-fme's per-burst sync
@@ -190,15 +191,38 @@ Captured from lwvmobile/dsd-fme decoding a real DMR group call
   summary. These are deliberate pass-throughs (the `raw` field is the
   point), not noise to be alarmed by.
 
+##### NXDN / IDAS (subprocess backend with `protocol:"nxdn48"`)
+
+Captured from dsd-fme decoding a real off-air NXDN48/IDAS trunked
+control channel (the same signal used to verify the `protocol` hint):
+
+```json
+{"type":"event","kind":"voice","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"2","crc_error":"","extra":"","raw":"Sync: NXDN48  RTCH Voice  RAN 02 PF X/4"}
+{"type":"event","kind":"call","talkgroup":"2043","source_id":"958","slot":"","color_code":"","ran":"","crc_error":"","extra":"","raw":" Session Call - ... - Src=958 - Dst/TG=2043 - Prefix Ch: 3 "}
+{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","crc_error":"","extra":"site_code=1","raw":"Site ID Message - Area: 0; Site Type: 8 Narrow; Site Code: 1 Open Access;  FACCH3"}
+{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","crc_error":"","extra":"site_code=2; system_code=8; category=Global","raw":"Adjacent Information - Cat: Global - Sys Code: 8 - Site Code 2 "}
+{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","crc_error":"","extra":"location_id=008002","raw":"Service Information - Location ID [008002] SVC [01A8] RST [000000] "}
+```
+
+- `ran` carries the NXDN Radio Access Number from `RTCH ... RAN NN`
+  sync lines. `source_id`/`talkgroup` come from `Src=`/`Dst/TG=` (and
+  `TGT:` on channel-update lines) exactly as for DMR.
+- The trunking-identity messages (Site ID, Adjacent/Location
+  Information, Service Information) carry no call IDs, so they stay
+  `kind:"unknown"` with their structured detail in `extra` and the full
+  text in `raw`.
+- Reminder (see the `protocol` field above): this is the **dsd-fme
+  backend**, which decodes NXDN reliably. The DSDcc backend does not.
+
 #### DSDcc backend (`dsd-server-dsdcc`) — real examples
 
 Captured from DSDcc 1.9.0 decoding the same call
 (`session_dsdcc_test`):
 
 ```json
-{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"","color_code":"","crc_error":"","extra":"sync_type=dmr_bs_data","raw":"(dsdcc: sync acquired, dmr_bs_data)"}
-{"type":"event","kind":"burst","talkgroup":"","source_id":"","slot":"1","color_code":"4","crc_error":"","extra":"burst=IDL","raw":"(dsdcc slot1) .04 IDL                   "}
-{"type":"event","kind":"voice","talkgroup":"150607","source_id":"2222223","slot":"2","color_code":"4","crc_error":"","extra":"","raw":"(dsdcc slot2) *04 VOX 02222223>G00150607"}
+{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","crc_error":"","extra":"sync_type=dmr_bs_data","raw":"(dsdcc: sync acquired, dmr_bs_data)"}
+{"type":"event","kind":"burst","talkgroup":"","source_id":"","slot":"1","color_code":"4","ran":"","crc_error":"","extra":"burst=IDL","raw":"(dsdcc slot1) .04 IDL                   "}
+{"type":"event","kind":"voice","talkgroup":"150607","source_id":"2222223","slot":"2","color_code":"4","ran":"","crc_error":"","extra":"","raw":"(dsdcc slot2) *04 VOX 02222223>G00150607"}
 ```
 
 - `kind:"sync"` — sync acquisition/loss transitions only, not

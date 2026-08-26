@@ -285,6 +285,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
                 .field("source_id", ev.source_id)
                 .field("slot", ev.slot)
                 .field("color_code", ev.color_code)
+                .field("ran", ev.ran)
                 .field("crc_error", ev.crc_error)
                 .field("extra", ev.extra)
                 .field("raw", ev.raw_line)

@@ -363,7 +363,17 @@ void DsdProcess::udp_reader_loop() {
     }
 }
 
-DsdEvent DsdProcess::classify_line(const std::string& line) const {
+namespace {
+
+// Strip leading zeros from a decimal string ("04" -> "4", "0" -> "0").
+std::string strip_leading_zeros(const std::string& s) {
+    std::size_t nz = s.find_first_not_of('0');
+    return (nz == std::string::npos) ? "0" : s.substr(nz);
+}
+
+} // namespace
+
+DsdEvent classify_dsd_fme_line(const std::string& line) {
     // Best-effort regex classification of dsd-fme's textual log output.
     // dsd-fme's log format varies by version/build flags, so treat these
     // as a starting point: run your dsd-fme interactively against a known
@@ -374,15 +384,21 @@ DsdEvent DsdProcess::classify_line(const std::string& line) const {
     ev.kind = "unknown";
 
     // Formats verified against real dsd-fme output (see the DSD-FME
-    // VERIFICATION NOTES above build_argv):
+    // VERIFICATION NOTES above build_argv), DMR:
     //   " SLOT 2 TGT=19535 SRC=2222223 Group Call"
     //   "20:37:20 Sync: +DMR   slot1  [SLOT2] | Color Code=04 | VC6"
+    // and NXDN/IDAS (verified against a real off-air NXDN48 capture):
+    //   "Sync: NXDN48  RTCH Voice  RAN 02 PF X/4"
+    //   " Session Call - ... - Src=958 - Dst/TG=2043 - Prefix Ch: 3"
+    //   "Site ID Message - Area: 0; Site Type: 8 Narrow; Site Code: 1 Open Access;"
+    //   "Adjacent Information - Cat: Global - Sys Code: 8 - Site Code 2"
+    //   "Service Information - Location ID [008002] SVC [01A8] RST [000000]"
     // TGT? because real dsd-fme writes "TGT=", not "TG=" (the old
-    // TG-only regex silently never matched a real talkgroup). The
-    // bracketed-slot regex is tried first because sync lines name BOTH
-    // slots ("slot1  [SLOT2]") and the brackets mark the one the
-    // current burst belongs to; matching a bare "slot" first would
-    // always report slot 1.
+    // TG-only regex silently never matched a real talkgroup); it also
+    // matches NXDN's "Dst/TG=2043" and "TGT: 2043". The bracketed-slot
+    // regex is tried first because DMR sync lines name BOTH slots
+    // ("slot1  [SLOT2]") and the brackets mark the one the current burst
+    // belongs to; matching a bare "slot" first would always report 1.
     static const std::regex tg_re(R"(TGT?[:=]?\s*(\d+))", std::regex::icase);
     static const std::regex src_re(R"((?:SRC|RID|Source)[:=]?\s*(\d+))", std::regex::icase);
     static const std::regex slot_bracket_re(R"(\[slot\s*(\d)\])", std::regex::icase);
@@ -398,6 +414,19 @@ DsdEvent DsdProcess::classify_line(const std::string& line) const {
     static const std::regex err_re(R"((CRC|FEC|EMB)\s*ERR)", std::regex::icase);
     static const std::regex sync_re(R"(sync|no sync|nosync)", std::regex::icase);
     static const std::regex voice_re(R"(voice|ambe)", std::regex::icase);
+    // NXDN-specific. RAN is the NXDN analog of DMR's color code (repeater
+    // access number); it gets its own field. The trunking identity fields
+    // are routed into `extra` as "; "-joined key=value tokens rather than
+    // separate columns because, e.g., "Site Code" means the home site on
+    // a Site ID line but an adjacent site on an Adjacent Information line
+    // -- the accompanying `raw` disambiguates.
+    static const std::regex ran_re(R"(\bRAN\s+(\d+))", std::regex::icase);
+    static const std::regex site_re(R"(Site\s*Code:?\s*(\d+))", std::regex::icase);
+    static const std::regex sys_re(R"(Sys(?:tem)?\s*Code:?\s*(\d+))", std::regex::icase);
+    static const std::regex loc_re(R"(Location\s*ID\s*\[?\s*([0-9A-Fa-f]+)\s*\]?)", std::regex::icase);
+    // Require a word boundary AND the colon: without them "Cat" matches
+    // inside "Lo(cat)ion", pulling a bogus category out of "Location ID".
+    static const std::regex cat_re(R"(\bCat(?:egory)?\s*:\s*([A-Za-z]+))", std::regex::icase);
 
     std::smatch m;
     if (std::regex_search(line, m, tg_re)) ev.talkgroup = m[1].str();
@@ -407,11 +436,21 @@ DsdEvent DsdProcess::classify_line(const std::string& line) const {
     if (std::regex_search(line, m, cc_re)) {
         // dsd-fme zero-pads ("Color Code=04"); normalize to match the
         // DSDcc backend's bare decimal so clients see one format.
-        std::string cc = m[1].str();
-        std::size_t nz = cc.find_first_not_of('0');
-        ev.color_code = (nz == std::string::npos) ? "0" : cc.substr(nz);
+        ev.color_code = strip_leading_zeros(m[1].str());
     }
+    if (std::regex_search(line, m, ran_re)) ev.ran = strip_leading_zeros(m[1].str());
     if (std::regex_search(line, err_re)) ev.crc_error = "1";
+
+    // Assemble NXDN trunking detail into extra as key=value tokens.
+    std::vector<std::string> tokens;
+    if (std::regex_search(line, m, site_re))   tokens.push_back("site_code=" + m[1].str());
+    if (std::regex_search(line, m, sys_re))     tokens.push_back("system_code=" + m[1].str());
+    if (std::regex_search(line, m, loc_re))     tokens.push_back("location_id=" + m[1].str());
+    if (std::regex_search(line, m, cat_re))     tokens.push_back("category=" + m[1].str());
+    for (std::size_t i = 0; i < tokens.size(); ++i) {
+        if (i) ev.extra += "; ";
+        ev.extra += tokens[i];
+    }
 
     if (std::regex_search(line, voice_re)) ev.kind = "voice";
     else if (std::regex_search(line, sync_re)) ev.kind = "sync";

@@ -344,6 +344,19 @@ if(DSD_FME_BIN AND EXISTS "${DSD_FME_BIN}" AND DSDCC_SAMPLES_DIR AND EXISTS "${D
   set_tests_properties(dsd_process_test PROPERTIES TIMEOUT 120)
 endif()
 
+# --- Pure unit test for classify_dsd_fme_line ---
+# String->DsdEvent classification against real captured DMR and NXDN log
+# lines. No process, no signal, no Boost -- always runs.
+add_executable(test_dsd_fme_parse EXCLUDE_FROM_ALL
+  src/dsd_process.cpp
+  tests/test_dsd_fme_parse.cpp
+)
+target_include_directories(test_dsd_fme_parse PRIVATE src)
+target_link_libraries(test_dsd_fme_parse PRIVATE Threads::Threads)
+target_compile_options(test_dsd_fme_parse PRIVATE -Wall -Wextra)
+add_test(NAME dsd_fme_parse_test COMMAND test_dsd_fme_parse)
+set_tests_properties(dsd_fme_parse_test PROPERTIES TIMEOUT 30)
+
 # --- Full-stack test: stock server + REAL dsd-fme over a WebSocket ---
 # test_session's production-configuration twin: same Session/demod/
 # DsdProcess build as dsd-server, but the dsd-fme found on PATH is the

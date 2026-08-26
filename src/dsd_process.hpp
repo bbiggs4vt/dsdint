@@ -29,6 +29,13 @@
 
 namespace dsdsrv {
 
+// Classify one cleaned dsd-fme log line (ANSI/CR already stripped) into a
+// structured DsdEvent. Free function -- it depends on nothing but the
+// line text -- so it is unit-tested directly against real dsd-fme output
+// (see tests/test_dsd_fme_parse.cpp). Handles both DMR and NXDN line
+// formats.
+DsdEvent classify_dsd_fme_line(const std::string& line);
+
 struct DsdProcessConfig {
     std::string dsd_fme_path = "dsd-fme";
     // Discriminator audio format we'll write to dsd-fme's stdin.
@@ -91,7 +98,7 @@ private:
     void stdout_reader_loop();
     void udp_reader_loop();
     std::vector<std::string> build_argv() const;
-    DsdEvent classify_line(const std::string& line) const;
+    DsdEvent classify_line(const std::string& line) const { return classify_dsd_fme_line(line); }
 
     DsdProcessConfig cfg_;
     EventCallback on_event_;
