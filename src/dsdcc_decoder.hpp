@@ -110,6 +110,8 @@ private:
     // NXDN metadata path (see check_for_state_change's mode dispatch);
     // mirrors the dsd-fme backend's NXDN event fields.
     void check_for_nxdn_state_change();
+    // dPMR metadata path (own/called ids).
+    void check_for_dpmr_state_change();
 
     std::unique_ptr<DSDcc::DSDDecoder> decoder_;
     DsdccConfig cfg_;
@@ -125,6 +127,7 @@ private:
     // Last-reported NXDN state signature (ran/src/dst/group/loc), for the
     // same change-detection purpose as last_slot_text_ on the DMR path.
     std::string last_nxdn_sig_;
+    std::string last_dpmr_sig_;
 };
 
 } // namespace dsdsrv

@@ -225,6 +225,23 @@ if(DSD_BUILD_DSDCC_VARIANT)
              COMMAND test_nxdn_dsdcc ${CMAKE_BINARY_DIR}/nxdn48_test.dis)
     set_tests_properties(nxdn_dsdcc_test PROPERTIES TIMEOUT 60)
 
+    # dPMR metadata path, against DSDcc's bundled real dPMR capture.
+    add_executable(test_dpmr_dsdcc EXCLUDE_FROM_ALL
+      src/dsdcc_decoder.cpp
+      tests/test_dpmr_dsdcc.cpp
+    )
+    target_include_directories(test_dpmr_dsdcc PRIVATE src ${DSDCC_INCLUDE_DIR})
+    target_link_libraries(test_dpmr_dsdcc PRIVATE ${DSDCC_LIBRARY} Threads::Threads)
+    if(MBE_LIBRARY)
+      target_link_libraries(test_dpmr_dsdcc PRIVATE ${MBE_LIBRARY})
+    endif()
+    target_compile_options(test_dpmr_dsdcc PRIVATE -Wall -Wextra)
+    if(DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dpmr.dis")
+      add_test(NAME dpmr_dsdcc_test
+               COMMAND test_dpmr_dsdcc "${DSDCC_SAMPLES_DIR}/dpmr.dis")
+      set_tests_properties(dpmr_dsdcc_test PROPERTIES TIMEOUT 60)
+    endif()
+
     # Full-stack test of the DSDcc server build: session.cpp compiled
     # with DSD_USE_DSDCC_BACKEND (the dsd-server-dsdcc configuration),
     # driven over a real WebSocket with FM-modulated IQ of the same DMR

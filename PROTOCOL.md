@@ -51,6 +51,7 @@ case-insensitive, and spaces/underscores/hyphens are ignored:
 | `nxdn96` | NXDN96 (12.5 kHz) | `-fn` | NXDN96 |
 | `p25` (or `p25p1`) | P25 Phase 1 | `-f1` | P25p1 (mode only, no fields) |
 | `p25p2` | P25 Phase 2 (6000 sps TDMA) | `-f2` | P25p1 (mode only, no fields) |
+| `dpmr` | dPMR (6.25 kHz FDMA) | `-fm` | dPMR |
 | `auto` / `unknown` / `not sure` / anything else | auto-detect | `-fa` | auto |
 
 The hint only steers mode selection; it does not change the wire format
@@ -167,24 +168,24 @@ protocol; this table says which ones ever carry a non-`""` value for a
 given protocol (driven by the `protocol` start hint). A blank cell means
 the field stays `""` for that protocol — not that it is omitted.
 
-| field | DMR | NXDN | P25 | notes |
-|---|:---:|:---:|:---:|---|
-| `type` | ✓ | ✓ | ✓ | always `"event"` |
-| `kind` | ✓ | ✓ | ✓ | `burst` is DSDcc/DMR-only; NXDN/P25 control messages are `unknown` |
-| `talkgroup` | ✓ | ✓ | ✓ | DMR `TGT=`; NXDN `Dst/TG=`; P25 `TGT:` (zero-padding stripped) |
-| `source_id` | ✓ | ✓ | ✓ | `Src=` / `SRC:` (zero-padding stripped) |
-| `slot` | ✓ | — | — | DMR TDMA slot `1`/`2` |
-| `color_code` | ✓ | — | — | DMR color code |
-| `ran` | — | ✓ | — | NXDN Radio Access Number |
-| `nac` | — | — | ✓* | P25 Network Access Code (hex); *dsd-fme backend only |
-| `emergency` | ✓* | ✓* | ✓* | emergency flag; *dsd-fme backend only |
-| `alias` | ✓* | — | — | DMR talker alias; *dsd-fme backend only |
-| `crc_error` | ✓ | ✓ | ✓ | FEC/CRC-failure flag (dsd-fme, and DSDcc for DMR/NXDN) |
-| `extra` | ✓ | ✓ | ✓ | protocol/backend-specific `key=value` tokens (see below) |
-| `raw` | ✓ | ✓ | ✓ | always the source line/description |
+| field | DMR | NXDN | P25 | dPMR | notes |
+|---|:---:|:---:|:---:|:---:|---|
+| `type` | ✓ | ✓ | ✓ | ✓ | always `"event"` |
+| `kind` | ✓ | ✓ | ✓ | ✓ | `burst` is DSDcc/DMR-only; NXDN/P25 control messages are `unknown` |
+| `talkgroup` | ✓ | ✓ | ✓ | ✓ | DMR `TGT=`; NXDN `Dst/TG=`; P25 `TGT:`; dPMR `TG=` (zero-padding stripped) |
+| `source_id` | ✓ | ✓ | ✓ | ✓ | `Src=` / `SRC:` (zero-padding stripped) |
+| `slot` | ✓ | — | — | — | DMR TDMA slot `1`/`2` |
+| `color_code` | ✓ | — | — | ✓* | DMR color code / dPMR channel code; *dPMR: dsd-fme backend only |
+| `ran` | — | ✓ | — | — | NXDN Radio Access Number |
+| `nac` | — | — | ✓* | — | P25 Network Access Code (hex); *dsd-fme backend only |
+| `emergency` | ✓* | ✓* | ✓* | ✓* | emergency flag; *dsd-fme backend only |
+| `alias` | ✓* | — | — | — | DMR talker alias; *dsd-fme backend only |
+| `crc_error` | ✓ | ✓ | ✓ | ✓ | FEC/CRC-failure flag (dsd-fme, and DSDcc for DMR/NXDN) |
+| `extra` | ✓ | ✓ | ✓ | — | protocol/backend-specific `key=value` tokens (see below) |
+| `raw` | ✓ | ✓ | ✓ | ✓ | always the source line/description |
 
-(`color_code`/`ran`/`nac` are the per-protocol access codes — DMR, NXDN,
-P25 respectively — so exactly one is populated for a given signal.)
+(`color_code`/`ran`/`nac` are the per-protocol access codes — DMR & dPMR,
+NXDN, P25 respectively — so at most one is populated for a given signal.)
 
 `extra` token vocabulary by protocol/backend:
 
@@ -245,8 +246,14 @@ backends. **NXDN** parses on both, but is only *reliable* on the dsd-fme
 backend — the DSDcc backend's NXDN symbol recovery drops sync on real
 off-air signals (it decodes clean/synthetic input fine), so prefer
 dsd-fme for real NXDN (see the `protocol` field note above). **P25** is
-dsd-fme only (above). Anything else auto-detects into `raw` under
-`kind:"unknown"`.
+dsd-fme only (above). **dPMR** decodes on both backends (both verified
+against DSDcc's bundled `samples/dpmr.dis`): the dsd-fme backend reports
+`talkgroup`/`source_id`/`color_code` (the dPMR channel code, from
+`Channel Code=NN`), the DSDcc backend reports `talkgroup`/`source_id`
+from its own/called ids (its channel-code accessor is unreliable, so it
+omits `color_code`). As with DMR, the two backends can report different
+ids for the same call (they read different frame fields). Anything else
+auto-detects into `raw` under `kind:"unknown"`.
 
 Encoding guarantee: strings are JSON-escaped per RFC 8259 including
 control characters (`\u00XX`), and the subprocess backend strips ANSI
@@ -326,6 +333,24 @@ shapes:
 - `alg_id=80`/`key_id=0000` means clear/unencrypted; `alg_id=84` AES256,
   `alg_id=aa` Motorola ADP, etc. (values as dsd-fme reports).
 - Zero-padded IDs (`TGT: 00000100`) are normalized (`talkgroup:"100"`).
+
+##### dPMR (`protocol:"dpmr"`) — real, both backends
+
+Real frames from decoding `samples/dpmr.dis`. dsd-fme reports the dPMR
+channel code in `color_code`; both backends report talkgroup/source
+(from different frame fields, so the ids can differ):
+
+```json
+{"type":"event","kind":"call","talkgroup":"10011","source_id":"243","slot":"","color_code":"31","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"","raw":" TG=0010011 Src=0000243 Channel Code=31"}
+{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"1","extra":"","raw":" TG=(CRC ERR) Src=(CRC ERR) Channel Code =(CRC ERR)"}
+{"type":"event","kind":"call","talkgroup":"14653","source_id":"302","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"","raw":"(dsdcc dpmr) own 302 called 14653"}
+```
+
+The first two are the dsd-fme backend (note `color_code:"31"` and the
+CRC-flagged bad frame); the third is the DSDcc backend (own/called ids,
+no channel code). Both are from the same file — the id disagreement
+(10011/243 vs 14653/302) is the usual cross-backend decode-layer
+difference.
 
 ##### NXDN / IDAS (subprocess backend with `protocol:"nxdn48"`)
 

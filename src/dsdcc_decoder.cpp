@@ -176,6 +176,8 @@ bool DsdccDecoder::start(const DsdccConfig& cfg, EventCallback on_event, AudioCa
         // produces sync events only. The dsd-fme backend is the P25
         // decoder that emits structured fields.
         decoder_->setDecodeMode(DSDcc::DSDDecoder::DSDDecodeP25P1, true);
+    } else if (cfg_.mode == "dpmr") {
+        decoder_->setDecodeMode(DSDcc::DSDDecoder::DSDDecodeDPMR, true);
     } else { // "auto" or anything unrecognized
         decoder_->setDecodeMode(DSDcc::DSDDecoder::DSDDecodeAuto, true);
     }
@@ -189,6 +191,7 @@ bool DsdccDecoder::start(const DsdccConfig& cfg, EventCallback on_event, AudioCa
     last_slot_text_[0].clear();
     last_slot_text_[1].clear();
     last_nxdn_sig_.clear();
+    last_dpmr_sig_.clear();
     last_sync_ = false;
 
     running_ = true;
@@ -275,6 +278,10 @@ void DsdccDecoder::check_for_state_change() {
     // P25: no metadata extraction in this backend yet -- don't run the DMR
     // slot-text path on a P25 signal (it would read stale slot text).
     if (cfg_.mode == "p25") return;
+    if (cfg_.mode == "dpmr") {
+        check_for_dpmr_state_change();
+        return;
+    }
 
     // Per-TDMA-slot state, from DSDcc's fixed-layout status text (see
     // parse_slot_text above). Index 0 = slot #1, 1 = slot #2.
@@ -386,6 +393,33 @@ void DsdccDecoder::check_for_nxdn_state_change() {
     char raw[128];
     std::snprintf(raw, sizeof(raw), "(dsdcc nxdn) RAN %d src %u dst %u %s",
                   ran, src, dst, group ? "group" : "unit");
+    ev.raw_line = raw;
+    on_event_(ev);
+}
+
+void DsdccDecoder::check_for_dpmr_state_change() {
+    // dPMR via DSDcc's dPMR accessors -- own id = source, called id =
+    // target. (getColorCode() is unreliable for dPMR in DSDcc -- it
+    // returns out-of-range values -- so this backend does not surface the
+    // dPMR channel code; the dsd-fme backend reports it from "Channel
+    // Code=NN".) IDs can differ from the dsd-fme backend's, which decodes
+    // a different frame field -- same cross-backend caveat as DMR.
+    const DSDcc::DSDdPMR& d = decoder_->getDPMRDecoder();
+    const unsigned own = d.getOwnId();
+    const unsigned called = d.getCalledId();
+
+    char sig[64];
+    std::snprintf(sig, sizeof(sig), "%u/%u", own, called);
+    if (sig == last_dpmr_sig_) return;
+    last_dpmr_sig_ = sig;
+    if (own == 0 && called == 0) return;
+
+    DsdEvent ev;
+    ev.kind = "call";
+    if (own != 0) ev.source_id = std::to_string(own);
+    if (called != 0) ev.talkgroup = std::to_string(called);
+    char raw[96];
+    std::snprintf(raw, sizeof(raw), "(dsdcc dpmr) own %u called %u", own, called);
     ev.raw_line = raw;
     on_event_(ev);
 }

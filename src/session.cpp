@@ -181,7 +181,7 @@ namespace {
 // "not sure" asks the decoder to auto-detect, and anything unrecognized
 // also falls back to auto-detect rather than erroring (a typo shouldn't
 // kill a stream).
-enum class ProtocolHint { Default, Dmr, Nxdn48, Nxdn96, P25p1, P25p2, Auto };
+enum class ProtocolHint { Default, Dmr, Nxdn48, Nxdn96, P25p1, P25p2, Dpmr, Auto };
 
 ProtocolHint parse_protocol_hint(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -194,6 +194,7 @@ ProtocolHint parse_protocol_hint(std::string s) {
     if (k == "nxdn96") return ProtocolHint::Nxdn96;
     if (k == "p25p2" || k == "p25phase2") return ProtocolHint::P25p2;
     if (k == "p25" || k == "p25p1" || k == "p25phase1") return ProtocolHint::P25p1;
+    if (k == "dpmr") return ProtocolHint::Dpmr;
     // "auto", "unknown", "notsure", and anything else -> auto-detect
     return ProtocolHint::Auto;
 }
@@ -234,6 +235,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         // dsd-fme backend is the P25 decoder to use.
         case ProtocolHint::P25p1:
         case ProtocolHint::P25p2:  dcfg.mode = "p25";    break;
+        case ProtocolHint::Dpmr:   dcfg.mode = "dpmr";   break;
         case ProtocolHint::Auto:   dcfg.mode = "auto";   break;
         case ProtocolHint::Dmr:
         case ProtocolHint::Default:
@@ -257,6 +259,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         case ProtocolHint::Nxdn96: dcfg.mode_flag = "n"; break;
         case ProtocolHint::P25p1:  dcfg.mode_flag = "1"; break;
         case ProtocolHint::P25p2:  dcfg.mode_flag = "2"; break;
+        case ProtocolHint::Dpmr:   dcfg.mode_flag = "m"; break;
         case ProtocolHint::Auto:   dcfg.mode_flag = "a"; break;
         case ProtocolHint::Dmr:
         case ProtocolHint::Default:

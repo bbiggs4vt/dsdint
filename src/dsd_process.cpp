@@ -409,7 +409,9 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     static const std::regex src_re(R"((?:SRC|RID|Source)[:=]?\s*(\d+))", std::regex::icase);
     static const std::regex slot_bracket_re(R"(\[slot\s*(\d)\])", std::regex::icase);
     static const std::regex slot_re(R"((?:TS|Slot)[:=]?\s*(\d))", std::regex::icase);
-    static const std::regex cc_re(R"(Colou?r\s*Code[:=]?\s*(\d+))", std::regex::icase);
+    // "Colour/Color Code" (DMR) or "Channel Code" (dPMR) -- both are the
+    // per-channel colour code, so both land in color_code.
+    static const std::regex cc_re(R"((?:Colou?r|Channel)\s*Code[:=]?\s*(\d+))", std::regex::icase);
     // dsd-fme marks failed FEC/CRC checks inline in the affected line
     // (post-ANSI-strip): "CSBK (CRC ERR)", "CACH/Burst FEC ERR",
     // "SLOT 2 FLCO FEC ERR", "CACH/EMB ERR". Lift that into the
@@ -450,6 +452,10 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     // <n>" value forms (a timer table and dPMR field), hence the negative
     // lookahead.
     static const std::regex emerg_re(R"(\bEmergency\b(?!\s*[:=]))", std::regex::icase);
+    // dPMR prints the emergency bit as a value ("Emergency = 1"); the flag
+    // form above deliberately skips "Emergency =", so match the set bit
+    // explicitly here (and NOT "Emergency = 0").
+    static const std::regex emerg_val_re(R"(\bEmergency\s*=\s*1\b)", std::regex::icase);
     // Talker alias text runs to end of line after "Alias: "; the colon
     // keeps it off "Alias CRC Error" / "Talker Alias LC Header" lines.
     static const std::regex alias_re(R"(\bAlias:\s*(\S.*?)\s*$)", std::regex::icase);
@@ -489,6 +495,7 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
         for (char& c : ev.nac) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
     }
     if (std::regex_search(line, emerg_re)) ev.emergency = "1";
+    else if (std::regex_search(line, emerg_val_re)) ev.emergency = "1";
     if (std::regex_search(line, m, alias_re)) ev.alias = m[1].str();
     if (std::regex_search(line, err_re)) ev.crc_error = "1";
 

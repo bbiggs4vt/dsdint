@@ -127,13 +127,12 @@ int main() {
         check(e.emergency == "1", "emergency flag set on 'Group Emergency'");
     }
     {
-        // The negative-lookahead cases: these must NOT set emergency (the
-        // value forms are a timer table and a dPMR field, not a flag).
+        // The "Emergency: <timer>" colon form (a timer table) must NOT set
+        // the flag -- only the bare word (DMR/P25) or "Emergency = 1"
+        // (dPMR, tested below) does.
         DsdEvent e1 = classify_dsd_fme_line(
             " Timers - Emergency: 3; Packet: 5; MS-MS: 2; Line: 1; ");
         check(e1.emergency.empty(), "'Emergency: <timer>' does NOT set the flag");
-        DsdEvent e2 = classify_dsd_fme_line("Emergency = 1 - ");
-        check(e2.emergency.empty(), "'Emergency = <n>' does NOT set the flag");
     }
     {
         // Alias regex must not fire on the header/error lines (no colon
@@ -201,6 +200,28 @@ int main() {
         check(e.extra.find("site_id=") == std::string::npos,
               "NXDN 'Site Code' is not mis-parsed as P25 site_id");
         check(e.extra.find("site_code=2") != std::string::npos, "NXDN site_code still works");
+    }
+
+    // ---- dPMR (real lines from decoding samples/dpmr.dis) ----
+    {
+        DsdEvent e = classify_dsd_fme_line(" TG=0010011 Src=0000243 Channel Code=31");
+        check(e.talkgroup == "10011", "dPMR: talkgroup 10011 (TG=, zero-padding stripped)");
+        check(e.source_id == "243", "dPMR: source 243 (Src=, stripped)");
+        check(e.color_code == "31", "dPMR: color_code 31 (from Channel Code=)");
+    }
+    {
+        DsdEvent e = classify_dsd_fme_line(" TG=(CRC ERR) Src=(CRC ERR) Channel Code =(CRC ERR)");
+        check(e.crc_error == "1", "dPMR CRC ERR line flagged");
+        check(e.talkgroup.empty(), "dPMR CRC ERR: no bogus talkgroup");
+        check(e.color_code.empty(), "dPMR CRC ERR: no bogus color_code");
+    }
+    {
+        DsdEvent e = classify_dsd_fme_line("Comm Mode = 0 - Comms Format = 1 - Emergency = 1 - ");
+        check(e.emergency == "1", "dPMR: Emergency = 1 sets the flag");
+    }
+    {
+        DsdEvent e = classify_dsd_fme_line("Comm Mode = 0 - Emergency = 0 - ");
+        check(e.emergency.empty(), "dPMR: Emergency = 0 does NOT set the flag");
     }
 
     if (g_failures == 0) {
