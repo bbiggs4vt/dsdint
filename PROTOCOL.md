@@ -155,6 +155,46 @@ string means "not present in this event".
 | `extra` | string | Backend-specific detail that doesn't fit the fields above, or `""`. **Format: zero or more `key=value` tokens joined by `"; "`.** DSDcc backend tokens: `unit_target=<id>` (unit-to-unit call target — not a talkgroup, so kept out of `talkgroup`), `burst=<type>` on `burst` events (three-letter slot burst type: `IDL` idle, `CSB` CSBK control, `VLC`/`TLC` voice/terminator link control, `VOX` voice, `UNK` unknown, …), `sync_type=<flavor>` on sync-acquisition events (see below). dsd-fme backend NXDN trunking tokens: `site_code=<n>`, `system_code=<n>`, `location_id=<hex>`, `category=<name>` (e.g. `Global`). Because the same label can mean different things per line (a `Site Code` is the home site on a Site ID line but an adjacent site on an Adjacent Information line), read the accompanying `raw` for context. |
 | `raw` | string | The underlying decoder output this event was parsed from, so nothing is lost to the classification: the cleaned log line (subprocess backend) or a synthesized description (DSDcc backend). Free text; formats below are examples from real decodes, and they **vary across dsd-fme versions/forks** — parse the structured fields, fall back to `raw` only for display/debugging. |
 
+#### Which fields each protocol populates
+
+Every field is **always present** in every `event` frame regardless of
+protocol; this table says which ones ever carry a non-`""` value for a
+given protocol (driven by the `protocol` start hint). A blank cell means
+the field stays `""` for that protocol — not that it is omitted.
+
+| field | DMR | NXDN48 / NXDN96 | notes |
+|---|:---:|:---:|---|
+| `type` | ✓ | ✓ | always `"event"` |
+| `kind` | ✓ | ✓ | `burst` is DSDcc/DMR-only; NXDN control messages are `unknown` |
+| `talkgroup` | ✓ | ✓ | DMR `TGT=`; NXDN `Dst/TG=` / `TGT:` |
+| `source_id` | ✓ | ✓ | `Src=` / `SRC=` |
+| `slot` | ✓ | — | TDMA slot `1`/`2`; NXDN48 is single-channel, so blank |
+| `color_code` | ✓ | — | DMR color code |
+| `ran` | — | ✓ | NXDN Radio Access Number (the NXDN analog of `color_code`) |
+| `crc_error` | ✓ | ✓ | FEC/CRC-failure flag; both protocols on the dsd-fme backend |
+| `extra` | ✓ | ✓ | protocol/backend-specific `key=value` tokens (see below) |
+| `raw` | ✓ | ✓ | always the source line/description |
+
+`extra` token vocabulary by protocol/backend:
+
+| token | protocol | backend | meaning |
+|---|---|---|---|
+| `unit_target=<id>` | DMR | DSDcc | private-call target (not a talkgroup) |
+| `burst=<type>` | DMR | DSDcc | slot burst type (`IDL`/`CSB`/`VLC`/`TLC`/`VOX`/`UNK`) |
+| `sync_type=<flavor>` | DMR | DSDcc | `dmr_bs_data` / `dmr_ms_voice` / … |
+| `site_code=<n>` | NXDN | dsd-fme | site code (home or adjacent — see `raw`) |
+| `system_code=<n>` | NXDN | dsd-fme | trunked system code |
+| `location_id=<hex>` | NXDN | dsd-fme | site location ID |
+| `category=<name>` | NXDN | dsd-fme | system scope, e.g. `Global` |
+
+Protocol vs. backend: **DMR** decodes on both the dsd-fme and DSDcc
+backends. **NXDN** is reliable only on the dsd-fme backend (the DSDcc
+backend's NXDN symbol recovery drops sync on real signals — see the
+`protocol` field note above), so all NXDN fields above are populated by
+the dsd-fme backend. P25/other protocols are not yet parsed into
+structured fields — with `protocol:"auto"` an unrecognized protocol's
+output still arrives, but only in `raw` under `kind:"unknown"`.
+
 Encoding guarantee: strings are JSON-escaped per RFC 8259 including
 control characters (`\u00XX`), and the subprocess backend strips ANSI
 color sequences and carriage returns from dsd-fme's output before
