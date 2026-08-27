@@ -283,6 +283,38 @@ int main() {
         check(e.extra.find("downlink=F5ZOO-R1") != std::string::npos, "YSF: downlink callsign in extra");
     }
 
+    // ---- Startup banner / config noise is suppressed by default ----
+    // dsd-fme prints an ASCII-art banner and a version/device/config block
+    // when it spins up; all of it classifies as kind:"unknown" and should
+    // be dropped unless forward_unknown is set. Lines below are verbatim
+    // from real dsd-fme startup output.
+    {
+        const char* noise[] = {
+            " ██████╗  ██████╗", // banner art
+            "Build Version: AW 2026-37-g198f0ea ",
+            "MBElib Version: 1.3.0",
+            "Decoding DMR BS/MS Simplex",
+            "UDP Blaster Output: 127.0.0.1:47024 ",
+            "Audio In Device: -",
+        };
+        bool all_unknown = true, all_suppressed = true, all_forwardable = true;
+        for (const char* s : noise) {
+            DsdEvent e = classify_dsd_fme_line(s);
+            if (e.kind != "unknown") all_unknown = false;
+            if (dsd_fme_forward_event(e, /*forward_unknown=*/false)) all_suppressed = false;
+            if (!dsd_fme_forward_event(e, /*forward_unknown=*/true)) all_forwardable = false;
+        }
+        check(all_unknown, "startup banner/config lines classify as kind:unknown");
+        check(all_suppressed, "startup noise is suppressed by default (forward_unknown=false)");
+        check(all_forwardable, "startup noise is forwarded when forward_unknown=true (debug)");
+    }
+    {
+        // A real decode event is forwarded regardless of the flag.
+        DsdEvent e = classify_dsd_fme_line(" SLOT 2 TGT=19535 SRC=2222223 Group Call  ");
+        check(e.kind == "call", "a real call line is not kind:unknown");
+        check(dsd_fme_forward_event(e, false), "recognized events forward even with unknowns suppressed");
+    }
+
     if (g_failures == 0) {
         std::printf("\nALL DSD-FME PARSE TESTS PASSED\n");
         return 0;

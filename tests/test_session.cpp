@@ -225,14 +225,15 @@ void test_audio_pipeline_relays_events_and_audio() {
     //
     // Note this waits for an event carrying the talkgroup rather than
     // asserting that every event frame carries it. session.cpp emits
-    // one event frame per line dsd-fme writes to stdout, and not every
-    // such line is a decode: the fake's very first line is the
+    // one event frame per recognized line dsd-fme writes to stdout, and
+    // not every line is a decode: the fake's very first line is the
     // "ARGS:..." banner it echoes its argv with (see
-    // test_fake_dsd_fme.cpp), which classify_line correctly reports as
-    // kind "unknown" with no talkgroup. That is the intended behavior
-    // of both ends -- the client gets the raw line either way -- so
-    // what's worth asserting is that the fake's TG=12345 decode line
-    // makes it through, not that nothing else does.
+    // test_fake_dsd_fme.cpp), which classify_line reports as kind
+    // "unknown". Such unknown lines (dsd-fme's real startup banner/config
+    // block included) are suppressed by default now
+    // (DsdProcessConfig::forward_unknown), so the client does NOT receive
+    // that line -- what's worth asserting is that the fake's TG=12345
+    // decode line makes it through.
     for (int i = 0; i < 20 && !(saw_call_event && saw_audio); ++i) {
         std::string resp;
         if (!client.read(resp, is_text, std::chrono::seconds(3))) break;

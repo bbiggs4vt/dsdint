@@ -332,14 +332,16 @@ void DsdProcess::stdout_reader_loop() {
             // (and of lines that are pure ANSI color churn, which
             // strip_ansi reduces to empty).
             if (!line.empty() && on_event_) {
-                on_event_(classify_line(line));
+                DsdEvent ev = classify_line(line);
+                if (dsd_fme_forward_event(ev, cfg_.forward_unknown)) on_event_(ev);
             }
         }
     }
     // Flush any trailing partial line on exit.
     std::string tail = strip_ansi(buf);
     if (!tail.empty() && on_event_) {
-        on_event_(classify_line(tail));
+        DsdEvent ev = classify_line(tail);
+        if (dsd_fme_forward_event(ev, cfg_.forward_unknown)) on_event_(ev);
     }
 }
 
@@ -402,6 +404,10 @@ std::string tidy_callsign(const std::string& in) {
 }
 
 } // namespace
+
+bool dsd_fme_forward_event(const DsdEvent& ev, bool forward_unknown) {
+    return forward_unknown || ev.kind != "unknown";
+}
 
 DsdEvent classify_dsd_fme_line(const std::string& line) {
     // Best-effort regex classification of dsd-fme's textual log output.

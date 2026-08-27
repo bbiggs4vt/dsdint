@@ -66,7 +66,25 @@ struct DsdProcessConfig {
     // slot 1 on the left channel, slot 2 on the right (640-byte packets
     // = 20 ms). This is relayed to the client as-is.
     uint16_t udp_audio_port = 0;
+
+    // Forward dsd-fme's unrecognized (kind:"unknown") log lines as events.
+    // Default false: suppress them. dsd-fme prints a large startup block —
+    // an ASCII-art banner, version/build lines, and a device/config dump
+    // ("Build Version: …", "MBElib Version: …", "Decoding DMR BS/MS
+    // Simplex", "UDP Blaster Output: …", "Audio In Device: …", …) — none of
+    // which match a decode pattern, so they all classify as "unknown" and
+    // otherwise reach the client as noise. Set true to forward them anyway
+    // (useful when developing the classifier: an unrecognized line you
+    // expected to parse still surfaces with its raw text).
+    bool forward_unknown = false;
 };
+
+// Emit filter for the subprocess backend: whether a classified event should
+// be forwarded to the client. Everything with a recognized kind is always
+// forwarded; kind:"unknown" lines (dsd-fme's banner/config noise, or any
+// line the classifier didn't match) are forwarded only when forward_unknown
+// is set. Free function so it is unit-testable alongside classify.
+bool dsd_fme_forward_event(const DsdEvent& ev, bool forward_unknown);
 
 class DsdProcess {
 public:

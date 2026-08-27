@@ -185,7 +185,7 @@ string means "not present in this event".
 | field | type | meaning |
 |---|---|---|
 | `type` | string | `"event"` |
-| `kind` | string | Best-effort classification: `"voice"`, `"sync"`, `"call"`, `"burst"` (DSDcc backend only), or `"unknown"`. See the per-backend notes below for exactly when each occurs. |
+| `kind` | string | Best-effort classification: `"voice"`, `"sync"`, `"call"`, `"burst"` (DSDcc backend only), or `"unknown"`. See the per-backend notes below for exactly when each occurs. **On the subprocess backend, `unknown` events are suppressed by default** — dsd-fme prints a large startup banner / version / device-config block that all classifies as `unknown` noise, so it isn't forwarded (server-side `DsdProcessConfig::forward_unknown`; set it true to forward unrecognized lines for classifier debugging). Recognized events (`voice`/`sync`/`call`/`burst`) are always forwarded. |
 | `talkgroup` | string | Decimal talkgroup / group-call target ID, or `""`. Kept as a string because IDs can exceed what a client might assume about integer width, and `""` is the natural "absent". |
 | `source_id` | string | Decimal source radio ID, or `""`. |
 | `slot` | string | TDMA slot, `"1"` or `"2"`, or `""` when the event isn't slot-specific. |
@@ -338,9 +338,12 @@ Captured from lwvmobile/dsd-fme decoding a real DMR group call
 ```json
 {"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"2","color_code":"4","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"","raw":"20:37:20 Sync: +DMR   slot1  [SLOT2] | Color Code=04 | VC6 "}
 {"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"","raw":" SLOT 2 TGT=19535 SRC=2222223 Group Call  "}
-{"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"","raw":"Decoding DMR BS/MS Simplex"}
 {"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"1","color_code":"5","ran":"","nac":"","emergency":"","alias":"","crc_error":"1","extra":"","raw":"13:37:43 Sync: +DMR  [slot1]  slot2  | Color Code=05 | MBCC (FEC ERR)"}
 ```
+
+(dsd-fme's `unknown`-kind lines — its startup banner, `Decoding DMR BS/MS
+Simplex`, and the like — are suppressed by default, so they don't appear
+in this stream; see the `kind` notes below.)
 
 - `kind:"sync"` — any line containing "Sync" (dsd-fme's per-burst sync
   lines, several per second while a signal is present). `slot` is taken
@@ -355,10 +358,13 @@ Captured from lwvmobile/dsd-fme decoding a real DMR group call
   reference capture's only wrong Color Code (5 instead of 4, one
   burst out of 660) sits on a line marked `(FEC ERR)` — filtering on
   this flag removes it.
-- `kind:"unknown"` — everything else dsd-fme prints: startup banner
-  lines, `Activity Update ...` summaries, FEC error notes, the exit
-  summary. These are deliberate pass-throughs (the `raw` field is the
-  point), not noise to be alarmed by.
+- `kind:"unknown"` — everything else dsd-fme prints: the startup banner /
+  version / device-config block, `Activity Update ...` summaries, the exit
+  summary, and any line the classifier didn't match. **These are
+  suppressed by default** (`DsdProcessConfig::forward_unknown`), since the
+  startup block in particular is pure boilerplate; set `forward_unknown`
+  true to forward them (the `raw` field carries the original line, useful
+  when extending the classifier).
 
 ##### DMR trunking / talker alias / emergency (dsd-fme backend)
 
