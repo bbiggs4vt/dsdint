@@ -56,6 +56,16 @@ target_compile_options(dsd-server PRIVATE -Wall -Wextra)
 add_executable(test_fm_demod EXCLUDE_FROM_ALL src/fm_demod.cpp tests/test_fm_demod.cpp)
 target_include_directories(test_fm_demod PRIVATE src)
 
+# π/4-DQPSK demodulator (TETRA physical layer). Pure DSP with a matching
+# modulator carried in the test as ground truth — no external deps, no
+# capture files, so it always runs.
+add_executable(test_tetra_demod EXCLUDE_FROM_ALL src/tetra_demod.cpp tests/test_tetra_demod.cpp)
+target_include_directories(test_tetra_demod PRIVATE src)
+target_link_libraries(test_tetra_demod PRIVATE m)
+target_compile_options(test_tetra_demod PRIVATE -Wall -Wextra)
+add_test(NAME tetra_demod_test COMMAND test_tetra_demod)
+set_tests_properties(tetra_demod_test PROPERTIES TIMEOUT 60)
+
 # AFC + freq_offset sign-convention tests (tests/test_afc.cpp). Core
 # cases are synthetic-tone only, no external deps. The liquid and DSDcc
 # variant blocks below add their sections to this target when those

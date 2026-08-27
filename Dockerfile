@@ -119,6 +119,7 @@ RUN cmake --build /opt/dsd-server/build -j"$(nproc)" --target \
         test_dsd_process test_session_real_fme \
         test_dsd_fme_parse \
         test_fake_dsd_server fake_dsd_server \
+        test_tetra_demod \
         test_fm_demod test_afc \
     && cd /opt/dsd-server/build \
     && DSD_TEST_PACE_MS=${DSD_TEST_PACE_MS} ctest --output-on-failure
