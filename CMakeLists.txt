@@ -77,6 +77,27 @@ target_compile_options(test_tetra_burst_sync PRIVATE -Wall -Wextra)
 add_test(NAME tetra_burst_sync_test COMMAND test_tetra_burst_sync)
 set_tests_properties(tetra_burst_sync_test PROPERTIES TIMEOUT 60)
 
+# tetra_bit_source: the GNU-Radio-replacement bridge — IQ in, the TETRA
+# bitstream (1 byte/bit) out on stdout, for piping into osmo-tetra's
+# tetra-rx (or tetra-kit). The subprocess path to TETRA decode.
+add_executable(tetra_bit_source EXCLUDE_FROM_ALL
+  tools/tetra_bit_source.cpp src/tetra_demod.cpp src/tetra_burst_sync.cpp)
+target_include_directories(tetra_bit_source PRIVATE src)
+target_link_libraries(tetra_bit_source PRIVATE m)
+target_compile_options(tetra_bit_source PRIVATE -Wall -Wextra)
+
+# End-to-end test of the bridge: runs the built binary as a subprocess on a
+# generated TETRA IQ file and confirms the emitted bits lock the burst grid.
+add_executable(test_tetra_bit_source EXCLUDE_FROM_ALL
+  tests/test_tetra_bit_source.cpp src/tetra_burst_sync.cpp src/tetra_demod.cpp)
+target_include_directories(test_tetra_bit_source PRIVATE src)
+target_link_libraries(test_tetra_bit_source PRIVATE m)
+target_compile_options(test_tetra_bit_source PRIVATE -Wall -Wextra)
+add_dependencies(test_tetra_bit_source tetra_bit_source)
+add_test(NAME tetra_bit_source_test
+         COMMAND test_tetra_bit_source $<TARGET_FILE:tetra_bit_source>)
+set_tests_properties(tetra_bit_source_test PROPERTIES TIMEOUT 60)
+
 # AFC + freq_offset sign-convention tests (tests/test_afc.cpp). Core
 # cases are synthetic-tone only, no external deps. The liquid and DSDcc
 # variant blocks below add their sections to this target when those
