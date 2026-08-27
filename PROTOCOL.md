@@ -585,3 +585,27 @@ connect ──▶ (optional binary IQ: silently ignored)
   the connection.
 - Disconnecting (cleanly or abruptly) tears down the session's pipeline
   server-side; there is no shutdown handshake in the protocol itself.
+
+## Testing a client against a fake server
+
+A client project does **not** need the real server (Boost/DSDcc/dsd-fme/
+real IQ) to unit-test its code against this protocol. `tools/fake_dsd_server.hpp`
+is a single, dependency-free (C++17 + POSIX sockets + `std::thread`) header
+that speaks the exact wire protocol above but does no DSP. Drop it into a
+test target and:
+
+- **script the server → client direction** — `send_started()` (with a
+  chosen `udp_audio_port` to mimic either backend), `send_event(Event{}…)`,
+  `send_audio(pcm)`, `send_error(msg)`, plus raw/close/drop escape hatches
+  for negative tests; and
+- **assert on the client → server direction** — every control frame the
+  client sends is recorded (`control_messages()`, `last_start()`), and
+  streamed IQ is counted (`iq_bytes_received()`).
+
+It runs in-process on a background thread (`start()` returns the bound
+port; use `url()`), so a C++ test can drive it and assert without any IPC.
+`tools/fake_dsd_server.cpp` is a standalone runner (`--port`, `--udp-port`)
+for non-C++ or subprocess-style suites. See `tests/test_fake_dsd_server.cpp`
+for a worked example (it validates the fake against an independent
+Boost.Beast client). This is a testing aid for *client* projects; it is not
+part of the server build.

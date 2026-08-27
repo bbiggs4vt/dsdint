@@ -494,6 +494,28 @@ set_tests_properties(session_concurrency_test PROPERTIES
   TIMEOUT 180
 )
 
+# Self-test for tools/fake_dsd_server.hpp -- the drop-in fake dsd-server
+# for client test suites. Validates the hand-rolled WebSocket framing by
+# driving it with an independent Boost.Beast client. Depends only on Boost
+# (no server sources), just as an external client's test suite would.
+add_executable(test_fake_dsd_server EXCLUDE_FROM_ALL
+  tests/test_fake_dsd_server.cpp
+)
+target_include_directories(test_fake_dsd_server PRIVATE tools ${Boost_INCLUDE_DIRS})
+target_link_libraries(test_fake_dsd_server PRIVATE Boost::system Threads::Threads)
+target_compile_options(test_fake_dsd_server PRIVATE -Wall -Wextra)
+add_test(NAME fake_dsd_server_test COMMAND test_fake_dsd_server)
+set_tests_properties(fake_dsd_server_test PROPERTIES TIMEOUT 60)
+
+# The standalone runner (subprocess/non-C++ consumers). Built as part of
+# the test gate so it can't rot, but it is not itself a ctest.
+add_executable(fake_dsd_server EXCLUDE_FROM_ALL
+  tools/fake_dsd_server.cpp
+)
+target_include_directories(fake_dsd_server PRIVATE tools)
+target_link_libraries(fake_dsd_server PRIVATE Threads::Threads)
+target_compile_options(fake_dsd_server PRIVATE -Wall -Wextra)
+
 # --- ThreadSanitizer build of the concurrency test ---
 # Off by default: TSan roughly 5-15x's runtime and needs a compiler that
 # supports it, so it shouldn't be in anyone's default build. But a
