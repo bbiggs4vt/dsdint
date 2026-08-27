@@ -172,6 +172,54 @@ int main() {
         srv.stop();
     }
 
+    // --- Incremental, IQ-driven scenario (the on_iq hook) ---
+    // Mirrors the standalone runner: "start" emits nothing but "started";
+    // the first IQ push acquires the signal (sync + call), and every push
+    // after that streams a voice frame.
+    {
+        FakeDsdServer srv;
+        srv.on_iq = [](std::size_t frame_index, std::size_t, FakeDsdServer& s) {
+            if (frame_index == 0) {
+                s.send_event(Event{}.k("sync").sl("2").cc("4"));
+                s.send_event(Event{}.k("call").tg("150607").src("2222223").sl("2"));
+            } else {
+                s.send_audio(std::vector<int16_t>(160, 0));
+            }
+        };
+        srv.start();
+
+        Client client;
+        check(client.connect(srv.port()), "iq-driven: client connects");
+        check(client.send_text(R"({"type":"start"})"), "iq-driven: client sends start");
+
+        std::string resp; bool is_text = false;
+        check(client.read(resp, is_text), "iq-driven: start still gets a started reply");
+        check(has(resp, "\"type\":\"started\""), "iq-driven: reply is started");
+
+        // No events precede IQ: the sync event below arrives only as the
+        // response to the first push (nothing but "started" came before it),
+        // which is what proves the output is IQ-driven, not start-driven.
+
+        // First IQ push -> sync + call.
+        check(client.send_binary(std::vector<uint8_t>(800, 0)), "iq-driven: first IQ push");
+        check(client.read(resp, is_text) && is_text && has(resp, "\"kind\":\"sync\""),
+              "iq-driven: first push yields the sync event");
+        check(client.read(resp, is_text) && is_text && has(resp, "\"kind\":\"call\"")
+              && has(resp, "\"talkgroup\":\"150607\""),
+              "iq-driven: first push yields the call event");
+
+        // Subsequent IQ push -> audio.
+        check(client.send_binary(std::vector<uint8_t>(800, 0)), "iq-driven: second IQ push");
+        bool audio_is_text = true;
+        check(client.read(resp, audio_is_text) && !audio_is_text
+              && !resp.empty() && static_cast<uint8_t>(resp[0]) == 0x01,
+              "iq-driven: later push yields a tagged audio frame");
+        check(srv.iq_frames_received() == 2, "iq-driven: server counted both IQ frames");
+
+        client.close();
+        srv.stop();
+    }
+
     if (g_failures == 0) { std::printf("\nALL FAKE DSD SERVER TESTS PASSED\n"); return 0; }
     std::printf("\n%d CHECK(S) FAILED\n", g_failures);
     return 1;

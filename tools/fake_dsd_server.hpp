@@ -26,7 +26,7 @@
 //     MyClient client(srv.url());        // <-- the code under test
 //     client.connect_and_start(/* sample_rate=... protocol="dmr" */);
 //
-//     srv.wait_for_control(1s);          // wait for the client's "start"
+//     srv.wait_for_control(1s, 1);       // wait for the client's "start"
 //     auto start = srv.last_start();
 //     assert(start.fields["protocol"] == "dmr");
 //
@@ -36,6 +36,20 @@
 //
 //     srv.send_error("simulated backend failure");    // inject the error path
 //     srv.close_connection();
+//
+// You can drive the scripting by hand as above, or hang it off the two
+// hooks so the fake mirrors the real server's timing — which only emits
+// once IQ is flowing. on_control fires per control frame; on_iq fires per
+// binary IQ frame the client streams (0-based frame_index):
+//
+//     srv.on_iq = [](std::size_t i, std::size_t, FakeDsdServer& s) {
+//         if (i == 0) {                              // first IQ push: acquire + call
+//             s.send_event(Event{}.k("sync").sl("2").cc("4"));
+//             s.send_event(Event{}.k("call").tg("150607").src("2222223").sl("2"));
+//         } else {                                   // later pushes: stream audio
+//             s.send_audio(std::vector<int16_t>(160, 0));
+//         }
+//     };
 //
 // It also builds as a standalone process (see tools/fake_dsd_server.cpp)
 // so a non-C++ or subprocess-style test can spawn it and point a URL at
@@ -294,6 +308,14 @@ public:
     // can script a bespoke response. Set before start().
     std::function<void(const ControlMessage& msg, FakeDsdServer& srv)> on_control;
 
+    // Optional hook, called (on the server thread) for every binary IQ
+    // frame the client streams, after it is counted. `frame_index` is
+    // 0-based per connection. This lets a scenario mirror the real
+    // server's timing — nothing flows until IQ is fed — e.g. emit the
+    // sync/call events on the first push and stream audio on later ones,
+    // rather than dumping everything on "start". Set before start().
+    std::function<void(std::size_t frame_index, std::size_t bytes, FakeDsdServer& srv)> on_iq;
+
     // Binds, listens, and starts the accept/read thread. Returns the actual
     // port (useful when Options::port was 0). Throws std::runtime_error on
     // a socket failure.
@@ -404,6 +426,11 @@ public:
     // actually sent IQ after "start".
     std::size_t iq_bytes_received() const { return iq_bytes_.load(); }
 
+    // Number of binary IQ frames the current/last client has streamed
+    // (reset when a new client connects; the same 0-based counter the
+    // on_iq hook's frame_index comes from).
+    std::size_t iq_frames_received() const { return iq_frames_.load(); }
+
 private:
     static void throw_errno(const char* what) {
         throw std::runtime_error(std::string("fake_dsd_server: ") + what + ": " + std::strerror(errno));
@@ -430,6 +457,7 @@ private:
             int one = 1;
             ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
             if (!handshake(fd)) { ::close(fd); continue; }
+            iq_frames_ = 0; // per-connection frame index for on_iq
             {
                 std::lock_guard<std::mutex> lk(write_mutex_);
                 client_fd_ = fd;
@@ -487,7 +515,7 @@ private:
             if (opcode == 0x9) { send_pong(payload); continue; } // ping -> pong
             if (opcode == 0xA) continue;                  // pong (ignore)
             if (opcode == 0x1) handle_text(payload);      // text control frame
-            else if (opcode == 0x2) iq_bytes_ += payload.size(); // client IQ: count & drain
+            else if (opcode == 0x2) handle_iq(payload);   // client IQ frame
         }
     }
 
@@ -552,6 +580,12 @@ private:
         if (on_control) on_control(msg, *this);
     }
 
+    void handle_iq(const std::string& payload) {
+        std::size_t idx = iq_frames_++;          // 0-based per connection
+        iq_bytes_ += payload.size();             // cumulative across connections
+        if (on_iq) on_iq(idx, payload.size(), *this);
+    }
+
     // --- framed writes (server->client frames are NOT masked) ---
     void send_text(const std::string& s)   { send_frame(0x1, reinterpret_cast<const uint8_t*>(s.data()), s.size()); }
     void send_binary(const std::vector<uint8_t>& b) { send_frame(0x2, b.data(), b.size()); }
@@ -595,6 +629,7 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> client_connected_{false};
     std::atomic<std::size_t> iq_bytes_{0};
+    std::atomic<std::size_t> iq_frames_{0};
 
     mutable std::mutex state_mutex_;
     std::condition_variable state_cv_;

@@ -600,7 +600,15 @@ test target and:
   for negative tests; and
 - **assert on the client → server direction** — every control frame the
   client sends is recorded (`control_messages()`, `last_start()`), and
-  streamed IQ is counted (`iq_bytes_received()`).
+  streamed IQ is counted (`iq_bytes_received()` / `iq_frames_received()`).
+
+Scripting can be hung off two hooks so the fake mirrors the real server's
+timing — which emits nothing until IQ is flowing: `on_control` fires per
+control frame, and `on_iq` fires per binary IQ frame the client streams
+(0-based `frame_index`). The bundled example (and the standalone runner)
+does the minimum on `start` — just the `started` reply — then acquires the
+signal (a sync + call event) on the first IQ push and streams a voice frame
+on each push after that.
 
 It runs in-process on a background thread (`start()` returns the bound
 port; use `url()`), so a C++ test can drive it and assert without any IPC.

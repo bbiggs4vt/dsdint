@@ -7,12 +7,12 @@
 // in-process — that gives direct access to the recorded control messages
 // for assertions (see the header's usage note and test_fake_dsd_server).
 //
-// Behavior: listens on --port (default 8765). On each client "start"
-// control frame it replies "started" and then plays a small, deterministic
-// scenario — a sync event, a DMR call event (TG 150607, SRC 2222223, slot
-// 2), and one 20 ms voice-audio frame — so a client test has known output
-// to assert against. Every control frame the client sends is echoed to
-// stdout as one line.
+// Behavior mirrors the real server's timing: on "start" it does the
+// minimum — just the "started" reply, no events yet. Output only begins
+// once the client streams IQ: the FIRST binary IQ frame triggers a sync
+// event and a DMR call event (TG 150607, SRC 2222223, slot 2); every
+// SUBSEQUENT IQ frame yields one 20 ms voice-audio frame. Every control
+// frame the client sends is echoed to stdout as one line.
 //
 // Build:  g++ -std=c++17 -O2 -pthread tools/fake_dsd_server.cpp -o fake_dsd_server
 // Run:    ./fake_dsd_server --port 8765 [--udp-port 46000]
@@ -46,16 +46,21 @@ int main(int argc, char** argv) {
     std::signal(SIGPIPE, SIG_IGN);
 
     FakeDsdServer srv(opts);
-    // On each "start", after the automatic "started" reply, play a small
-    // deterministic scenario the client can assert against.
-    srv.on_control = [](const ControlMessage& msg, FakeDsdServer& s) {
+    // "start" does the minimum: just the automatic "started" reply (below).
+    // Echo control frames so a driving test can see them.
+    srv.on_control = [](const ControlMessage& msg, FakeDsdServer&) {
         std::printf("control: %s\n", msg.raw_json.c_str());
         std::fflush(stdout);
-        if (msg.type == "start") {
+    };
+    // Output tracks IQ, like the real server: first IQ push -> acquire the
+    // signal and report the call; every push after that -> a voice frame.
+    srv.on_iq = [](std::size_t frame_index, std::size_t, FakeDsdServer& s) {
+        if (frame_index == 0) {
             s.send_event(Event{}.k("sync").sl("2").cc("4")
                              .rw("(fake) sync acquired"));
             s.send_event(Event{}.k("call").tg("150607").src("2222223").sl("2")
                              .rw("(fake) SLOT 2 TGT=150607 SRC=2222223 Group Call"));
+        } else {
             s.send_audio(std::vector<int16_t>(160, 0)); // one 20 ms 8 kHz frame
         }
     };
