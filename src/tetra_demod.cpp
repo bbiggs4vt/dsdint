@@ -144,19 +144,46 @@ void TetraDpqskDemod::recover_symbols(const std::vector<std::complex<float>>& mf
 std::vector<unsigned char>
 TetraDpqskDemod::demodulate(const std::complex<float>* iq, std::size_t n) {
     std::vector<unsigned char> bits;
+    cfo_hz_ = 0.0;
     if (n == 0) return bits;
 
     const std::vector<std::complex<float>> mf = matched_filter(iq, n);
     recover_symbols(mf);
+    if (symbols_.size() < 2) return bits;
 
-    // Differential detection: the angle of s[k]·conj(s[k-1]) is the
-    // π/4-DQPSK phase transition. Map per the TETRA table (see header):
-    //   sign  bit B(2k-1) = 1 when the transition is negative,
-    //   mag   bit B(2k)   = 1 when |transition| is 3π/4 (vs π/4).
-    bits.reserve(symbols_.size() * 2);
-    for (std::size_t k = 1; k < symbols_.size(); ++k) {
-        const std::complex<float> d = symbols_[k] * std::conj(symbols_[k - 1]);
-        const float ang = std::atan2(std::imag(d), std::real(d));
+    // Per-symbol differential products: the angle of s[k]·conj(s[k-1]) is
+    // the π/4-DQPSK phase transition.
+    std::vector<std::complex<float>> diff(symbols_.size() - 1);
+    for (std::size_t k = 1; k < symbols_.size(); ++k)
+        diff[k - 1] = symbols_[k] * std::conj(symbols_[k - 1]);
+
+    // Non-data-aided CFO estimate. The four transition phases {±π/4, ±3π/4}
+    // all map to +π under the 4th power, so d^4 = -e^{j·8πν} where ν is the
+    // per-symbol offset in cycles; averaging -d^4 leaves the pure tone and
+    // arg()/(8π) recovers ν. Unambiguous for |ν| < 1/8 (±Rs/8 = ±2250 Hz).
+    float nu = 0.0f; // cycles/symbol
+    if (cfg_.correct_cfo && !diff.empty()) {
+        std::complex<double> acc(0.0, 0.0);
+        for (const auto& d : diff) {
+            const std::complex<double> dd(d.real(), d.imag());
+            const std::complex<double> d4 = dd * dd * dd * dd;
+            acc += -d4;
+        }
+        const double ang8 = std::atan2(acc.imag(), acc.real()); // = 8πν
+        nu = static_cast<float>(ang8 / (8.0 * kPi));
+        cfo_hz_ = static_cast<double>(nu) * 18000.0; // ν * Rs
+    }
+    const float cfo_bias = 2.0f * kPi * nu; // phase the CFO adds per symbol
+
+    // Slice each (CFO-corrected) transition. Per the TETRA table (header):
+    //   sign bit B(2k-1) = 1 when the transition is negative,
+    //   mag  bit B(2k)   = 1 when |transition| is 3π/4 (vs π/4).
+    bits.reserve(diff.size() * 2);
+    for (const auto& d : diff) {
+        float ang = std::atan2(std::imag(d), std::real(d)) - cfo_bias;
+        // wrap to (-π, π]
+        while (ang > kPi) ang -= 2.0f * kPi;
+        while (ang < -kPi) ang += 2.0f * kPi;
         const unsigned char b1 = (ang < 0.0f) ? 1u : 0u;
         const unsigned char b2 = (std::fabs(ang) > (kPi / 2.0f)) ? 1u : 0u;
         bits.push_back(b1);

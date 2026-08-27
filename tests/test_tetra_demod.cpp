@@ -237,6 +237,51 @@ int main() {
               "low-SNR AWGN (0 dB) degrades sensibly (0.05 < BER < 0.30)");
     }
 
+    // 5. Carrier-frequency offset. Rotate the IQ by a fixed CFO and confirm
+    //    the demod estimates it and corrects it back to zero BER, that it is
+    //    genuinely needed (a large offset wrecks the bits with correction
+    //    off), and that estimation holds across the ±Rs/8 acquisition range.
+    const double fs = sps * 18000.0;
+    auto apply_cfo = [&](const std::vector<cf>& in, double f_hz) {
+        std::vector<cf> out(in.size());
+        const double w = 2.0 * M_PI * f_hz / fs;
+        for (std::size_t i = 0; i < in.size(); ++i)
+            out[i] = in[i] * cf(static_cast<float>(std::cos(w * i)),
+                                static_cast<float>(std::sin(w * i)));
+        return out;
+    };
+    for (double f : {500.0, -1500.0, 2000.0}) {
+        auto shifted = apply_cfo(iq, f);
+        TetraDpqskDemod demod(cfg); // correct_cfo defaults on
+        auto out = demod.demodulate(shifted.data(), shifted.size());
+        double ber = best_ber(bits, out);
+        std::printf("  CFO %+.0f Hz: est=%.0f Hz, BER=%.5f\n", f, demod.last_cfo_hz(), ber);
+        check(ber == 0.0, std::string("CFO ") + std::to_string((int)f) + " Hz corrected to zero BER");
+        check(std::fabs(demod.last_cfo_hz() - f) < 50.0,
+              std::string("CFO ") + std::to_string((int)f) + " Hz estimated within 50 Hz");
+    }
+    {
+        // A static CFO within ±Rs/8 doesn't by itself cross the slicer's
+        // ±45° decision margin, so differential detection alone rides it out
+        // noise-free. The correction earns its keep by reclaiming that
+        // margin under noise: a large offset (1800 Hz -> 36° bias, leaving
+        // only 9°) plus moderate AWGN is far worse uncorrected than
+        // corrected.
+        std::mt19937 nr(7777);
+        auto noisy_cfo = add_awgn(apply_cfo(iq, 1800.0), 7.0, nr);
+
+        TetraDemodConfig off = cfg; off.correct_cfo = false;
+        TetraDpqskDemod dem_off(off);
+        double ber_off = best_ber(bits, dem_off.demodulate(noisy_cfo.data(), noisy_cfo.size()), 200, 12000);
+
+        TetraDpqskDemod dem_on(cfg); // correction on
+        double ber_on = best_ber(bits, dem_on.demodulate(noisy_cfo.data(), noisy_cfo.size()), 200, 12000);
+
+        std::printf("  CFO 1800 Hz + 7 dB AWGN: BER off=%.5f on=%.5f\n", ber_off, ber_on);
+        check(ber_on < 3e-2, "CFO+noise: corrected BER stays low (< 3e-2)");
+        check(ber_on < ber_off * 0.5, "CFO+noise: correction roughly halves the BER or better");
+    }
+
     if (g_failures == 0) { std::printf("\nALL TETRA DEMOD TESTS PASSED\n"); return 0; }
     std::printf("\n%d CHECK(S) FAILED\n", g_failures);
     return 1;

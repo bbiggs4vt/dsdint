@@ -71,6 +71,17 @@ struct TetraDemodConfig {
     // symbol rate). Smaller = steadier once locked but slower to pull in;
     // the default trades a quick lock against jitter for a clean signal.
     float timing_loop_bandwidth = 0.02f;
+
+    // Estimate and remove a residual carrier-frequency offset (CFO) before
+    // slicing. Non-data-aided (the 4th power of the differential collapses
+    // all four π/4-DQPSK phases to a common point, leaving a pure CFO
+    // tone), so it needs no training sequence. Acquisition range is
+    // ±Rs/8 = ±2250 Hz — enough for SDR reference (ppm) error near zero IF,
+    // but NOT a substitute for coarse tuning of a badly mistuned signal.
+    // last_cfo_hz() reports the estimate. Leave on unless you have already
+    // corrected CFO upstream; with no offset the estimate is ~0 and the
+    // correction is a no-op.
+    bool correct_cfo = true;
 };
 
 class TetraDpqskDemod {
@@ -87,6 +98,11 @@ public:
     // demodulate() call — exposed for tests/diagnostics (constellation).
     const std::vector<std::complex<float>>& last_symbols() const { return symbols_; }
 
+    // Carrier-frequency offset (Hz) estimated on the last demodulate() call,
+    // or 0 when correct_cfo is off. Positive means the signal sat above the
+    // nominal centre.
+    double last_cfo_hz() const { return cfo_hz_; }
+
     const TetraDemodConfig& config() const { return cfg_; }
 
 private:
@@ -96,6 +112,7 @@ private:
     TetraDemodConfig cfg_;
     std::vector<float> rrc_taps_;
     std::vector<std::complex<float>> symbols_;
+    double cfo_hz_ = 0.0;
 };
 
 } // namespace dsdsrv
