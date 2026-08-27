@@ -66,6 +66,17 @@ target_compile_options(test_tetra_demod PRIVATE -Wall -Wextra)
 add_test(NAME tetra_demod_test COMMAND test_tetra_demod)
 set_tests_properties(tetra_demod_test PROPERTIES TIMEOUT 60)
 
+# TETRA burst/frame synchroniser: finds the real training sequences in the
+# demodulated bitstream to lock the 510-bit burst grid. Self-contained
+# (a burst generator plants the sequences; end-to-end case links the demod).
+add_executable(test_tetra_burst_sync EXCLUDE_FROM_ALL
+  src/tetra_burst_sync.cpp src/tetra_demod.cpp tests/test_tetra_burst_sync.cpp)
+target_include_directories(test_tetra_burst_sync PRIVATE src)
+target_link_libraries(test_tetra_burst_sync PRIVATE m)
+target_compile_options(test_tetra_burst_sync PRIVATE -Wall -Wextra)
+add_test(NAME tetra_burst_sync_test COMMAND test_tetra_burst_sync)
+set_tests_properties(tetra_burst_sync_test PROPERTIES TIMEOUT 60)
+
 # AFC + freq_offset sign-convention tests (tests/test_afc.cpp). Core
 # cases are synthetic-tone only, no external deps. The liquid and DSDcc
 # variant blocks below add their sections to this target when those
