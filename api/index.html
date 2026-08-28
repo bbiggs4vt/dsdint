@@ -1,0 +1,447 @@
+<title>dsd-server API</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  /* ---- tokens: three-state theme (system / light / dark) ------------- */
+  :root {
+    --ground:      #f5f8f8;
+    --panel:       #ffffff;
+    --panel-2:     #eef3f3;
+    --ink:         #101a1d;
+    --ink-soft:    #48595d;
+    --line:        #d7e0e1;
+    --accent:      #0b7d8c;   /* signal teal */
+    --accent-ink:  #075a66;
+    --rx:          #b0492c;   /* warm rust = binary / audio direction */
+    --tx:          #0b7d8c;   /* teal      = control / text direction  */
+    --rapi-bg:     #ffffff;
+    --rapi-nav:    #eef3f3;
+    --rapi-txt:    #101a1d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:     #0c1316;
+      --panel:      #111c20;
+      --panel-2:    #17242a;
+      --ink:        #dde8ea;
+      --ink-soft:   #8ea3a7;
+      --line:       #223136;
+      --accent:     #33cfc3;
+      --accent-ink: #7fe6dd;
+      --rx:         #e2795a;
+      --tx:         #33cfc3;
+      --rapi-bg:    #0f1a1e;
+      --rapi-nav:   #0b1417;
+      --rapi-txt:   #dde8ea;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:     #0c1316;
+    --panel:      #111c20;
+    --panel-2:    #17242a;
+    --ink:        #dde8ea;
+    --ink-soft:   #8ea3a7;
+    --line:       #223136;
+    --accent:     #33cfc3;
+    --accent-ink: #7fe6dd;
+    --rx:         #e2795a;
+    --tx:         #33cfc3;
+    --rapi-bg:    #0f1a1e;
+    --rapi-nav:   #0b1417;
+    --rapi-txt:   #dde8ea;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+
+  /* ---- header -------------------------------------------------------- */
+  header {
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+    padding: 18px clamp(16px, 4vw, 40px) 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .titlebar {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 6px;
+  }
+  .eyebrow .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  h1 {
+    font-size: clamp(24px, 3.4vw, 34px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .sub {
+    margin: 6px 0 0;
+    color: var(--ink-soft);
+    font-size: 14.5px;
+    max-width: 62ch;
+    line-height: 1.5;
+  }
+  .sub code {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.88em;
+    color: var(--ink);
+    background: var(--panel-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  .tools { display: flex; align-items: center; gap: 10px; }
+  .icon-btn {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--ink-soft);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 8px 12px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    transition: color .15s, border-color .15s;
+  }
+  .icon-btn:hover { color: var(--ink); border-color: var(--accent); }
+  .icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---- segmented control (tabs) ------------------------------------- */
+  nav.tabs {
+    display: flex;
+    gap: 2px;
+    align-items: stretch;
+  }
+  .tab {
+    appearance: none;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--ink-soft);
+    font-family: "IBM Plex Sans", sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 10px 4px 14px;
+    margin-right: 26px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+  .tab .kbd {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10px;
+    letter-spacing: .1em;
+    color: var(--ink-soft);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+  .tab[aria-selected="true"] {
+    color: var(--ink);
+    border-bottom-color: var(--accent);
+  }
+  .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  /* ---- panels -------------------------------------------------------- */
+  main { flex: 1; min-height: 0; position: relative; }
+  .panel { position: absolute; inset: 0; overflow: auto; }
+  .panel[hidden] { display: none; }
+
+  rapi-doc { width: 100%; height: 100%; display: block; }
+
+  /* ---- AsyncAPI panel ------------------------------------------------ */
+  .async-wrap {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: clamp(20px, 4vw, 44px) clamp(16px, 4vw, 40px) 64px;
+  }
+  .lede { font-size: 16px; line-height: 1.6; color: var(--ink); margin: 0 0 4px; max-width: 66ch; }
+  .lede + p { color: var(--ink-soft); line-height: 1.6; max-width: 66ch; }
+  h2.section {
+    font-size: 13px;
+    font-family: "IBM Plex Mono", monospace;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    margin: 40px 0 14px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  .dir-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .dir {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--panel);
+    padding: 18px 18px 16px;
+  }
+  .dir h3 {
+    margin: 0 0 4px;
+    font-size: 13px;
+    font-family: "IBM Plex Mono", monospace;
+    letter-spacing: .04em;
+    display: flex; align-items: center; gap: 9px;
+  }
+  .arrow { font-weight: 700; }
+  .dir.tx h3 .arrow { color: var(--tx); }
+  .dir.rx h3 .arrow { color: var(--rx); }
+  .dir p { margin: 0 0 12px; color: var(--ink-soft); font-size: 13.5px; line-height: 1.5; }
+  ul.msgs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+  ul.msgs li {
+    display: flex; align-items: baseline; gap: 10px;
+    font-size: 13.5px;
+  }
+  ul.msgs code {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink);
+    background: var(--panel-2);
+    padding: 2px 7px;
+    border-radius: 5px;
+    white-space: nowrap;
+  }
+  ul.msgs li.bin code { color: var(--rx); }
+  ul.msgs .desc { color: var(--ink-soft); }
+
+  .code-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap;
+    margin: 32px 0 0;
+  }
+  .code-head p { margin: 0; color: var(--ink-soft); font-size: 13.5px; }
+  pre.spec {
+    margin: 12px 0 0;
+    background: var(--rapi-nav);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 20px;
+    overflow: auto;
+    max-height: 460px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--ink);
+    tab-size: 2;
+  }
+  .note {
+    margin-top: 22px;
+    border-left: 3px solid var(--accent);
+    background: var(--panel);
+    padding: 14px 18px;
+    border-radius: 0 10px 10px 0;
+    color: var(--ink-soft);
+    font-size: 13.5px;
+    line-height: 1.55;
+  }
+  .note a { color: var(--accent-ink); }
+  a { color: var(--accent-ink); }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<header>
+  <div class="titlebar">
+    <div>
+      <p class="eyebrow"><span class="dot"></span> WebSocket · flat JSON</p>
+      <h1>dsd-server API</h1>
+      <p class="sub">
+        FM-demodulate SDR IQ and decode digital voice over one WebSocket.
+        Stream <code>float32</code> IQ as binary frames, drive the pipeline
+        with JSON control frames, receive <code>started</code> /
+        <code>error</code> / <code>event</code> frames and tagged PCM audio.
+      </p>
+    </div>
+    <div class="tools">
+      <button class="icon-btn" id="theme-btn" type="button" aria-label="Toggle color theme">
+        <span id="theme-ico">◐</span><span id="theme-lbl">Theme</span>
+      </button>
+    </div>
+  </div>
+  <nav class="tabs" role="tablist" aria-label="Specification">
+    <button class="tab" role="tab" id="tab-openapi" aria-selected="true" aria-controls="panel-openapi">
+      OpenAPI 3.1 <span class="kbd">interactive</span>
+    </button>
+    <button class="tab" role="tab" id="tab-async" aria-selected="false" aria-controls="panel-async">
+      AsyncAPI 2.6 <span class="kbd">protocol model</span>
+    </button>
+  </nav>
+</header>
+
+<main>
+  <!-- ------------------------------------------------ OpenAPI (RapiDoc) -->
+  <div class="panel" id="panel-openapi" role="tabpanel" aria-labelledby="tab-openapi">
+    <rapi-doc
+      id="rapi"
+      render-style="view"
+      show-header="false"
+      show-info="true"
+      allow-try="false"
+      allow-authentication="false"
+      allow-server-selection="false"
+      allow-spec-file-load="false"
+      allow-spec-url-load="false"
+      schema-style="table"
+      schema-expand-level="2"
+      default-schema-tab="schema"
+      font-size="large"
+      regular-font="'IBM Plex Sans', system-ui, sans-serif"
+      mono-font="'IBM Plex Mono', monospace"
+    ></rapi-doc>
+  </div>
+
+  <!-- ------------------------------------------------ AsyncAPI overview -->
+  <div class="panel" id="panel-async" role="tabpanel" aria-labelledby="tab-async" hidden>
+    <div class="async-wrap">
+      <p class="lede">AsyncAPI models this interface the way it actually behaves — one channel, messages flowing both ways — rather than as request/response.</p>
+      <p>Operations are written from the client's point of view: <strong>publish</strong> is what the client sends, <strong>subscribe</strong> is what it receives. The full machine-readable spec is below; paste it into AsyncAPI Studio for the same interactive treatment as the OpenAPI tab.</p>
+
+      <h2 class="section">Channel <code style="font-family:'IBM Plex Mono',monospace">/</code> — the one session</h2>
+      <div class="dir-grid">
+        <div class="dir tx">
+          <h3><span class="arrow">▲</span> publish · client → server</h3>
+          <p>Control the pipeline (text) and feed it samples (binary).</p>
+          <ul class="msgs">
+            <li><code>start</code><span class="desc">build the demod + decode pipeline</span></li>
+            <li><code>set_gain</code><span class="desc">live discriminator gain</span></li>
+            <li><code>set_freq_offset</code><span class="desc">live NCO retune (resets AFC)</span></li>
+            <li><code>stop</code><span class="desc">tear the pipeline down</span></li>
+            <li class="bin"><code>IQ</code><span class="desc">LE float32 I/Q, binary</span></li>
+          </ul>
+        </div>
+        <div class="dir rx">
+          <h3><span class="arrow">▼</span> subscribe · server → client</h3>
+          <p>Status and decoder activity (text) plus decoded audio (binary).</p>
+          <ul class="msgs">
+            <li><code>started</code><span class="desc">pipeline is up</span></li>
+            <li><code>error</code><span class="desc">a message was rejected</span></li>
+            <li><code>event</code><span class="desc">decoder activity, 13 flat fields</span></li>
+            <li class="bin"><code>audio</code><span class="desc">0x01 tag + s16 PCM, binary</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="code-head">
+        <h2 class="section" style="margin:40px 0 0;border:0;padding:0">asyncapi.yaml</h2>
+        <button class="icon-btn" id="copy-async" type="button">⧉ Copy spec</button>
+      </div>
+      <pre class="spec" id="async-src" tabindex="0"></pre>
+
+      <div class="note">
+        View it interactively: copy the spec above, open
+        <a href="https://studio.asyncapi.com" target="_blank" rel="noopener">studio.asyncapi.com</a>,
+        and paste. Both this and the OpenAPI spec live in the repo under
+        <code style="font-family:'IBM Plex Mono',monospace">api/</code>; the
+        wire format's source of truth is <code style="font-family:'IBM Plex Mono',monospace">PROTOCOL.md</code>.
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/rapidoc/9.3.8/rapidoc-min.js"></script>
+<script>
+  const OPENAPI_SPEC = {"openapi":"3.1.0","info":{"title":"dsd-server WebSocket JSON interface","version":"1.0.0","summary":"FM-demodulate SDR IQ and decode digital voice over a WebSocket.","description":"One WebSocket connection = one session = one FM demod + one digital-voice\ndecoder. The client streams interleaved little-endian `float32` IQ as\n**binary** frames and drives the pipeline with **text** frames carrying\nflat JSON control messages; the server replies with flat JSON text frames\n(`started` / `error` / `event`) and tagged binary audio frames.\n\n**All JSON objects are flat** \u2014 no nesting, no arrays \u2014 and every\ndocumented key is **always present** in the frames that carry it. A field\nwhose value is unknown is the empty string `\"\"`, never omitted and never\n`null`. (proto3-style default omission does not apply here; the server\nalways emits every key.)\n\nThis OpenAPI file describes the JSON text frames. The two binary frame\ntypes are described only prose-wise (OpenAPI has no vocabulary for raw\nlittle-endian sample blobs):\n\n* **client \u2192 server IQ**: interleaved LE `float32` I/Q pairs\n  (`I0,Q0,I1,Q1,\u2026`) at the `sample_rate` given to `start`; byte length\n  must be a multiple of 8.\n* **server \u2192 client audio**: a 1-byte tag `0x01` followed by little-endian\n  signed-16-bit PCM (8 kHz; stereo on the dsd-fme backend, mono on DSDcc).\n\nSee `PROTOCOL.md` in the repository for the full narrative, per-protocol\nfield-population tables, the `extra` token vocabulary, and real captured\nexamples.\n","license":{"name":"See repository"}},"servers":[{"url":"ws://{host}:{port}","description":"dsd-server WebSocket endpoint (ws:// \u2014 no TLS by default).","variables":{"host":{"default":"localhost"},"port":{"default":"8080"}}}],"paths":{"/":{"get":{"operationId":"connect","summary":"Open the WebSocket session (HTTP Upgrade).","description":"A standard WebSocket handshake: `GET` with `Upgrade: websocket`. On\nsuccess the server replies `101 Switching Protocols` and the\nconnection becomes a full-duplex session. There is no path routing \u2014\nthe server accepts the upgrade on any path \u2014 and no subprotocol is\nnegotiated. After the upgrade, exchange the frames defined in\n`components/schemas`.\n","responses":{"101":{"description":"Switching Protocols \u2014 the WebSocket session is open."},"400":{"description":"Not a valid WebSocket upgrade request."}}}}},"components":{"schemas":{"ControlMessage":{"title":"Control message (client \u2192 server)","description":"Any text frame the client sends. A flat JSON object selected by its\n`type` field. Parse/emit via the concrete variant that matches `type`.\n","oneOf":[{"$ref":"#/components/schemas/StartRequest"},{"$ref":"#/components/schemas/SetGainRequest"},{"$ref":"#/components/schemas/SetFreqOffsetRequest"},{"$ref":"#/components/schemas/StopRequest"}],"discriminator":{"propertyName":"type","mapping":{"start":"#/components/schemas/StartRequest","set_gain":"#/components/schemas/SetGainRequest","set_freq_offset":"#/components/schemas/SetFreqOffsetRequest","stop":"#/components/schemas/StopRequest"}}},"StartRequest":{"title":"start","type":"object","description":"Build the demod + digital-voice decode pipeline. If a pipeline is\nalready running it is stopped and rebuilt (clean restart). The server\nreplies `started` on success, `error` on failure. Every numeric/bool\nfield is optional; an omitted field takes the default shown.\n","required":["type"],"additionalProperties":false,"properties":{"type":{"const":"start"},"sample_rate":{"type":"number","default":2000000,"description":"IQ sample rate in Hz of the binary frames you will stream."},"channel_bandwidth":{"type":"number","default":12500,"description":"Channel bandwidth in Hz; sets the demod's channel filter."},"freq_offset":{"type":"number","default":0,"description":"NCO shift in Hz. **Positive means the channel of interest sits\nabove 0 Hz in your IQ**; the server mixes it down to baseband.\n"},"gain":{"type":"number","default":26000,"description":"Discriminator output gain (linear scale into the decoder)."},"afc":{"type":"boolean","default":false,"description":"Automatic frequency control. When true the demod measures the\nresidual carrier offset in its own discriminator output and steers\nthe NCO to remove it (SDR ppm error, slow drift), variance-gated so\nno-signal noise never pulls it, clamped to \u00b15 kHz.\n"},"protocol":{"allOf":[{"$ref":"#/components/schemas/ProtocolHint"}],"default":"","description":"Advisory hint for which digital-voice protocol the signal is, so\nthe decoder runs that mode instead of auto-detecting. Forgiving:\ncase-insensitive, and spaces/underscores/hyphens are ignored.\n"},"key_type":{"allOf":[{"$ref":"#/components/schemas/KeyType"}],"default":"","description":"Optional decryption scheme. `\"\"` (default) means no key. A named\nscheme with a missing/invalid `key` is rejected with an `error` and\nthe pipeline is not started. **Only `bp` (DMR Basic Privacy) works\non both backends**; every other scheme is dsd-fme-backend only.\n"},"key":{"type":"string","default":"","description":"Key value for `key_type`. Decimal or hex digits (AES/Hytera keys\nmay include the spaces that separate dsd-fme's 64-bit hex words);\nno other characters accepted. For `bp` it is a decimal key *number*\n`1`\u2013`255` selecting a well-known built-in BP key \u2014 a BP key XORs\nevery DMR voice frame, so setting one on an unencrypted channel\ngarbles audio.\n"}},"examples":[{"type":"start","sample_rate":2400000,"channel_bandwidth":12500,"freq_offset":-25000,"gain":26000,"afc":true,"protocol":"dmr"},{"type":"start","sample_rate":2000000,"protocol":"p25p2"},{"type":"start","protocol":"dmr","key_type":"bp","key":"1"}]},"SetGainRequest":{"title":"set_gain","type":"object","description":"Live-adjust discriminator gain. No reply. Ignored if no pipeline is running.","required":["type"],"additionalProperties":false,"properties":{"type":{"const":"set_gain"},"gain":{"type":"number","default":26000}},"examples":[{"type":"set_gain","gain":32000}]},"SetFreqOffsetRequest":{"title":"set_freq_offset","type":"object","description":"Live-retune the NCO shift (same sign convention as `start.freq_offset`).\nNo reply. Ignored if no pipeline is running. Also resets any accumulated\nAFC correction \u2014 an explicit retune is a statement of new truth.\n","required":["type"],"additionalProperties":false,"properties":{"type":{"const":"set_freq_offset"},"hz":{"type":"number","default":0}},"examples":[{"type":"set_freq_offset","hz":12500}]},"StopRequest":{"title":"stop","type":"object","description":"Tear down the pipeline (kill the dsd-fme child / destroy the decoder).\nNo reply. The WebSocket stays open; a new `start` is accepted afterwards.\n","required":["type"],"additionalProperties":false,"properties":{"type":{"const":"stop"}},"examples":[{"type":"stop"}]},"ServerMessage":{"title":"Server message (server \u2192 client)","description":"Any JSON text frame the server sends. Dispatch on `type`.","oneOf":[{"$ref":"#/components/schemas/Started"},{"$ref":"#/components/schemas/ErrorMessage"},{"$ref":"#/components/schemas/Event"}],"discriminator":{"propertyName":"type","mapping":{"started":"#/components/schemas/Started","error":"#/components/schemas/ErrorMessage","event":"#/components/schemas/Event"}}},"Started":{"title":"started","type":"object","description":"Sent once per successful `start`, before any `event` or audio frame\nfrom that pipeline.\n","required":["type","udp_audio_port"],"additionalProperties":false,"properties":{"type":{"const":"started"},"udp_audio_port":{"type":"integer","minimum":0,"description":"Server-internal UDP port the dsd-fme child streams decoded audio to\n(40000\u201359000, per session). Purely informational \u2014 the client never\ntalks to it; audio arrives over the WebSocket. `0` on the DSDcc\nbackend (no subprocess, no UDP) means \"not applicable\", not \"failed\".\n"}},"examples":[{"type":"started","udp_audio_port":44251},{"type":"started","udp_audio_port":0}]},"ErrorMessage":{"title":"error","type":"object","description":"Something was rejected. **The connection stays open** \u2014 only the\noffending message is affected. Branch on the prefix up to the first\n`:`; treat the remainder as free text.\n","required":["type","message"],"additionalProperties":false,"properties":{"type":{"const":"error"},"message":{"type":"string","description":"One of four texts: `unknown message type: <type>`,\n`bad control message: <parser detail>`,\n`binary frame length not a multiple of 8 bytes`,\n`failed to start DSD backend`.\n","examples":["unknown message type: frobnicate","bad control message: unexpected token","binary frame length not a multiple of 8 bytes","failed to start DSD backend"]}},"examples":[{"type":"error","message":"failed to start DSD backend"}]},"Event":{"title":"event","type":"object","description":"One frame per line the decoder reports (dsd-fme backend: one per\ncleaned log line; DSDcc backend: one per detected state change). **All\ntwelve data fields are always present**; empty string means \"not\npresent in this event\". Which fields carry a value depends on the\nprotocol and backend \u2014 see PROTOCOL.md for the full population table.\n","required":["type","kind","talkgroup","source_id","slot","color_code","ran","nac","emergency","alias","crc_error","extra","raw"],"additionalProperties":false,"properties":{"type":{"const":"event"},"kind":{"$ref":"#/components/schemas/EventKind"},"talkgroup":{"type":"string","description":"Decimal talkgroup / group-call target ID, or a **callsign** for\nD-STAR/YSF (e.g. `CQCQCQ`), or `\"\"`. A string because IDs can\nexceed assumed integer widths.\n"},"source_id":{"type":"string","description":"Decimal source radio ID, or a callsign for D-STAR/YSF, or `\"\"`."},"slot":{"type":"string","enum":["","1","2"],"description":"DMR TDMA slot, or `\"\"` when not slot-specific."},"color_code":{"type":"string","description":"DMR color code / dPMR channel code as bare decimal (no leading zeros), or `\"\"`."},"ran":{"type":"string","description":"NXDN Radio Access Number as bare decimal, or `\"\"`."},"nac":{"type":"string","description":"P25 Network Access Code as uppercase hex without `0x`, or `\"\"`. dsd-fme backend only."},"emergency":{"type":"string","enum":["","1"],"description":"`\"1\"` when the line flags an emergency, else `\"\"`. dsd-fme backend only."},"alias":{"type":"string","description":"DMR talker-alias text, else `\"\"`. dsd-fme backend only."},"crc_error":{"type":"string","enum":["","1"],"description":"`\"1\"` when the decoder marked this line/burst as failing an FEC/CRC\ncheck, else `\"\"`. When set, treat the event's other fields\n(especially `color_code`) as unreliable.\n"},"extra":{"type":"string","description":"Zero or more `key=value` tokens joined by `\"; \"`, carrying\nbackend/protocol-specific detail (e.g. `burst=VOX`, `rpt1=\u2026`,\n`call_mode=group_cq`, `site_id=3`), or `\"\"`. See PROTOCOL.md for the\nfull token vocabulary.\n"},"raw":{"type":"string","description":"The underlying decoder output this event was parsed from (cleaned\ndsd-fme log line, or a synthesized DSDcc description). Free text that\nvaries across dsd-fme versions \u2014 parse the structured fields; fall\nback to `raw` only for display/debug.\n"}},"examples":[{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"2","color_code":"4","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"","raw":"20:37:20 Sync: +DMR   slot1  [SLOT2] | Color Code=04 | VC6 "},{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"","raw":" SLOT 2 TGT=19535 SRC=2222223 Group Call  "}]},"ProtocolHint":{"title":"Protocol hint","type":"string","description":"Advisory digital-voice protocol selector. Matching is forgiving\n(case-insensitive; spaces/underscores/hyphens ignored) and accepts\ndocumented aliases; the canonical values are listed here. `\"\"`/`auto`\nand any unrecognized value fall back to the server default (DMR) /\nauto-detect respectively.\n","enum":["","dmr","nxdn48","nxdn96","p25","p25p2","dpmr","dstar","ysf","auto"]},"KeyType":{"title":"Decryption scheme","type":"string","description":"Optional decryption scheme naming how `key` is interpreted. `\"\"` means\nno key. Only `bp` works on both backends; the rest are dsd-fme-backend\nonly. Matching is forgiving and accepts aliases (e.g. `basic_privacy`,\n`aes128`, `nxdn_scrambler`).\n","enum":["","bp","rc4","des","aes","hytera","scrambler"]},"EventKind":{"title":"Event kind","type":"string","description":"Best-effort classification of an `event`. `burst` is DSDcc/DMR-only.\nOn the dsd-fme backend, `unknown` events (startup banner / version /\ndevice-config noise) are suppressed by default.\n","enum":["voice","sync","call","burst","unknown"]}}}};
+  const ASYNCAPI_YAML = "asyncapi: \"2.6.0\"\n\n# ---------------------------------------------------------------------------\n# dsd-server WebSocket protocol \u2014 AsyncAPI 2.6 description.\n#\n# AsyncAPI is the accurate model for this interface: it is a bidirectional,\n# message-driven WebSocket protocol, not request/response. One channel (the\n# single WebSocket endpoint) carries messages in both directions.\n#\n# Operation perspective (AsyncAPI 2.x): operations are described from the\n# point of view of the *client reading this document*.\n#   * publish   = the client SENDS  \u2192 client \u2192 server\n#   * subscribe = the client RECEIVES \u2192 server \u2192 client\n# Each operation below also states its direction in prose so there is no\n# ambiguity regardless of how your tooling labels it.\n#\n# Source of truth for the wire format is PROTOCOL.md (generated from\n# session.cpp). A companion openapi.yaml documents the same JSON frames in\n# OpenAPI 3.1 for tooling that expects it.\n# ---------------------------------------------------------------------------\n\ninfo:\n  title: dsd-server WebSocket protocol\n  version: \"1.0.0\"\n  description: |\n    FM-demodulate SDR IQ and decode digital voice over a single WebSocket.\n\n    **One connection = one session = one FM demod + one decoder.** The client\n    streams interleaved little-endian `float32` IQ as **binary** frames and\n    drives the pipeline with **text** frames of flat JSON. The server replies\n    with flat JSON text frames (`started` / `error` / `event`) and tagged\n    binary PCM audio frames.\n\n    All JSON objects are **flat** (no nesting, no arrays) and every documented\n    key is **always present** in the frames that carry it \u2014 an unknown value is\n    the empty string `\"\"`, never omitted, never `null`.\n\n    See `PROTOCOL.md` for per-protocol field-population tables, the `extra`\n    token vocabulary, lifecycle, and real captured examples.\n\nservers:\n  local:\n    url: \"localhost:8080\"\n    protocol: ws\n    description: dsd-server WebSocket endpoint (ws:// \u2014 no TLS by default; any path is accepted).\n\nchannels:\n  /:\n    description: |\n      The one WebSocket session. After the HTTP upgrade, both directions share\n      this channel: the client publishes control (text) and IQ (binary)\n      messages; the server sends back status/event (text) and audio (binary)\n      messages, interleaved in whatever order decoding produces them.\n\n    publish:\n      operationId: sendToServer\n      summary: Client \u2192 server (the client sends these).\n      description: |\n        Text control frames drive the pipeline; binary IQ frames feed it.\n        Binary IQ sent before `start` is silently ignored.\n      message:\n        oneOf:\n          - $ref: \"#/components/messages/StartRequest\"\n          - $ref: \"#/components/messages/SetGainRequest\"\n          - $ref: \"#/components/messages/SetFreqOffsetRequest\"\n          - $ref: \"#/components/messages/StopRequest\"\n          - $ref: \"#/components/messages/IqFrame\"\n\n    subscribe:\n      operationId: receiveFromServer\n      summary: Server \u2192 client (the client receives these).\n      description: |\n        `started` acks a successful `start` (before any event/audio from that\n        pipeline); `error` reports a rejected message (connection stays open);\n        `event` reports decoder activity; binary frames carry decoded PCM audio.\n      message:\n        oneOf:\n          - $ref: \"#/components/messages/Started\"\n          - $ref: \"#/components/messages/ErrorMessage\"\n          - $ref: \"#/components/messages/Event\"\n          - $ref: \"#/components/messages/AudioFrame\"\n\ncomponents:\n\n  messages:\n\n    # --------------------------------------------- client -> server (text)\n    StartRequest:\n      name: start\n      title: start (control)\n      summary: Build the demod + decode pipeline (clean restart if already running).\n      contentType: application/json\n      payload:\n        $ref: \"#/components/schemas/StartRequest\"\n      examples:\n        - name: dmr-with-afc\n          payload:\n            type: start\n            sample_rate: 2400000\n            channel_bandwidth: 12500\n            freq_offset: -25000\n            gain: 26000\n            afc: true\n            protocol: dmr\n        - name: dmr-basic-privacy\n          payload:\n            type: start\n            protocol: dmr\n            key_type: bp\n            key: \"1\"\n\n    SetGainRequest:\n      name: set_gain\n      title: set_gain (control)\n      summary: Live-adjust discriminator gain. No reply.\n      contentType: application/json\n      payload:\n        $ref: \"#/components/schemas/SetGainRequest\"\n      examples:\n        - name: bump-gain\n          payload:\n            type: set_gain\n            gain: 32000\n\n    SetFreqOffsetRequest:\n      name: set_freq_offset\n      title: set_freq_offset (control)\n      summary: Live-retune the NCO shift (also resets AFC). No reply.\n      contentType: application/json\n      payload:\n        $ref: \"#/components/schemas/SetFreqOffsetRequest\"\n      examples:\n        - name: retune\n          payload:\n            type: set_freq_offset\n            hz: 12500\n\n    StopRequest:\n      name: stop\n      title: stop (control)\n      summary: Tear down the pipeline. No reply; socket stays open.\n      contentType: application/json\n      payload:\n        $ref: \"#/components/schemas/StopRequest\"\n      examples:\n        - name: stop\n          payload:\n            type: stop\n\n    # -------------------------------------------- client -> server (binary)\n    IqFrame:\n      name: iq\n      title: IQ samples (binary)\n      summary: Interleaved little-endian float32 I/Q pairs at the start sample_rate.\n      contentType: application/octet-stream\n      description: |\n        `I0,Q0,I1,Q1,\u2026` as little-endian `float32`, two floats per complex\n        sample, so the frame byte length **must be a multiple of 8**. A\n        violating frame gets an `error` reply and is dropped. IQ sent before\n        any `start` is silently ignored.\n      payload:\n        type: string\n        format: binary\n        description: Raw little-endian float32 IQ bytes (not JSON).\n\n    # --------------------------------------------- server -> client (text)\n    Started:\n      name: started\n      title: started (status)\n      summary: Pipeline is up (one per successful start).\n      contentType: application/json\n      payload:\n        $ref: \"#/components/schemas/Started\"\n      examples:\n        - name: dsd-fme-backend\n          payload: { type: started, udp_audio_port: 44251 }\n        - name: dsdcc-backend\n          payload: { type: started, udp_audio_port: 0 }\n\n    ErrorMessage:\n      name: error\n      title: error (status)\n      summary: A message was rejected; the connection stays open.\n      contentType: application/json\n      payload:\n        $ref: \"#/components/schemas/ErrorMessage\"\n      examples:\n        - name: backend-failed\n          payload: { type: error, message: \"failed to start DSD backend\" }\n\n    Event:\n      name: event\n      title: event (decoder activity)\n      summary: One frame per decoder line/state-change. All data fields always present.\n      contentType: application/json\n      payload:\n        $ref: \"#/components/schemas/Event\"\n      examples:\n        - name: dmr-sync\n          payload:\n            type: event\n            kind: sync\n            talkgroup: \"\"\n            source_id: \"\"\n            slot: \"2\"\n            color_code: \"4\"\n            ran: \"\"\n            nac: \"\"\n            emergency: \"\"\n            alias: \"\"\n            crc_error: \"\"\n            extra: \"\"\n            raw: \"20:37:20 Sync: +DMR   slot1  [SLOT2] | Color Code=04 | VC6 \"\n        - name: dmr-call\n          payload:\n            type: event\n            kind: call\n            talkgroup: \"19535\"\n            source_id: \"2222223\"\n            slot: \"2\"\n            color_code: \"\"\n            ran: \"\"\n            nac: \"\"\n            emergency: \"\"\n            alias: \"\"\n            crc_error: \"\"\n            extra: \"\"\n            raw: \" SLOT 2 TGT=19535 SRC=2222223 Group Call  \"\n\n    # -------------------------------------------- server -> client (binary)\n    AudioFrame:\n      name: audio\n      title: Decoded voice audio (binary)\n      summary: 1-byte tag 0x01 followed by little-endian signed-16-bit PCM.\n      contentType: application/octet-stream\n      description: |\n        Byte 0 is the tag `0x01` (the only tag defined); the rest is decoded\n        voice PCM, little-endian signed 16-bit, 8 kHz. **dsd-fme backend**:\n        stereo interleaved (TDMA slot 1 = left, slot 2 = right), one frame per\n        UDP packet (~641 bytes = 20 ms). **DSDcc backend**: mono, one frame per\n        decoded voice burst (~321 bytes = 20 ms). No end-of-audio marker \u2014\n        frames simply stop.\n      payload:\n        type: string\n        format: binary\n        description: 0x01 tag byte + little-endian s16 PCM (not JSON).\n\n  schemas:\n\n    # ================================================= client -> server ====\n    StartRequest:\n      type: object\n      required: [type]\n      additionalProperties: false\n      properties:\n        type: { const: start }\n        sample_rate:\n          type: number\n          default: 2000000\n          description: IQ sample rate (Hz) of the binary frames you will stream.\n        channel_bandwidth:\n          type: number\n          default: 12500\n          description: Channel bandwidth (Hz); sets the demod's channel filter.\n        freq_offset:\n          type: number\n          default: 0\n          description: NCO shift (Hz). Positive = channel sits above 0 Hz in your IQ.\n        gain:\n          type: number\n          default: 26000\n          description: Discriminator output gain into the decoder.\n        afc:\n          type: boolean\n          default: false\n          description: Automatic frequency control (variance-gated, clamped \u00b15 kHz).\n        protocol:\n          $ref: \"#/components/schemas/ProtocolHint\"\n        key_type:\n          $ref: \"#/components/schemas/KeyType\"\n        key:\n          type: string\n          default: \"\"\n          description: |\n            Key value for key_type. Decimal or hex digits (AES/Hytera may\n            include spaces between 64-bit words). For `bp`, a decimal number\n            1\u2013255 selecting a well-known built-in DMR Basic Privacy key.\n\n    SetGainRequest:\n      type: object\n      required: [type]\n      additionalProperties: false\n      properties:\n        type: { const: set_gain }\n        gain: { type: number, default: 26000 }\n\n    SetFreqOffsetRequest:\n      type: object\n      required: [type]\n      additionalProperties: false\n      properties:\n        type: { const: set_freq_offset }\n        hz:\n          type: number\n          default: 0\n          description: NCO shift (Hz), same sign convention as start.freq_offset.\n\n    StopRequest:\n      type: object\n      required: [type]\n      additionalProperties: false\n      properties:\n        type: { const: stop }\n\n    # ================================================= server -> client ====\n    Started:\n      type: object\n      required: [type, udp_audio_port]\n      additionalProperties: false\n      properties:\n        type: { const: started }\n        udp_audio_port:\n          type: integer\n          minimum: 0\n          description: |\n            Server-internal UDP port the dsd-fme child streams audio to\n            (informational only; client never uses it). `0` on the DSDcc backend\n            means \"not applicable\", not \"failed\".\n\n    ErrorMessage:\n      type: object\n      required: [type, message]\n      additionalProperties: false\n      properties:\n        type: { const: error }\n        message:\n          type: string\n          description: |\n            One of: `unknown message type: <type>`,\n            `bad control message: <detail>`,\n            `binary frame length not a multiple of 8 bytes`,\n            `failed to start DSD backend`. Branch on the prefix up to the\n            first `:`.\n\n    Event:\n      type: object\n      required:\n        [type, kind, talkgroup, source_id, slot, color_code, ran, nac,\n         emergency, alias, crc_error, extra, raw]\n      additionalProperties: false\n      properties:\n        type: { const: event }\n        kind: { $ref: \"#/components/schemas/EventKind\" }\n        talkgroup:\n          type: string\n          description: Decimal id, or a callsign for D-STAR/YSF, or \"\".\n        source_id:\n          type: string\n          description: Decimal source radio id, or a callsign for D-STAR/YSF, or \"\".\n        slot:\n          type: string\n          enum: [\"\", \"1\", \"2\"]\n          description: DMR TDMA slot, or \"\" when not slot-specific.\n        color_code:\n          type: string\n          description: DMR color code / dPMR channel code (bare decimal), or \"\".\n        ran:\n          type: string\n          description: NXDN Radio Access Number (bare decimal), or \"\".\n        nac:\n          type: string\n          description: P25 Network Access Code (uppercase hex, no 0x), or \"\". dsd-fme only.\n        emergency:\n          type: string\n          enum: [\"\", \"1\"]\n          description: '\"1\" on an emergency flag, else \"\". dsd-fme only.'\n        alias:\n          type: string\n          description: DMR talker-alias text, else \"\". dsd-fme only.\n        crc_error:\n          type: string\n          enum: [\"\", \"1\"]\n          description: '\"1\" on FEC/CRC failure; then other fields are unreliable.'\n        extra:\n          type: string\n          description: |\n            Zero or more `key=value` tokens joined by \"; \" (e.g. `burst=VOX`,\n            `rpt1=\u2026`, `call_mode=group_cq`), or \"\". See PROTOCOL.md.\n        raw:\n          type: string\n          description: Underlying decoder line/description (free text; varies by dsd-fme version).\n\n    # ================================================= shared enums ========\n    ProtocolHint:\n      type: string\n      default: \"\"\n      description: |\n        Advisory protocol selector. Forgiving: case-insensitive,\n        spaces/underscores/hyphens ignored, documented aliases accepted; \"\"/auto\n        and anything unrecognized fall back to server default (DMR) / auto.\n      enum: [\"\", dmr, nxdn48, nxdn96, p25, p25p2, dpmr, dstar, ysf, auto]\n\n    KeyType:\n      type: string\n      default: \"\"\n      description: |\n        Optional decryption scheme. \"\" = no key. Only `bp` works on both\n        backends; the rest are dsd-fme-backend only. Aliases accepted.\n      enum: [\"\", bp, rc4, des, aes, hytera, scrambler]\n\n    EventKind:\n      type: string\n      description: |\n        Best-effort event classification. `burst` is DSDcc/DMR-only; `unknown`\n        is suppressed by default on the dsd-fme backend (startup banner noise).\n      enum: [voice, sync, call, burst, unknown]\n";
+
+  /* ---- theme: system default, explicit toggle overrides -------------- */
+  const root = document.documentElement;
+  const rapi = document.getElementById('rapi');
+
+  function resolvedTheme() {
+    const explicit = root.getAttribute('data-theme');
+    if (explicit) return explicit;
+    return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  function css(v) { return getComputedStyle(root).getPropertyValue(v).trim(); }
+
+  function paintRapi() {
+    const dark = resolvedTheme() === 'dark';
+    rapi.setAttribute('theme', dark ? 'dark' : 'light');
+    rapi.setAttribute('bg-color',      css('--rapi-bg'));
+    rapi.setAttribute('nav-bg-color',  css('--rapi-nav'));
+    rapi.setAttribute('text-color',    css('--rapi-txt'));
+    rapi.setAttribute('primary-color', css('--accent'));
+    rapi.setAttribute('nav-text-color', css('--ink-soft'));
+    rapi.setAttribute('nav-accent-color', css('--accent'));
+  }
+
+  const themeBtn = document.getElementById('theme-btn');
+  const themeIco = document.getElementById('theme-ico');
+  function syncThemeLabel() {
+    themeIco.textContent = resolvedTheme() === 'dark' ? '☾' : '☀';
+  }
+  themeBtn.addEventListener('click', () => {
+    root.setAttribute('data-theme', resolvedTheme() === 'dark' ? 'light' : 'dark');
+    paintRapi(); syncThemeLabel();
+  });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (!root.getAttribute('data-theme')) { paintRapi(); syncThemeLabel(); }
+  });
+
+  /* ---- load the spec once RapiDoc is defined ------------------------- */
+  customElements.whenDefined('rapi-doc').then(() => {
+    rapi.loadSpec(OPENAPI_SPEC);
+    paintRapi();
+  });
+
+  /* ---- tabs ---------------------------------------------------------- */
+  const tabs = {
+    'tab-openapi': 'panel-openapi',
+    'tab-async':   'panel-async',
+  };
+  function select(tabId) {
+    for (const [t, p] of Object.entries(tabs)) {
+      const on = t === tabId;
+      document.getElementById(t).setAttribute('aria-selected', on ? 'true' : 'false');
+      document.getElementById(p).hidden = !on;
+    }
+  }
+  Object.keys(tabs).forEach(t =>
+    document.getElementById(t).addEventListener('click', () => select(t)));
+
+  /* ---- AsyncAPI source + copy ---------------------------------------- */
+  document.getElementById('async-src').textContent = ASYNCAPI_YAML;
+  const copyBtn = document.getElementById('copy-async');
+  copyBtn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(ASYNCAPI_YAML);
+      copyBtn.textContent = '✓ Copied';
+      setTimeout(() => (copyBtn.textContent = '⧉ Copy spec'), 1600);
+    } catch (e) {
+      copyBtn.textContent = 'Copy failed';
+      setTimeout(() => (copyBtn.textContent = '⧉ Copy spec'), 1600);
+    }
+  });
+
+  syncThemeLabel();
+</script>

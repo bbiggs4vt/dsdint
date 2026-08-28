@@ -1,0 +1,416 @@
+asyncapi: "2.6.0"
+
+# ---------------------------------------------------------------------------
+# dsd-server WebSocket protocol — AsyncAPI 2.6 description.
+#
+# AsyncAPI is the accurate model for this interface: it is a bidirectional,
+# message-driven WebSocket protocol, not request/response. One channel (the
+# single WebSocket endpoint) carries messages in both directions.
+#
+# Operation perspective (AsyncAPI 2.x): operations are described from the
+# point of view of the *client reading this document*.
+#   * publish   = the client SENDS  → client → server
+#   * subscribe = the client RECEIVES → server → client
+# Each operation below also states its direction in prose so there is no
+# ambiguity regardless of how your tooling labels it.
+#
+# Source of truth for the wire format is PROTOCOL.md (generated from
+# session.cpp). A companion openapi.yaml documents the same JSON frames in
+# OpenAPI 3.1 for tooling that expects it.
+# ---------------------------------------------------------------------------
+
+info:
+  title: dsd-server WebSocket protocol
+  version: "1.0.0"
+  description: |
+    FM-demodulate SDR IQ and decode digital voice over a single WebSocket.
+
+    **One connection = one session = one FM demod + one decoder.** The client
+    streams interleaved little-endian `float32` IQ as **binary** frames and
+    drives the pipeline with **text** frames of flat JSON. The server replies
+    with flat JSON text frames (`started` / `error` / `event`) and tagged
+    binary PCM audio frames.
+
+    All JSON objects are **flat** (no nesting, no arrays) and every documented
+    key is **always present** in the frames that carry it — an unknown value is
+    the empty string `""`, never omitted, never `null`.
+
+    See `PROTOCOL.md` for per-protocol field-population tables, the `extra`
+    token vocabulary, lifecycle, and real captured examples.
+
+servers:
+  local:
+    url: "localhost:8080"
+    protocol: ws
+    description: dsd-server WebSocket endpoint (ws:// — no TLS by default; any path is accepted).
+
+channels:
+  /:
+    description: |
+      The one WebSocket session. After the HTTP upgrade, both directions share
+      this channel: the client publishes control (text) and IQ (binary)
+      messages; the server sends back status/event (text) and audio (binary)
+      messages, interleaved in whatever order decoding produces them.
+
+    publish:
+      operationId: sendToServer
+      summary: Client → server (the client sends these).
+      description: |
+        Text control frames drive the pipeline; binary IQ frames feed it.
+        Binary IQ sent before `start` is silently ignored.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/StartRequest"
+          - $ref: "#/components/messages/SetGainRequest"
+          - $ref: "#/components/messages/SetFreqOffsetRequest"
+          - $ref: "#/components/messages/StopRequest"
+          - $ref: "#/components/messages/IqFrame"
+
+    subscribe:
+      operationId: receiveFromServer
+      summary: Server → client (the client receives these).
+      description: |
+        `started` acks a successful `start` (before any event/audio from that
+        pipeline); `error` reports a rejected message (connection stays open);
+        `event` reports decoder activity; binary frames carry decoded PCM audio.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/Started"
+          - $ref: "#/components/messages/ErrorMessage"
+          - $ref: "#/components/messages/Event"
+          - $ref: "#/components/messages/AudioFrame"
+
+components:
+
+  messages:
+
+    # --------------------------------------------- client -> server (text)
+    StartRequest:
+      name: start
+      title: start (control)
+      summary: Build the demod + decode pipeline (clean restart if already running).
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/StartRequest"
+      examples:
+        - name: dmr-with-afc
+          payload:
+            type: start
+            sample_rate: 2400000
+            channel_bandwidth: 12500
+            freq_offset: -25000
+            gain: 26000
+            afc: true
+            protocol: dmr
+        - name: dmr-basic-privacy
+          payload:
+            type: start
+            protocol: dmr
+            key_type: bp
+            key: "1"
+
+    SetGainRequest:
+      name: set_gain
+      title: set_gain (control)
+      summary: Live-adjust discriminator gain. No reply.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/SetGainRequest"
+      examples:
+        - name: bump-gain
+          payload:
+            type: set_gain
+            gain: 32000
+
+    SetFreqOffsetRequest:
+      name: set_freq_offset
+      title: set_freq_offset (control)
+      summary: Live-retune the NCO shift (also resets AFC). No reply.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/SetFreqOffsetRequest"
+      examples:
+        - name: retune
+          payload:
+            type: set_freq_offset
+            hz: 12500
+
+    StopRequest:
+      name: stop
+      title: stop (control)
+      summary: Tear down the pipeline. No reply; socket stays open.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/StopRequest"
+      examples:
+        - name: stop
+          payload:
+            type: stop
+
+    # -------------------------------------------- client -> server (binary)
+    IqFrame:
+      name: iq
+      title: IQ samples (binary)
+      summary: Interleaved little-endian float32 I/Q pairs at the start sample_rate.
+      contentType: application/octet-stream
+      description: |
+        `I0,Q0,I1,Q1,…` as little-endian `float32`, two floats per complex
+        sample, so the frame byte length **must be a multiple of 8**. A
+        violating frame gets an `error` reply and is dropped. IQ sent before
+        any `start` is silently ignored.
+      payload:
+        type: string
+        format: binary
+        description: Raw little-endian float32 IQ bytes (not JSON).
+
+    # --------------------------------------------- server -> client (text)
+    Started:
+      name: started
+      title: started (status)
+      summary: Pipeline is up (one per successful start).
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/Started"
+      examples:
+        - name: dsd-fme-backend
+          payload: { type: started, udp_audio_port: 44251 }
+        - name: dsdcc-backend
+          payload: { type: started, udp_audio_port: 0 }
+
+    ErrorMessage:
+      name: error
+      title: error (status)
+      summary: A message was rejected; the connection stays open.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/ErrorMessage"
+      examples:
+        - name: backend-failed
+          payload: { type: error, message: "failed to start DSD backend" }
+
+    Event:
+      name: event
+      title: event (decoder activity)
+      summary: One frame per decoder line/state-change. All data fields always present.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/Event"
+      examples:
+        - name: dmr-sync
+          payload:
+            type: event
+            kind: sync
+            talkgroup: ""
+            source_id: ""
+            slot: "2"
+            color_code: "4"
+            ran: ""
+            nac: ""
+            emergency: ""
+            alias: ""
+            crc_error: ""
+            extra: ""
+            raw: "20:37:20 Sync: +DMR   slot1  [SLOT2] | Color Code=04 | VC6 "
+        - name: dmr-call
+          payload:
+            type: event
+            kind: call
+            talkgroup: "19535"
+            source_id: "2222223"
+            slot: "2"
+            color_code: ""
+            ran: ""
+            nac: ""
+            emergency: ""
+            alias: ""
+            crc_error: ""
+            extra: ""
+            raw: " SLOT 2 TGT=19535 SRC=2222223 Group Call  "
+
+    # -------------------------------------------- server -> client (binary)
+    AudioFrame:
+      name: audio
+      title: Decoded voice audio (binary)
+      summary: 1-byte tag 0x01 followed by little-endian signed-16-bit PCM.
+      contentType: application/octet-stream
+      description: |
+        Byte 0 is the tag `0x01` (the only tag defined); the rest is decoded
+        voice PCM, little-endian signed 16-bit, 8 kHz. **dsd-fme backend**:
+        stereo interleaved (TDMA slot 1 = left, slot 2 = right), one frame per
+        UDP packet (~641 bytes = 20 ms). **DSDcc backend**: mono, one frame per
+        decoded voice burst (~321 bytes = 20 ms). No end-of-audio marker —
+        frames simply stop.
+      payload:
+        type: string
+        format: binary
+        description: 0x01 tag byte + little-endian s16 PCM (not JSON).
+
+  schemas:
+
+    # ================================================= client -> server ====
+    StartRequest:
+      type: object
+      required: [type]
+      additionalProperties: false
+      properties:
+        type: { const: start }
+        sample_rate:
+          type: number
+          default: 2000000
+          description: IQ sample rate (Hz) of the binary frames you will stream.
+        channel_bandwidth:
+          type: number
+          default: 12500
+          description: Channel bandwidth (Hz); sets the demod's channel filter.
+        freq_offset:
+          type: number
+          default: 0
+          description: NCO shift (Hz). Positive = channel sits above 0 Hz in your IQ.
+        gain:
+          type: number
+          default: 26000
+          description: Discriminator output gain into the decoder.
+        afc:
+          type: boolean
+          default: false
+          description: Automatic frequency control (variance-gated, clamped ±5 kHz).
+        protocol:
+          $ref: "#/components/schemas/ProtocolHint"
+        key_type:
+          $ref: "#/components/schemas/KeyType"
+        key:
+          type: string
+          default: ""
+          description: |
+            Key value for key_type. Decimal or hex digits (AES/Hytera may
+            include spaces between 64-bit words). For `bp`, a decimal number
+            1–255 selecting a well-known built-in DMR Basic Privacy key.
+
+    SetGainRequest:
+      type: object
+      required: [type]
+      additionalProperties: false
+      properties:
+        type: { const: set_gain }
+        gain: { type: number, default: 26000 }
+
+    SetFreqOffsetRequest:
+      type: object
+      required: [type]
+      additionalProperties: false
+      properties:
+        type: { const: set_freq_offset }
+        hz:
+          type: number
+          default: 0
+          description: NCO shift (Hz), same sign convention as start.freq_offset.
+
+    StopRequest:
+      type: object
+      required: [type]
+      additionalProperties: false
+      properties:
+        type: { const: stop }
+
+    # ================================================= server -> client ====
+    Started:
+      type: object
+      required: [type, udp_audio_port]
+      additionalProperties: false
+      properties:
+        type: { const: started }
+        udp_audio_port:
+          type: integer
+          minimum: 0
+          description: |
+            Server-internal UDP port the dsd-fme child streams audio to
+            (informational only; client never uses it). `0` on the DSDcc backend
+            means "not applicable", not "failed".
+
+    ErrorMessage:
+      type: object
+      required: [type, message]
+      additionalProperties: false
+      properties:
+        type: { const: error }
+        message:
+          type: string
+          description: |
+            One of: `unknown message type: <type>`,
+            `bad control message: <detail>`,
+            `binary frame length not a multiple of 8 bytes`,
+            `failed to start DSD backend`. Branch on the prefix up to the
+            first `:`.
+
+    Event:
+      type: object
+      required:
+        [type, kind, talkgroup, source_id, slot, color_code, ran, nac,
+         emergency, alias, crc_error, extra, raw]
+      additionalProperties: false
+      properties:
+        type: { const: event }
+        kind: { $ref: "#/components/schemas/EventKind" }
+        talkgroup:
+          type: string
+          description: Decimal id, or a callsign for D-STAR/YSF, or "".
+        source_id:
+          type: string
+          description: Decimal source radio id, or a callsign for D-STAR/YSF, or "".
+        slot:
+          type: string
+          enum: ["", "1", "2"]
+          description: DMR TDMA slot, or "" when not slot-specific.
+        color_code:
+          type: string
+          description: DMR color code / dPMR channel code (bare decimal), or "".
+        ran:
+          type: string
+          description: NXDN Radio Access Number (bare decimal), or "".
+        nac:
+          type: string
+          description: P25 Network Access Code (uppercase hex, no 0x), or "". dsd-fme only.
+        emergency:
+          type: string
+          enum: ["", "1"]
+          description: '"1" on an emergency flag, else "". dsd-fme only.'
+        alias:
+          type: string
+          description: DMR talker-alias text, else "". dsd-fme only.
+        crc_error:
+          type: string
+          enum: ["", "1"]
+          description: '"1" on FEC/CRC failure; then other fields are unreliable.'
+        extra:
+          type: string
+          description: |
+            Zero or more `key=value` tokens joined by "; " (e.g. `burst=VOX`,
+            `rpt1=…`, `call_mode=group_cq`), or "". See PROTOCOL.md.
+        raw:
+          type: string
+          description: Underlying decoder line/description (free text; varies by dsd-fme version).
+
+    # ================================================= shared enums ========
+    ProtocolHint:
+      type: string
+      default: ""
+      description: |
+        Advisory protocol selector. Forgiving: case-insensitive,
+        spaces/underscores/hyphens ignored, documented aliases accepted; ""/auto
+        and anything unrecognized fall back to server default (DMR) / auto.
+      enum: ["", dmr, nxdn48, nxdn96, p25, p25p2, dpmr, dstar, ysf, auto]
+
+    KeyType:
+      type: string
+      default: ""
+      description: |
+        Optional decryption scheme. "" = no key. Only `bp` works on both
+        backends; the rest are dsd-fme-backend only. Aliases accepted.
+      enum: ["", bp, rc4, des, aes, hytera, scrambler]
+
+    EventKind:
+      type: string
+      description: |
+        Best-effort event classification. `burst` is DSDcc/DMR-only; `unknown`
+        is suppressed by default on the dsd-fme backend (startup banner noise).
+      enum: [voice, sync, call, burst, unknown]
