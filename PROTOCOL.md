@@ -15,12 +15,12 @@ objects are **flat** (no nesting, no arrays), and every documented key
 is **always present** in the frames that carry it — a field whose value
 is unknown is an empty string `""`, never omitted and never `null`.
 
-**Machine-readable descriptions.** This narrative is the source of truth,
-but the same interface is also described formally under [`api/`](api/):
-`api/openapi.yaml` (OpenAPI 3.1), `api/asyncapi.yaml` (AsyncAPI 2.6), and
-`api/index.html` — a self-contained interactive viewer (RapiDoc, no build
-step). A protobuf mirror of the JSON frames lives in
-[`proto/dsd_server.proto`](proto/dsd_server.proto). All are client-side
+**Machine-readable description.** This narrative is the source of truth, but
+the same interface is also described formally under [`api/`](api/):
+`api/asyncapi.yaml` (AsyncAPI 2.6 — the format built for bidirectional,
+message-driven WebSocket protocols) and `api/index.html`, a self-contained
+interactive viewer (no build step). A protobuf mirror of the JSON frames lives
+in [`proto/dsd_server.proto`](proto/dsd_server.proto). All are client-side
 convenience artifacts; the server itself hand-writes and hand-parses its JSON.
 
 ---
