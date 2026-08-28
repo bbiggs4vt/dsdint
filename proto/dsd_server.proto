@@ -1,0 +1,129 @@
+// dsd_server.proto
+//
+// Protobuf schema for the dsd-server WebSocket control/event protocol (see
+// PROTOCOL.md). These messages mirror the flat JSON text frames on the
+// wire so a client can use protobuf's canonical JSON mapping —
+// JsonStringToMessage / MessageToJsonString (C++), protojson (Go),
+// json_format.Parse/MessageToJson (Python), etc. — to decode and build
+// messages as generated, typed structs instead of hand-plucking JSON
+// fields.
+//
+// This is a CLIENT-SIDE convenience artifact. The server itself does not
+// use protobuf (it hand-writes/parses the JSON), so nothing here is a
+// runtime dependency of dsd-server; compile it with your own protobuf
+// toolchain for your client's language.
+//
+// --- JSON mapping notes (important) ---
+//
+// * Field names on the wire are snake_case (sample_rate, source_id, …).
+//   Each multi-word field therefore sets json_name to its snake_case key,
+//   so the DEFAULT JSON printer emits the wire names without needing a
+//   "preserve proto field names" option. The JSON parser accepts them
+//   either way.
+//
+// * The messages are distinguished by the string `type` field, exactly as
+//   on the wire. protobuf JSON can't auto-dispatch on it, so on receive:
+//   parse into Envelope first, switch on `type`, then parse the frame into
+//   the matching message (Started / ErrorMessage / Event). See PROTOCOL.md.
+//
+// * proto3 JSON omits fields at their default value by default (empty
+//   string, 0, false). The server always emits every key (e.g.
+//   "udp_audio_port":0, or event fields as ""), but that only matters for
+//   PARSING, which handles a present-or-absent field identically. If you
+//   re-serialize and need every key present (to match the server's
+//   "all keys always present" style), enable your library's
+//   "always print primitive/​no-presence fields" option.
+//
+// * Unknown fields: parse each server frame into its matching message
+//   (dispatch on `type`); parsing an Event frame into Started, say, would
+//   hit unknown fields unless your parser ignores them.
+
+syntax = "proto3";
+
+package dsdserver;
+
+// ------------------------------------------------------------ dispatch
+
+// Minimal peek message: parse any frame into this first to read `type`,
+// then parse the full frame into the matching message below.
+message Envelope {
+  string type = 1; // "start" | "set_gain" | "set_freq_offset" | "stop"
+                   // | "started" | "error" | "event"
+}
+
+// ---------------------------------------------------- client -> server
+
+// {"type":"start", ...}. Builds the demod + DSD pipeline. Numeric/bool
+// fields left unset take the server's defaults (shown), so a client need
+// only set what it wants to change.
+message StartRequest {
+  string type = 1;                                        // = "start"
+  double sample_rate = 2 [json_name = "sample_rate"];             // default 2000000
+  double channel_bandwidth = 3 [json_name = "channel_bandwidth"]; // default 12500
+  double freq_offset = 4 [json_name = "freq_offset"];            // default 0
+  double gain = 5;                                        // default 26000
+  bool afc = 6;                                           // default false
+  // Advisory protocol hint: dmr | nxdn48 | nxdn96 | p25 | p25p2 | dpmr |
+  // dstar | ysf | auto. "" / absent keeps the server default (DMR).
+  string protocol = 7;
+  // Optional decryption key. key_type: bp | rc4 | des | aes | hytera |
+  // scrambler ("" = none). key: decimal or hex digits (see PROTOCOL.md).
+  string key_type = 8 [json_name = "key_type"];
+  string key = 9;
+}
+
+// {"type":"set_gain","gain":N}. Live discriminator-gain adjust. No reply.
+message SetGainRequest {
+  string type = 1;   // = "set_gain"
+  double gain = 2;   // default 26000
+}
+
+// {"type":"set_freq_offset","hz":N}. Live NCO retune (also resets AFC).
+message SetFreqOffsetRequest {
+  string type = 1; // = "set_freq_offset"
+  double hz = 2;   // default 0; +hz means the channel sits above 0 Hz
+}
+
+// {"type":"stop"}. Tears the pipeline down. No reply; socket stays open.
+message StopRequest {
+  string type = 1; // = "stop"
+}
+
+// ---------------------------------------------------- server -> client
+
+// {"type":"started","udp_audio_port":N}. Pipeline is up. udp_audio_port is
+// the subprocess (dsd-fme) backend's local UDP audio port, or 0 for the
+// in-process DSDcc backend (audio arrives as tagged binary frames either
+// way — the port is informational).
+message Started {
+  string type = 1;                                        // = "started"
+  uint32 udp_audio_port = 2 [json_name = "udp_audio_port"];
+}
+
+// {"type":"error","message":"..."}. Something was rejected. The socket
+// stays open. (Named ErrorMessage because `Error` collides with a
+// built-in type in some target languages.)
+message ErrorMessage {
+  string type = 1;    // = "error"
+  string message = 2;
+}
+
+// {"type":"event", ...}. Decoder activity. Every field is always present
+// on the wire; a field that doesn't apply is the empty string "". See
+// PROTOCOL.md for which fields each protocol populates and the `extra`
+// token vocabulary.
+message Event {
+  string type = 1;                                    // = "event"
+  string kind = 2;         // voice | sync | call | burst | unknown
+  string talkgroup = 3;    // decimal, or a callsign for D-STAR/YSF
+  string source_id = 4 [json_name = "source_id"];   // decimal, or a callsign
+  string slot = 5;         // DMR TDMA slot "1"/"2"
+  string color_code = 6 [json_name = "color_code"]; // DMR/dPMR access code
+  string ran = 7;          // NXDN Radio Access Number
+  string nac = 8;          // P25 Network Access Code (hex)
+  string emergency = 9;    // "1" when flagged
+  string alias = 10;       // DMR talker alias (free text)
+  string crc_error = 11 [json_name = "crc_error"];  // "1" on FEC/CRC failure
+  string extra = 12;       // "; "-joined key=value tokens
+  string raw = 13;         // underlying decoder line/description
+}

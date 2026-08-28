@@ -623,3 +623,42 @@ for non-C++ or subprocess-style suites. See `tests/test_fake_dsd_server.cpp`
 for a worked example (it validates the fake against an independent
 Boost.Beast client). This is a testing aid for *client* projects; it is not
 part of the server build.
+
+## Protobuf schema for the control/event JSON
+
+`proto/dsd_server.proto` is a proto3 schema that mirrors every JSON text
+frame described above. It lets a client decode and build these messages as
+generated, typed structs — using protobuf's canonical JSON mapping
+(`JsonStringToMessage`/`MessageToJsonString` in C++, `protojson` in Go,
+`json_format.Parse`/`MessageToJson` in Python, …) — instead of hand-plucking
+JSON fields. It is a **client-side convenience artifact only**: the server
+hand-writes and hand-parses its JSON and has no protobuf runtime dependency,
+so `dsd_server.proto` is not built or shipped by the server. Compile it with
+your own toolchain for your client's language.
+
+Three things about the mapping are worth knowing:
+
+- **Field names are snake_case.** Each multi-word field sets `json_name` to
+  its wire key (`sample_rate`, `source_id`, `color_code`, `key_type`, …), so
+  the default JSON printer emits the wire names — you do **not** need a
+  "preserve proto field names" option, and the parser accepts them regardless.
+
+- **Dispatch on `type` yourself.** Protobuf JSON can't pick a message from a
+  discriminator field, so on receive parse each frame into `Envelope` first,
+  switch on `type`, then parse the frame into the matching message
+  (`Started` / `ErrorMessage` / `Event`). Parse a frame only into its own
+  message — an `Event` frame parsed as `Started` would hit unknown fields
+  unless your parser ignores them.
+
+- **Numbers and default omission.** The numeric control fields are `double`,
+  so a proto printer emits `2400000.0`; the server's parser reads that fine.
+  proto3 JSON omits fields at their default value (`""`, `0`, `false`) on
+  output — harmless for the server (it fills its own defaults), and harmless
+  when parsing the server's always-every-key frames. If you re-serialize and
+  need every key present, enable your library's "always print fields" option.
+
+The schema is validated against the server's real emitted JSON: a
+`StartRequest` built via protobuf and printed with the default JSON printer
+is accepted verbatim by the server's own flat-JSON parser, and each real
+`started` / `error` / `event` frame parses into its message with matching
+field values.
