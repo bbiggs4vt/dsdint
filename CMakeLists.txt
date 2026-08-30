@@ -422,6 +422,37 @@ if(DSD_BUILD_DSDCC_VARIANT)
   endif()
 endif()
 
+# --- TETRA variant: dsd-server-tetra ---
+# A separate build-time backend variant (mirroring dsd-server-dsdcc), but a
+# bigger swap than the DSD backends: TETRA is π/4-DQPSK, not an FM mode, so
+# this variant replaces the whole front end (FmDemodulator -> TetraDpqskDemod)
+# as well as the decoder (DSD -> the osmo tetra-rx subprocess, via
+# TetraProcess). Selected in session.cpp by DSD_USE_TETRA_BACKEND; no Boost
+# demod deps beyond what dsd-server already uses. It does NOT link fm_demod.cpp
+# or dsd_process.cpp -- the TETRA chain uses neither.
+#
+# STATUS: the demod, TETMON parser, and subprocess backend are unit/integration
+# tested (test_tetra_demod, test_tetmon_parse, test_tetra_process). Decoding a
+# real TETRA signal end to end additionally needs the sq5bpf osmo-tetra
+# `tetra-rx` on PATH at run time and a capture; those aren't in-tree, so this
+# variant is built (compile-verified) but not yet exercised against a live
+# signal here.
+option(DSD_BUILD_TETRA_VARIANT "Also build dsd-server-tetra (osmo TETRA subprocess backend)" ON)
+
+if(DSD_BUILD_TETRA_VARIANT)
+  add_executable(dsd-server-tetra
+    src/main.cpp
+    src/session.cpp
+    src/tetra_demod.cpp
+    src/tetra_process.cpp
+    src/tetra_tetmon.cpp
+  )
+  target_include_directories(dsd-server-tetra PRIVATE src ${Boost_INCLUDE_DIRS})
+  target_link_libraries(dsd-server-tetra PRIVATE Boost::system Threads::Threads m)
+  target_compile_definitions(dsd-server-tetra PRIVATE DSD_USE_TETRA_BACKEND)
+  target_compile_options(dsd-server-tetra PRIVATE -Wall -Wextra)
+endif()
+
 # --- Integration test for session.cpp/main.cpp (the WebSocket server) ---
 # Starts a real Server, connects a real WebSocket client, and exercises
 # the actual control protocol and audio/event relay end-to-end. Needs

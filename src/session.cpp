@@ -5,6 +5,8 @@
 #include <cstring>
 #include <cstdlib>
 #include <cctype>
+#include <cmath>
+#include <functional>
 #include <random>
 #include <set>
 
@@ -28,10 +30,11 @@ namespace {
 //     distinctness a guarantee instead of a probability.
 // stop_pipeline() releases the port when the session's pipeline stops.
 //
-// Only compiled for the subprocess backend: the DSDcc backend decodes
-// in-process and has no UDP audio port to allocate (udp_audio_port_
-// stays 0), so this whole allocator would be dead code there.
-#if !defined(DSD_USE_DSDCC_BACKEND)
+// Only compiled for the dsd-fme subprocess backend: the DSDcc backend
+// decodes in-process, and the TETRA backend binds its own TETMON UDP port
+// internally, so neither has an audio port to allocate here (udp_audio_port_
+// stays 0) and this allocator would be dead code for both.
+#if !defined(DSD_USE_DSDCC_BACKEND) && !defined(DSD_USE_TETRA_BACKEND)
 std::mutex g_udp_port_mutex;
 std::set<uint16_t> g_udp_ports_in_use;
 
@@ -133,11 +136,23 @@ void Session::handle_text_message(const std::string& msg) {
             std::string key = json::get_string(obj, "key");
             start_pipeline(sample_rate, bw, offset, gain, afc, protocol, key_type, key);
         } else if (type == "set_gain") {
+#if defined(DSD_USE_TETRA_BACKEND)
+            // TETRA: no FM discriminator, so discriminator gain doesn't
+            // apply. Accept the message (no error) and ignore it.
+            (void)obj;
+#else
             std::lock_guard<std::mutex> lock(demod_mutex_);
             if (demod_) demod_->set_gain(static_cast<float>(json::get_number(obj, "gain", 26000.0)));
+#endif
         } else if (type == "set_freq_offset") {
+#if defined(DSD_USE_TETRA_BACKEND)
+            // TETRA: the π/4 demod estimates and removes residual CFO itself
+            // (±Rs/8), so there is no live NCO to retune. Accept and ignore.
+            (void)obj;
+#else
             std::lock_guard<std::mutex> lock(demod_mutex_);
             if (demod_) demod_->set_freq_offset(json::get_number(obj, "hz", 0.0));
+#endif
         } else if (type == "stop") {
             stop_pipeline();
         } else {
@@ -207,6 +222,11 @@ ProtocolHint parse_protocol_hint(std::string s) {
     return ProtocolHint::Auto;
 }
 
+// Key handling is DSD-only: the TETRA build decrypts nothing here (TETRA's
+// TEA ciphers aren't handled), so guarding these out keeps that variant free
+// of unused-function warnings.
+#if !defined(DSD_USE_TETRA_BACKEND)
+
 // Optional decryption key scheme from the client's "key_type" field. Only
 // DMR Basic Privacy (`Bp`) is decryptable on both backends; the rest are
 // dsd-fme-backend only (DSDcc has no RC4/AES/DES/scrambler support). An
@@ -246,6 +266,8 @@ bool key_value_is_valid(const std::string& v) {
     return saw_digit;
 }
 
+#endif // !DSD_USE_TETRA_BACKEND (key handling)
+
 } // namespace
 
 void Session::start_pipeline(double sample_rate, double channel_bw, double freq_offset,
@@ -255,6 +277,29 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
 
     const ProtocolHint hint = parse_protocol_hint(protocol);
 
+#if defined(DSD_USE_TETRA_BACKEND)
+    // ---- TETRA build: π/4-DQPSK modem front end + osmo tetra-rx backend ----
+    // The FM-path knobs (channel bandwidth, freq offset, gain, AFC) and the
+    // DSD protocol/key options don't apply to the TETRA chain; accept them
+    // for a uniform "start" shape and ignore them. Encryption (TEA) is not
+    // handled here.
+    (void)channel_bw; (void)freq_offset; (void)gain; (void)afc; (void)hint;
+    (void)key_type; (void)key;
+
+    // TETRA IQ must arrive at samples_per_symbol * 18000 Hz; derive sps from
+    // the client's sample_rate (e.g. 72000 -> 4) and clamp to a sane floor.
+    int tetra_sps = static_cast<int>(std::llround(sample_rate / 18000.0));
+    if (tetra_sps < 2) tetra_sps = 2;
+    {
+        TetraDemodConfig tdcfg;
+        tdcfg.samples_per_symbol = tetra_sps;
+        tdcfg.correct_cfo = true; // pull in residual SDR ppm error (±Rs/8)
+        std::lock_guard<std::mutex> lock(demod_mutex_);
+        tetra_demod_ = std::make_unique<TetraDpqskDemod>(tdcfg);
+    }
+
+    ActiveTetraBackendConfig bcfg; // defaults: tetra-rx on PATH, unknowns suppressed
+#else
     // Validate the optional decryption key up front: a named key_type with
     // a missing or non-hex/decimal value is a client error, and rejecting
     // it here also guarantees only a digits-only token can ever reach
@@ -363,67 +408,73 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
             dcfg.extra_args.push_back(key);
         }
     }
-#endif
+#endif // DSD_USE_DSDCC_BACKEND
+#endif // DSD_USE_TETRA_BACKEND (else)
 
     auto self = shared_from_this();
     std::weak_ptr<Session> weak_self = self;
 
-    bool ok = dsd_.start(
-        dcfg,
-        // Event callback: fires from a dedicated reader thread for the
-        // DsdProcess (subprocess) backend, or synchronously on this
-        // thread (Session's demod worker) for the DsdccDecoder backend
-        // -- see dsdcc_decoder.hpp's top-of-file note. Either way this
-        // needs the same weak_ptr treatment: this callback is stored
-        // inside dsd_, which is itself a member of Session, so capturing
-        // shared_ptr here would create Session -> dsd_ -> callback ->
-        // shared_ptr<Session>, a strong reference cycle that leaks the
-        // session forever.
-        [weak_self](const DsdEvent& ev) {
-            auto self = weak_self.lock();
-            if (!self) return;
-            // .str() chained in the same expression as the Writer
-            // temporary's construction, rather than split across two
-            // statements (auto w = ...; ...; w.str()) -- Writer is
-            // copyable now (see json_util.hpp), so the split form would
-            // compile too, but this avoids the extra copy and matches
-            // the pattern used everywhere else in this file.
-            std::string s = json::Writer()
-                .field("type", std::string("event"))
-                .field("kind", ev.kind)
-                .field("talkgroup", ev.talkgroup)
-                .field("source_id", ev.source_id)
-                .field("slot", ev.slot)
-                .field("color_code", ev.color_code)
-                .field("ran", ev.ran)
-                .field("nac", ev.nac)
-                .field("emergency", ev.emergency)
-                .field("alias", ev.alias)
-                .field("crc_error", ev.crc_error)
-                .field("extra", ev.extra)
-                .field("raw", ev.raw_line)
-                .str();
-            // This inner lambda IS safe to capture shared_ptr in: it's
-            // posted once to the connection's strand executor and
-            // discarded, never stored.
-            net::post(self->ws_.get_executor(), [self, s = std::move(s)] { self->send_text(s); });
-        },
-        // Audio callback: same threading note as the event callback above.
+    // Event/audio callbacks are backend-agnostic (both backends' start()
+    // take these same std::function signatures and hand us the same
+    // DsdEvent / int16 PCM), so they're built once and passed to whichever
+    // backend this build selected below.
+    //
+    // weak_ptr, not shared_ptr: this callback is stored inside the backend,
+    // which is itself a member of Session, so capturing shared_ptr here
+    // would form Session -> backend -> callback -> shared_ptr<Session>, a
+    // strong reference cycle that leaks the session forever. For the
+    // subprocess backends the callback also fires from a reader thread; the
+    // lock() both breaks the cycle and makes the after-free case safe.
+    std::function<void(const DsdEvent&)> on_event = [weak_self](const DsdEvent& ev) {
+        auto self = weak_self.lock();
+        if (!self) return;
+        std::string s = json::Writer()
+            .field("type", std::string("event"))
+            .field("kind", ev.kind)
+            .field("talkgroup", ev.talkgroup)
+            .field("source_id", ev.source_id)
+            .field("slot", ev.slot)
+            .field("color_code", ev.color_code)
+            .field("ran", ev.ran)
+            .field("nac", ev.nac)
+            .field("emergency", ev.emergency)
+            .field("alias", ev.alias)
+            .field("crc_error", ev.crc_error)
+            .field("extra", ev.extra)
+            .field("raw", ev.raw_line)
+            .str();
+        // This inner lambda IS safe to capture shared_ptr in: it's posted
+        // once to the connection's strand executor and discarded.
+        net::post(self->ws_.get_executor(), [self, s = std::move(s)] { self->send_text(s); });
+    };
+    std::function<void(const int16_t*, std::size_t)> on_audio =
         [weak_self](const int16_t* pcm, std::size_t n) {
-            auto self = weak_self.lock();
-            if (!self) return;
-            std::vector<uint8_t> frame(1 + n * sizeof(int16_t));
-            frame[0] = 0x01; // tag: decoded voice PCM
-            std::memcpy(frame.data() + 1, pcm, n * sizeof(int16_t));
-            net::post(self->ws_.get_executor(), [self, f = std::move(frame)]() mutable {
-                self->send_binary(std::move(f));
-            });
+        auto self = weak_self.lock();
+        if (!self) return;
+        std::vector<uint8_t> frame(1 + n * sizeof(int16_t));
+        frame[0] = 0x01; // tag: decoded voice PCM
+        std::memcpy(frame.data() + 1, pcm, n * sizeof(int16_t));
+        net::post(self->ws_.get_executor(), [self, f = std::move(frame)]() mutable {
+            self->send_binary(std::move(f));
         });
+    };
+
+#if defined(DSD_USE_TETRA_BACKEND)
+    // TETRA voice is a separate per-call UDP stream needing the ETSI codec;
+    // on_audio is wired for parity but the osmo backend does not feed it yet.
+    bool ok = tetra_backend_.start(bcfg, on_event, on_audio);
+#else
+    bool ok = dsd_.start(dcfg, on_event, on_audio);
+#endif
 
     if (!ok) {
         send_text(json::Writer().field("type", std::string("error"))
                       .field("message", std::string("failed to start DSD backend")).str());
+#if defined(DSD_USE_TETRA_BACKEND)
+        { std::lock_guard<std::mutex> lock(demod_mutex_); tetra_demod_.reset(); }
+#else
         demod_.reset();
+#endif
         return;
     }
 
@@ -442,14 +493,22 @@ void Session::stop_pipeline() {
     iq_cv_.notify_all();
     if (worker_thread_.joinable()) worker_thread_.join();
 
+#if defined(DSD_USE_TETRA_BACKEND)
+    tetra_backend_.stop();
+#else
     dsd_.stop();
+#endif
     {
         // Safe to take here: the worker was joined above, so nothing is
-        // inside process() holding this.
+        // inside process()/demodulate() holding this.
         std::lock_guard<std::mutex> lock(demod_mutex_);
+#if defined(DSD_USE_TETRA_BACKEND)
+        tetra_demod_.reset();
+#else
         demod_.reset();
+#endif
     }
-#if !defined(DSD_USE_DSDCC_BACKEND)
+#if !defined(DSD_USE_DSDCC_BACKEND) && !defined(DSD_USE_TETRA_BACKEND)
     release_udp_port(udp_audio_port_);
     udp_audio_port_ = 0;
 #endif
@@ -461,6 +520,35 @@ void Session::stop_pipeline() {
 }
 
 void Session::demod_worker_loop() {
+#if defined(DSD_USE_TETRA_BACKEND)
+    // TETRA: demodulate each IQ block to bits and relay them to tetra-rx's
+    // stdin. NOTE: TetraDpqskDemod is block-oriented and carries no state
+    // across calls, so demodulating per WebSocket frame restarts the timing
+    // loop at each frame boundary -- a few symbols of slip per seam. The
+    // downstream tetra-rx tolerates missing bursts (soft sync), so this is a
+    // usable first cut; a streaming demod that carries filter/timing/CFO
+    // state across calls is the follow-up refinement for clean frame-boundary
+    // continuity.
+    while (worker_running_.load()) {
+        std::vector<cf32> block;
+        {
+            std::unique_lock<std::mutex> lock(iq_mutex_);
+            iq_cv_.wait(lock, [this] { return !iq_queue_.empty() || !worker_running_.load(); });
+            if (!worker_running_.load()) break;
+            block = std::move(iq_queue_.front());
+            iq_queue_.pop_front();
+        }
+
+        std::vector<unsigned char> bits;
+        {
+            std::lock_guard<std::mutex> lock(demod_mutex_);
+            if (tetra_demod_) bits = tetra_demod_->demodulate(block.data(), block.size());
+        }
+        if (!bits.empty()) {
+            tetra_backend_.write_bits(bits.data(), bits.size());
+        }
+    }
+#else
     std::vector<int16_t> pcm_scratch;
     while (worker_running_.load()) {
         std::vector<cf32> block;
@@ -481,6 +569,7 @@ void Session::demod_worker_loop() {
             dsd_.write_audio(pcm_scratch.data(), pcm_scratch.size());
         }
     }
+#endif
 }
 
 void Session::send_text(const std::string& msg) {

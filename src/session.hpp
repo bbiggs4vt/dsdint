@@ -54,8 +54,19 @@
 #include <mutex>
 #include <condition_variable>
 
+// Backend build variants. The default builds the FM-discriminator + DSD
+// pipeline (dsd-fme subprocess or in-process DSDcc). DSD_USE_TETRA_BACKEND
+// builds an entirely different signal chain -- a π/4-DQPSK modem feeding the
+// TETRA subprocess backend (osmo tetra-rx) -- because TETRA is not an FM
+// mode. See tetra_backend_selector.hpp. The two never coexist in one binary.
+#if defined(DSD_USE_TETRA_BACKEND)
+#include <complex>
+#include "tetra_backend_selector.hpp"
+#include "tetra_demod.hpp"
+#else
 #include "fm_demod_selector.hpp"
 #include "dsd_backend_selector.hpp"
+#endif
 
 namespace dsdsrv {
 
@@ -63,6 +74,11 @@ namespace beast = boost::beast;
 namespace websocket = beast::websocket;
 namespace net = boost::asio;
 using tcp = net::ip::tcp;
+
+#if defined(DSD_USE_TETRA_BACKEND)
+// cf32 otherwise comes from fm_demod.hpp, which the TETRA build doesn't pull.
+using cf32 = std::complex<float>;
+#endif
 
 class Session : public std::enable_shared_from_this<Session> {
 public:
@@ -104,8 +120,14 @@ private:
     // connection without them racing the network thread's own reads/
     // writes on ws_.
     beast::flat_buffer read_buffer_;
+#if defined(DSD_USE_TETRA_BACKEND)
+    // TETRA build: the π/4-DQPSK modem front end. Turns IQ into the
+    // demodulated bitstream the TETRA subprocess backend consumes.
+    std::unique_ptr<TetraDpqskDemod> tetra_demod_;
+#else
     std::unique_ptr<ActiveFmDemodulator> demod_;
-    // Guards every use of demod_ -- both the pointer and calls through
+#endif
+    // Guards every use of the demod -- both the pointer and calls through
     // it. The demodulator itself documents its setters as only safe
     // "from the same thread that owns this object", but three threads
     // genuinely touch it: the connection's strand thread (set_gain/
@@ -120,8 +142,12 @@ private:
     // worker_thread_ (see stop_pipeline), so it cannot deadlock with
     // the worker taking it around process().
     std::mutex demod_mutex_;
+#if defined(DSD_USE_TETRA_BACKEND)
+    ActiveTetraBackend tetra_backend_;
+#else
     ActiveDsdBackend dsd_;
-    uint16_t udp_audio_port_ = 0; // only meaningful for the DsdProcess (subprocess) backend
+#endif
+    uint16_t udp_audio_port_ = 0; // only meaningful for the DsdProcess (subprocess) backend; 0 under TETRA/DSDcc
 
     // Producer (network thread via on_binary) / consumer (worker thread)
     // queue of raw IQ blocks awaiting demodulation.

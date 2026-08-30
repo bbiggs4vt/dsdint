@@ -133,6 +133,39 @@ reply and is dropped. Binary frames sent **before** any `start` are
 silently ignored — no error, no reply (documented behavior of
 `handle_binary_message`).
 
+### TETRA (`dsd-server-tetra` build)
+
+TETRA is π/4-DQPSK, not an FM mode, so it is a **separate build variant**
+(`dsd-server-tetra`, selected at compile time — the same build-time backend
+model as `dsd-server-dsdcc`), not a `protocol` hint on the default server.
+Point a client at that binary to decode TETRA. The wire protocol is otherwise
+the same — `start` / `stop`, binary IQ in, `event` frames out — with these
+differences:
+
+- **IQ rate:** the demod is π/4-DQPSK at 18000 sym/s, so `sample_rate` must be
+  `samples_per_symbol × 18000` (e.g. 72000 for 4 sps). The server derives
+  `samples_per_symbol` from `sample_rate`. Tune near zero IF; the demod pulls
+  in residual offset up to ±2250 Hz itself.
+- **Ignored `start` fields:** `channel_bandwidth`, `freq_offset`, `gain`,
+  `afc`, `protocol`, `key_type`, `key` don't apply to the TETRA chain and are
+  accepted-and-ignored (TETRA TEA encryption is not handled). `set_gain` /
+  `set_freq_offset` are likewise accepted no-ops.
+- **`started`:** `udp_audio_port` is always `0` (the backend binds its own
+  internal control socket).
+- **`event` fields:** the osmo backend reports `source_id` = the party SSI,
+  `talkgroup` = the group SSI (GSSI) when present, and `extra` carries
+  `idx=`/`cid=`/`nid=` tokens. `kind` is `call` for call-control messages;
+  PHY/AFC diagnostics classify as `unknown` and are suppressed by default.
+- **Audio:** not yet emitted — TETRA voice is a separate ACELP path needing
+  the (patent-encumbered) ETSI codec.
+
+**Status:** the modem, TETMON event parser, and subprocess backend are
+unit/integration-tested, but end-to-end decode of a real signal additionally
+needs the sq5bpf osmo-tetra `tetra-rx` on `PATH` at run time and a capture —
+neither in-tree — so this variant is compile-verified but not yet exercised
+against a live TETRA signal. The per-frame demod also restarts timing at each
+IQ-frame boundary (a streaming demod is the planned refinement).
+
 ---
 
 ## Server → Client
