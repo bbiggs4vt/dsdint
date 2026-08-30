@@ -136,9 +136,19 @@ silently ignored — no error, no reply (documented behavior of
 ### TETRA (`dsd-server-tetra` build)
 
 TETRA is π/4-DQPSK, not an FM mode, so it is a **separate build variant**
-(`dsd-server-tetra`, selected at compile time — the same build-time backend
-model as `dsd-server-dsdcc`), not a `protocol` hint on the default server.
-Point a client at that binary to decode TETRA. The wire protocol is otherwise
+(selected at compile time — the same build-time backend model as
+`dsd-server-dsdcc`), not a `protocol` hint on the default server. Two TETRA
+backends share the identical π/4 front end and wire protocol, differing only
+in the external decoder they drive:
+
+- **`dsd-server-tetra`** — osmo-tetra's `tetra-rx` (sq5bpf fork): bits on
+  stdin, events over its TETMON UDP protocol.
+- **`dsd-server-tetrakit`** — tetra-kit's `decoder`: bits and JSON reports
+  both over UDP (`-r`/`-t`). Reports `source_id` from `ssi`, `kind` `call`
+  for call-control PDUs and `voice` for U-PLANE, with `service`/`pdu`/
+  `usage_marker` in `extra`.
+
+Point a client at whichever binary you built. The wire protocol is otherwise
 the same — `start` / `stop`, binary IQ in, `event` frames out — with these
 differences:
 
@@ -159,10 +169,11 @@ differences:
 - **Audio:** not yet emitted — TETRA voice is a separate ACELP path needing
   the (patent-encumbered) ETSI codec.
 
-**Status:** the modem, TETMON event parser, and subprocess backend are
-unit/integration-tested, but end-to-end decode of a real signal additionally
-needs the sq5bpf osmo-tetra `tetra-rx` on `PATH` at run time and a capture —
-neither in-tree — so this variant is compile-verified but not yet exercised
+**Status:** the streaming modem, both event parsers (TETMON and tetra-kit
+JSON), and both subprocess backends are unit/integration-tested, but
+end-to-end decode of a real signal additionally needs the chosen decoder
+(`tetra-rx` or tetra-kit's `decoder`) on `PATH` at run time plus a capture —
+neither in-tree — so these variants are compile-verified but not yet exercised
 against a live TETRA signal. The demod is streaming (timing, differential,
 CFO and AGC state carry across IQ frames), so decoding is continuous across
 frame boundaries.

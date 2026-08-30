@@ -12,23 +12,21 @@
 //     tetra-kit's decoder, send bits over UDP:42000, and receive its JSON
 //     events over UDP:42100.
 //
-// Only osmo exists today, so this header currently resolves to it
-// unconditionally; the #ifdef seam is here so adding the tetra-kit backend
-// is a localized change (a new TetraKitProcess with the same
-// start/write_bits/stop/running surface, selected here) rather than a
-// session.cpp edit. Like the DSD selector, the two backends may have
-// different config shapes, so session.cpp branches on the build when
-// *populating* the config but not when *using* the object.
+// Both backends expose the same start/write_bits/stop/running surface and
+// emit the shared DsdEvent, so selecting one here needs no session.cpp edit.
+// Like the DSD selector, the two backends have different config shapes, so
+// session.cpp default-constructs the selected config type (it sets no
+// per-field backend options for TETRA) -- so nothing there branches on the
+// build either.
 
 #pragma once
 
 #if defined(TETRA_USE_TETRAKIT_BACKEND)
-// #include "tetra_kit_process.hpp"   // not yet implemented
-// namespace dsdsrv {
-// using ActiveTetraBackend = TetraKitProcess;
-// using ActiveTetraBackendConfig = TetraKitProcessConfig;
-// }
-#error "TETRA_USE_TETRAKIT_BACKEND is not implemented yet; build the osmo backend (default)."
+#include "tetra_kit_process.hpp"
+namespace dsdsrv {
+using ActiveTetraBackend = TetraKitProcess;
+using ActiveTetraBackendConfig = TetraKitProcessConfig;
+}
 #else
 #include "tetra_process.hpp"
 namespace dsdsrv {

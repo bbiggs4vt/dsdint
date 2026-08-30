@@ -124,6 +124,27 @@ add_test(NAME tetra_process_test
          COMMAND test_tetra_process $<TARGET_FILE:tetra_fake_rx>)
 set_tests_properties(tetra_process_test PROPERTIES TIMEOUT 60)
 
+# tetra-kit JSON report parser: pure string -> DsdEvent, always runs.
+add_executable(test_tetra_kit_json EXCLUDE_FROM_ALL
+  src/tetra_kit_json.cpp tests/test_tetra_kit_json.cpp)
+target_include_directories(test_tetra_kit_json PRIVATE src)
+target_compile_options(test_tetra_kit_json PRIVATE -Wall -Wextra)
+add_test(NAME tetra_kit_json_test COMMAND test_tetra_kit_json)
+set_tests_properties(tetra_kit_json_test PROPERTIES TIMEOUT 60)
+
+# TetraKitProcess: the tetra-kit subprocess backend (bits out over UDP, JSON
+# in over UDP). Exercised against a fake decoder stub, like the osmo backend.
+add_executable(tetra_kit_fake EXCLUDE_FROM_ALL tests/tetra_kit_fake.cpp)
+add_executable(test_tetra_kit_process EXCLUDE_FROM_ALL
+  src/tetra_kit_process.cpp src/tetra_kit_json.cpp tests/test_tetra_kit_process.cpp)
+target_include_directories(test_tetra_kit_process PRIVATE src)
+target_link_libraries(test_tetra_kit_process PRIVATE Threads::Threads)
+target_compile_options(test_tetra_kit_process PRIVATE -Wall -Wextra)
+add_dependencies(test_tetra_kit_process tetra_kit_fake)
+add_test(NAME tetra_kit_process_test
+         COMMAND test_tetra_kit_process $<TARGET_FILE:tetra_kit_fake>)
+set_tests_properties(tetra_kit_process_test PROPERTIES TIMEOUT 60)
+
 # AFC + freq_offset sign-convention tests (tests/test_afc.cpp). Core
 # cases are synthetic-tone only, no external deps. The liquid and DSDcc
 # variant blocks below add their sections to this target when those
@@ -451,6 +472,23 @@ if(DSD_BUILD_TETRA_VARIANT)
   target_link_libraries(dsd-server-tetra PRIVATE Boost::system Threads::Threads m)
   target_compile_definitions(dsd-server-tetra PRIVATE DSD_USE_TETRA_BACKEND)
   target_compile_options(dsd-server-tetra PRIVATE -Wall -Wextra)
+
+  # Second TETRA backend: tetra-kit's decoder (UDP bits in, JSON out),
+  # selected by TETRA_USE_TETRAKIT_BACKEND on top of DSD_USE_TETRA_BACKEND.
+  # Same session/pipeline as dsd-server-tetra; swaps TetraProcess for
+  # TetraKitProcess via tetra_backend_selector.hpp. Also compile-verified
+  # only -- a live decode needs tetra-kit's `decoder` on PATH + a capture.
+  add_executable(dsd-server-tetrakit
+    src/main.cpp
+    src/session.cpp
+    src/tetra_demod.cpp
+    src/tetra_kit_process.cpp
+    src/tetra_kit_json.cpp
+  )
+  target_include_directories(dsd-server-tetrakit PRIVATE src ${Boost_INCLUDE_DIRS})
+  target_link_libraries(dsd-server-tetrakit PRIVATE Boost::system Threads::Threads m)
+  target_compile_definitions(dsd-server-tetrakit PRIVATE DSD_USE_TETRA_BACKEND TETRA_USE_TETRAKIT_BACKEND)
+  target_compile_options(dsd-server-tetrakit PRIVATE -Wall -Wextra)
 endif()
 
 # --- Integration test for session.cpp/main.cpp (the WebSocket server) ---
