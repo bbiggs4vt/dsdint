@@ -79,34 +79,40 @@ TetraDpqskDemod::matched_filter(const std::complex<float>* iq, std::size_t n) co
     return out;
 }
 
-void TetraDpqskDemod::recover_symbols(const std::vector<std::complex<float>>& mf) {
-    symbols_.clear();
+std::vector<unsigned char>
+TetraDpqskDemod::run(const std::complex<float>* iq, std::size_t n, bool final_flush) {
+    std::vector<unsigned char> bits;
     const int sps = cfg_.samples_per_symbol;
-    const int M = static_cast<int>(mf.size());
-    if (M < 4 * sps) return;
-
-    // AGC: scale to unit RMS so the Gardner detector gain is predictable
-    // (its output scales with signal power, and the loop gains below assume
-    // O(1) amplitude).
-    double p = 0.0;
-    for (const auto& s : mf) p += std::norm(s);
-    const float rms = static_cast<float>(std::sqrt(p / std::max(1, M)));
-    const float ag = (rms > 1e-12f) ? 1.0f / rms : 1.0f;
-    std::vector<std::complex<float>> x(M);
-    for (int i = 0; i < M; ++i) x[i] = mf[i] * ag;
-
-    // Second-order (PI) timing loop. Overdamped, gains scaled by the
-    // normalised loop bandwidth. detector gain is ~1 after the AGC above.
-    const float Bn = cfg_.timing_loop_bandwidth;
-    const float zeta = 1.0f;
-    const float Kp = 2.0f * zeta * Bn;
-    const float Ki = Bn * Bn;
-
-    // Read position (fractional) into x[]. Start with enough history for the
-    // interpolator (base-1) and the half-symbol look-back for the TED.
-    double pos = 2.0 * sps;
+    const int delay = static_cast<int>(rrc_taps_.size() / 2); // = span*sps
     const double halfsym = sps / 2.0;
-    float integ = 0.0f;
+
+    // Working buffer: the carried-over tail (filter history + the samples not
+    // yet consumed last call) followed by the new input.
+    std::vector<std::complex<float>> work;
+    work.reserve(in_tail_.size() + n);
+    work.insert(work.end(), in_tail_.begin(), in_tail_.end());
+    if (n) work.insert(work.end(), iq, iq + n);
+    const int W = static_cast<int>(work.size());
+    symbols_.clear();
+    if (W == 0) return bits;
+
+    // Matched filter over the whole work buffer (valid-centred; the last
+    // `delay` outputs are edge-tapered because they lack future input -- we
+    // hold those symbols back below unless this is a flush).
+    const std::vector<std::complex<float>> mf =
+        matched_filter(work.data(), static_cast<std::size_t>(W));
+
+    // Running AGC toward unit RMS. Carrying the level across calls (rather
+    // than a per-block RMS) keeps the gain near-constant through the overlap
+    // region, so the Gardner detector sees no per-block amplitude step.
+    double bp = 0.0;
+    for (const auto& s : mf) bp += std::norm(s);
+    bp /= std::max(1, W);
+    if (!agc_init_) { agc_pow_ = static_cast<float>(bp); agc_init_ = true; }
+    else agc_pow_ = 0.9f * agc_pow_ + 0.1f * static_cast<float>(bp);
+    const float ag = (agc_pow_ > 1e-12f) ? 1.0f / std::sqrt(agc_pow_) : 1.0f;
+    std::vector<std::complex<float>> x(W);
+    for (int i = 0; i < W; ++i) x[i] = mf[i] * ag;
 
     auto interp_at = [&](double q) -> std::complex<float> {
         int base = static_cast<int>(std::floor(q));
@@ -114,66 +120,78 @@ void TetraDpqskDemod::recover_symbols(const std::vector<std::complex<float>>& mf
         return cubic_interp(x.data(), base, mu);
     };
 
-    std::complex<float> prev_on = interp_at(pos);
-    symbols_.push_back(prev_on);
+    // Second-order (PI) timing loop gains; detector gain ~1 after the AGC.
+    const float Bn = cfg_.timing_loop_bandwidth;
+    const float zeta = 1.0f;
+    const float Kp = 2.0f * zeta * Bn;
+    const float Ki = Bn * Bn;
 
+    // Hold back the edge-tapered tail (needs future input) unless flushing.
+    const int endmargin = final_flush ? 0 : delay;
+
+    // Seed the loop the first time there is enough data to place the
+    // interpolator with history on both sides and take one step.
+    if (!timing_started_) {
+        const double seedpos = 2.0 * sps;
+        if (seedpos - halfsym - 1.0 < 1.0 ||
+            seedpos + sps + 2.0 >= static_cast<double>(W - endmargin)) {
+            // Not enough yet: keep the buffer and wait for more input.
+            if (!final_flush) in_tail_ = std::move(work);
+            else in_tail_.clear();
+            return bits;
+        }
+        pos_ = seedpos;
+        integ_ = 0.0f;
+        prev_on_ = interp_at(pos_);
+        prev_symbol_ = prev_on_; // differential reference seed
+        have_prev_symbol_ = true;
+        timing_started_ = true;
+    }
+
+    // Recover on-time symbols and their differential products. prev_symbol_
+    // carries across calls, so the transition straddling a block boundary is
+    // formed normally -- no lost or duplicated symbol at the seam.
+    std::vector<std::complex<float>> diff;
     while (true) {
-        const double next = pos + sps;
-        // Need base-1 .. base+2 for both the on-time sample at `next` and
-        // the mid sample at next-halfsym; stop before running off the end.
-        if (next - halfsym - 1.0 < 1.0 || next + 2.0 >= M) break;
+        const double next = pos_ + sps;
+        if (next - halfsym - 1.0 < 1.0 ||
+            next + 2.0 >= static_cast<double>(W - endmargin)) break;
 
         const std::complex<float> on = interp_at(next);
         const std::complex<float> mid = interp_at(next - halfsym);
 
-        // Gardner TED (complex, non-data-aided): zero at the correct
-        // sampling instant. Then a PI update nudges the next step.
-        const float e = std::real(std::conj(mid) * (on - prev_on));
-        integ += Ki * e;
-        const float correction = Kp * e + integ;
+        // Gardner TED (complex, non-data-aided); PI update nudges the next
+        // instant. Negative feedback: positive error = sampled late = retard.
+        const float e = std::real(std::conj(mid) * (on - prev_on_));
+        integ_ += Ki * e;
+        const float correction = Kp * e + integ_;
+        pos_ = next - std::max(-halfsym, std::min<double>(halfsym, correction));
 
-        // Negative feedback: a positive Gardner error means we sampled late,
-        // so retard the next instant. (The opposite sign is positive
-        // feedback and the loop diverges as the gain rises.)
-        pos = next - std::max(-halfsym, std::min<double>(halfsym, correction));
         symbols_.push_back(on);
-        prev_on = on;
+        if (have_prev_symbol_) diff.push_back(on * std::conj(prev_symbol_));
+        prev_symbol_ = on;
+        prev_on_ = on;
     }
-}
 
-std::vector<unsigned char>
-TetraDpqskDemod::demodulate(const std::complex<float>* iq, std::size_t n) {
-    std::vector<unsigned char> bits;
-    cfo_hz_ = 0.0;
-    if (n == 0) return bits;
-
-    const std::vector<std::complex<float>> mf = matched_filter(iq, n);
-    recover_symbols(mf);
-    if (symbols_.size() < 2) return bits;
-
-    // Per-symbol differential products: the angle of s[k]·conj(s[k-1]) is
-    // the π/4-DQPSK phase transition.
-    std::vector<std::complex<float>> diff(symbols_.size() - 1);
-    for (std::size_t k = 1; k < symbols_.size(); ++k)
-        diff[k - 1] = symbols_[k] * std::conj(symbols_[k - 1]);
-
-    // Non-data-aided CFO estimate. The four transition phases {±π/4, ±3π/4}
-    // all map to +π under the 4th power, so d^4 = -e^{j·8πν} where ν is the
-    // per-symbol offset in cycles; averaging -d^4 leaves the pure tone and
-    // arg()/(8π) recovers ν. Unambiguous for |ν| < 1/8 (±Rs/8 = ±2250 Hz).
-    float nu = 0.0f; // cycles/symbol
-    if (cfg_.correct_cfo && !diff.empty()) {
-        std::complex<double> acc(0.0, 0.0);
-        for (const auto& d : diff) {
-            const std::complex<double> dd(d.real(), d.imag());
-            const std::complex<double> d4 = dd * dd * dd * dd;
-            acc += -d4;
+    // Running CFO estimate (non-data-aided 4th power: the four transition
+    // phases {±π/4, ±3π/4} all map to +π under d^4, so -d^4 = e^{j·8πν}).
+    // A decaying accumulator smooths it across calls, so small blocks still
+    // give a stable estimate. Unambiguous for |ν| < 1/8 (±Rs/8 = ±2250 Hz).
+    if (cfg_.correct_cfo) {
+        if (!diff.empty()) {
+            std::complex<double> block(0.0, 0.0);
+            for (const auto& d : diff) {
+                const std::complex<double> dd(d.real(), d.imag());
+                const std::complex<double> d4 = dd * dd * dd * dd;
+                block += -d4;
+            }
+            cfo_acc_ = 0.85 * cfo_acc_ + block;
+            const double ang8 = std::atan2(cfo_acc_.imag(), cfo_acc_.real()); // = 8πν
+            nu_ = static_cast<float>(ang8 / (8.0 * kPi));
         }
-        const double ang8 = std::atan2(acc.imag(), acc.real()); // = 8πν
-        nu = static_cast<float>(ang8 / (8.0 * kPi));
-        cfo_hz_ = static_cast<double>(nu) * 18000.0; // ν * Rs
+        cfo_hz_ = static_cast<double>(nu_) * 18000.0; // ν * Rs
     }
-    const float cfo_bias = 2.0f * kPi * nu; // phase the CFO adds per symbol
+    const float cfo_bias = 2.0f * kPi * nu_; // phase the CFO adds per symbol
 
     // Slice each (CFO-corrected) transition. Per the TETRA table (header):
     //   sign bit B(2k-1) = 1 when the transition is negative,
@@ -181,7 +199,6 @@ TetraDpqskDemod::demodulate(const std::complex<float>* iq, std::size_t n) {
     bits.reserve(diff.size() * 2);
     for (const auto& d : diff) {
         float ang = std::atan2(std::imag(d), std::real(d)) - cfo_bias;
-        // wrap to (-π, π]
         while (ang > kPi) ang -= 2.0f * kPi;
         while (ang < -kPi) ang += 2.0f * kPi;
         const unsigned char b1 = (ang < 0.0f) ? 1u : 0u;
@@ -189,7 +206,46 @@ TetraDpqskDemod::demodulate(const std::complex<float>* iq, std::size_t n) {
         bits.push_back(b1);
         bits.push_back(b2);
     }
+
+    // Retain the tail for next call (or clear on flush): keep a small margin
+    // before pos_ (interpolator look-back + filter delay) through the end, so
+    // the held-back symbols and full filter history are available, then
+    // rebase pos_ into the new, shorter buffer.
+    if (final_flush) {
+        in_tail_.clear();
+    } else {
+        int drop = static_cast<int>(std::floor(pos_)) - (sps + delay + 2);
+        if (drop < 0) drop = 0;
+        if (drop > W) drop = W;
+        in_tail_.assign(work.begin() + drop, work.end());
+        pos_ -= drop;
+    }
     return bits;
+}
+
+std::vector<unsigned char>
+TetraDpqskDemod::demodulate(const std::complex<float>* iq, std::size_t n) {
+    return run(iq, n, /*final_flush=*/false);
+}
+
+std::vector<unsigned char> TetraDpqskDemod::flush() {
+    return run(nullptr, 0, /*final_flush=*/true);
+}
+
+void TetraDpqskDemod::reset() {
+    in_tail_.clear();
+    symbols_.clear();
+    pos_ = 0.0;
+    integ_ = 0.0f;
+    prev_on_ = {0.0f, 0.0f};
+    prev_symbol_ = {0.0f, 0.0f};
+    timing_started_ = false;
+    have_prev_symbol_ = false;
+    cfo_acc_ = {0.0, 0.0};
+    nu_ = 0.0f;
+    cfo_hz_ = 0.0;
+    agc_pow_ = 0.0f;
+    agc_init_ = false;
 }
 
 } // namespace dsdsrv

@@ -186,6 +186,7 @@ int main() {
         TetraDemodConfig cfg; cfg.samples_per_symbol = sps;
         TetraDpqskDemod demod(cfg);
         auto bits = demod.demodulate(iq.data(), iq.size());
+        { auto tail = demod.flush(); bits.insert(bits.end(), tail.begin(), tail.end()); }
         auto lk = sync.synchronize(bits.data(), bits.size());
         std::printf("  (end-to-end: %zu bits out, phase=%ld, conf=%d)\n",
                     bits.size(), lk.phase, lk.confirmations);

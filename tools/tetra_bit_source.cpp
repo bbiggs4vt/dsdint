@@ -100,6 +100,12 @@ int main(int argc, char** argv) {
     cfg.correct_cfo = correct_cfo;
     TetraDpqskDemod demod(cfg);
     std::vector<unsigned char> bits = demod.demodulate(iq.data(), iq.size());
+    // Whole-file (non-streaming) use: drain the trailing samples the streaming
+    // demod holds back for matched-filter context, so no symbols are lost.
+    {
+        std::vector<unsigned char> tail = demod.flush();
+        bits.insert(bits.end(), tail.begin(), tail.end());
+    }
 
     // Emit the bitstream: one byte per bit, as tetra-rx expects.
     if (!bits.empty())

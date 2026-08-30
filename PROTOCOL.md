@@ -163,8 +163,9 @@ differences:
 unit/integration-tested, but end-to-end decode of a real signal additionally
 needs the sq5bpf osmo-tetra `tetra-rx` on `PATH` at run time and a capture —
 neither in-tree — so this variant is compile-verified but not yet exercised
-against a live TETRA signal. The per-frame demod also restarts timing at each
-IQ-frame boundary (a streaming demod is the planned refinement).
+against a live TETRA signal. The demod is streaming (timing, differential,
+CFO and AGC state carry across IQ frames), so decoding is continuous across
+frame boundaries.
 
 ---
 

@@ -282,6 +282,57 @@ int main() {
         check(ber_on < ber_off * 0.5, "CFO+noise: correction roughly halves the BER or better");
     }
 
+    // 6. Streaming continuity. Feeding one continuous signal in successive
+    //    blocks must yield the same bits as a single call -- the modem state
+    //    (filter history, timing loop, differential reference, CFO, AGC)
+    //    carries across calls with no per-block restart. Uses a mild CFO so
+    //    the carried CFO estimate is exercised too.
+    {
+        auto sig = apply_cfo(iq, 900.0);
+
+        // One-shot reference.
+        TetraDpqskDemod one(cfg);
+        std::vector<unsigned char> ref = one.demodulate(sig.data(), sig.size());
+        { auto t = one.flush(); ref.insert(ref.end(), t.begin(), t.end()); }
+
+        // Same signal fed in fixed-size chunks through one streaming demod.
+        TetraDpqskDemod strm(cfg);
+        std::vector<unsigned char> streamed;
+        const std::size_t chunk = 617; // deliberately not a symbol multiple
+        for (std::size_t off = 0; off < sig.size(); off += chunk) {
+            const std::size_t m = std::min(chunk, sig.size() - off);
+            auto b = strm.demodulate(sig.data() + off, m);
+            streamed.insert(streamed.end(), b.begin(), b.end());
+        }
+        { auto t = strm.flush(); streamed.insert(streamed.end(), t.begin(), t.end()); }
+
+        std::printf("  streaming: one-shot %zu bits, chunked %zu bits\n",
+                    ref.size(), streamed.size());
+        check(streamed == ref, "chunked streaming yields identical bits to one call");
+        check(best_ber(bits, streamed) == 0.0, "streamed clean signal decodes with zero BER");
+
+        // Contrast: a fresh demod per chunk (no carried state) loses lock at
+        // every seam -- this is what the streaming state fixes.
+        std::vector<unsigned char> perchunk;
+        for (std::size_t off = 0; off < sig.size(); off += chunk) {
+            const std::size_t m = std::min(chunk, sig.size() - off);
+            TetraDpqskDemod fresh(cfg);
+            auto b = fresh.demodulate(sig.data() + off, m);
+            auto t = fresh.flush();
+            perchunk.insert(perchunk.end(), b.begin(), b.end());
+            perchunk.insert(perchunk.end(), t.begin(), t.end());
+        }
+        double ber_perchunk = best_ber(bits, perchunk, 200, 8000);
+        std::printf("  per-chunk-reset BER = %.4f (vs streamed 0)\n", ber_perchunk);
+        check(ber_perchunk > 0.05, "per-chunk reset visibly degrades (streaming is the fix)");
+
+        // reset() returns to a clean slate.
+        strm.reset();
+        auto after = strm.demodulate(iq.data(), iq.size());
+        { auto t = strm.flush(); after.insert(after.end(), t.begin(), t.end()); }
+        check(best_ber(bits, after) == 0.0, "reset() clears state for a fresh signal");
+    }
+
     if (g_failures == 0) { std::printf("\nALL TETRA DEMOD TESTS PASSED\n"); return 0; }
     std::printf("\n%d CHECK(S) FAILED\n", g_failures);
     return 1;

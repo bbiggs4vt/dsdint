@@ -38,6 +38,17 @@
 //     the continuous bitstream this produces. This module is only the
 //     modem.
 //
+// STREAMING: demodulate() may be called repeatedly with successive blocks of
+// one continuous signal. All modem state -- the matched-filter history, the
+// Gardner timing loop (fractional position + integrator), the differential
+// reference symbol, the running CFO estimate, and the AGC level -- carries
+// across calls, so the bitstream is continuous with no per-block restart or
+// seam glitch: splitting a signal into N blocks yields (bar a few edge
+// symbols) the same bits as one call. Internally each call holds back the few
+// trailing samples that still need future context for the matched filter and
+// re-uses them next call; flush() drains those at end-of-stream. reset()
+// returns the demod to its initial state to start a new, unrelated signal.
+//
 // Verification: tests/test_tetra_demod.cpp carries a matching π/4-DQPSK
 // modulator (random bits -> RRC-shaped IQ) as ground truth and asserts the
 // demod round-trips the bits exactly (zero BER) with perfect timing, under
@@ -88,31 +99,59 @@ class TetraDpqskDemod {
 public:
     explicit TetraDpqskDemod(const TetraDemodConfig& cfg = TetraDemodConfig{});
 
-    // Demodulate a block of complex baseband IQ into hard bits, two per
-    // recovered symbol in transmission order (B(2k-1) then B(2k)). Values
-    // are 0/1. Block-oriented: each call demodulates the buffer as a whole
-    // (streaming across calls is a later refinement).
+    // Demodulate the next block of complex baseband IQ into hard bits, two
+    // per recovered symbol in transmission order (B(2k-1) then B(2k)). Values
+    // are 0/1. Streaming: modem state carries across calls, so feeding a
+    // signal in blocks is equivalent to one call (see the STREAMING note
+    // above). A block too short to yield a symbol returns no bits and is
+    // buffered for the next call.
     std::vector<unsigned char> demodulate(const std::complex<float>* iq, std::size_t n);
 
-    // The symbol-instant samples recovered by the timing loop for the last
-    // demodulate() call — exposed for tests/diagnostics (constellation).
+    // Drain the trailing samples held back for matched-filter context, using
+    // edge handling, and return their bits. Call once at end-of-stream to
+    // recover the final few symbols; not needed between streaming blocks.
+    std::vector<unsigned char> flush();
+
+    // Discard all streaming state (filter history, timing loop, differential
+    // reference, CFO, AGC) so the next demodulate() starts a fresh, unrelated
+    // signal.
+    void reset();
+
+    // The symbol-instant samples recovered by the timing loop on the last
+    // demodulate()/flush() call — exposed for tests/diagnostics (constellation).
     const std::vector<std::complex<float>>& last_symbols() const { return symbols_; }
 
-    // Carrier-frequency offset (Hz) estimated on the last demodulate() call,
-    // or 0 when correct_cfo is off. Positive means the signal sat above the
-    // nominal centre.
+    // Carrier-frequency offset (Hz), the running estimate as of the last
+    // demodulate()/flush() call, or 0 when correct_cfo is off. Positive means
+    // the signal sat above the nominal centre.
     double last_cfo_hz() const { return cfo_hz_; }
 
     const TetraDemodConfig& config() const { return cfg_; }
 
 private:
     std::vector<std::complex<float>> matched_filter(const std::complex<float>* iq, std::size_t n) const;
-    void recover_symbols(const std::vector<std::complex<float>>& mf);
+    // Core streaming step: append `n` new samples to the carried-over tail,
+    // run filter/AGC/timing/differential/slice, and return this step's bits.
+    // `final_flush` relaxes the end-margin to drain the tail at end-of-stream.
+    std::vector<unsigned char> run(const std::complex<float>* iq, std::size_t n, bool final_flush);
 
     TetraDemodConfig cfg_;
     std::vector<float> rrc_taps_;
-    std::vector<std::complex<float>> symbols_;
+    std::vector<std::complex<float>> symbols_; // last call's recovered symbols (diagnostics)
     double cfo_hz_ = 0.0;
+
+    // ---- streaming state (persists across demodulate() calls) ----
+    std::vector<std::complex<float>> in_tail_; // carried raw input: filter history + not-yet-consumed samples
+    double pos_ = 0.0;                          // fractional read position into the current work buffer
+    float integ_ = 0.0f;                        // Gardner PI-loop integrator
+    std::complex<float> prev_on_{0.0f, 0.0f};   // last on-time symbol (TED history)
+    std::complex<float> prev_symbol_{0.0f, 0.0f}; // last on-time symbol (differential reference)
+    bool timing_started_ = false;               // has the loop been seeded?
+    bool have_prev_symbol_ = false;             // is prev_symbol_ valid?
+    std::complex<double> cfo_acc_{0.0, 0.0};    // decaying accumulator of -d^4 for the running CFO estimate
+    float nu_ = 0.0f;                            // running CFO estimate (cycles/symbol)
+    float agc_pow_ = 0.0f;                       // running mean power for the AGC
+    bool agc_init_ = false;
 };
 
 } // namespace dsdsrv

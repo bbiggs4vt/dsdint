@@ -522,13 +522,12 @@ void Session::stop_pipeline() {
 void Session::demod_worker_loop() {
 #if defined(DSD_USE_TETRA_BACKEND)
     // TETRA: demodulate each IQ block to bits and relay them to tetra-rx's
-    // stdin. NOTE: TetraDpqskDemod is block-oriented and carries no state
-    // across calls, so demodulating per WebSocket frame restarts the timing
-    // loop at each frame boundary -- a few symbols of slip per seam. The
-    // downstream tetra-rx tolerates missing bursts (soft sync), so this is a
-    // usable first cut; a streaming demod that carries filter/timing/CFO
-    // state across calls is the follow-up refinement for clean frame-boundary
-    // continuity.
+    // stdin. TetraDpqskDemod is streaming -- filter history, the timing loop,
+    // the differential reference, the CFO estimate and the AGC all carry
+    // across demodulate() calls -- so decoding per WebSocket frame is
+    // continuous with no per-frame restart or seam glitch (a fresh demod is
+    // created per start(), which is the clean-slate boundary). The few
+    // trailing samples held back for filter context at a stop are immaterial.
     while (worker_running_.load()) {
         std::vector<cf32> block;
         {
