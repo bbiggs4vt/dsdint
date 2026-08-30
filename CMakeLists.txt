@@ -98,6 +98,17 @@ add_test(NAME tetra_bit_source_test
          COMMAND test_tetra_bit_source $<TARGET_FILE:tetra_bit_source>)
 set_tests_properties(tetra_bit_source_test PROPERTIES TIMEOUT 60)
 
+# TETMON parser: the sq5bpf osmo-tetra fork's UDP text protocol (tetra-rx
+# reports decoder activity as "TETMON_begin FUNC:... TETMON_end" datagrams)
+# -> the shared DsdEvent. Pure string->struct, the TETRA analog of
+# classify_dsd_fme_line; no process, no socket, so it always runs.
+add_executable(test_tetmon_parse EXCLUDE_FROM_ALL
+  src/tetra_tetmon.cpp tests/test_tetmon_parse.cpp)
+target_include_directories(test_tetmon_parse PRIVATE src)
+target_compile_options(test_tetmon_parse PRIVATE -Wall -Wextra)
+add_test(NAME tetmon_parse_test COMMAND test_tetmon_parse)
+set_tests_properties(tetmon_parse_test PROPERTIES TIMEOUT 60)
+
 # AFC + freq_offset sign-convention tests (tests/test_afc.cpp). Core
 # cases are synthetic-tone only, no external deps. The liquid and DSDcc
 # variant blocks below add their sections to this target when those
