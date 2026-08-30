@@ -167,7 +167,8 @@ differences:
   `idx=`/`cid=`/`nid=` tokens. `kind` is `call` for call-control messages;
   PHY/AFC diagnostics classify as `unknown` and are suppressed by default.
 - **Audio:** not yet emitted — TETRA voice is a separate ACELP path needing
-  the (patent-encumbered) ETSI codec.
+  the (patent-encumbered) ETSI codec. See [`TETRA_VOICE.md`](TETRA_VOICE.md)
+  for the design.
 
 **Status:** the streaming modem, both event parsers (TETMON and tetra-kit
 JSON), and both subprocess backends are unit/integration-tested, but
