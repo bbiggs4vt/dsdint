@@ -109,6 +109,21 @@ target_compile_options(test_tetmon_parse PRIVATE -Wall -Wextra)
 add_test(NAME tetmon_parse_test COMMAND test_tetmon_parse)
 set_tests_properties(tetmon_parse_test PROPERTIES TIMEOUT 60)
 
+# TetraProcess: the osmo (sq5bpf tetra-rx) subprocess backend -- spawn the
+# child, feed demodulated bits on stdin, receive TETMON events over UDP.
+# A fake tetra-rx stub stands in for the real binary so the whole
+# fork/exec/env/pipe/UDP path is covered here (like the fake DSD server).
+add_executable(tetra_fake_rx EXCLUDE_FROM_ALL tests/tetra_fake_rx.cpp)
+add_executable(test_tetra_process EXCLUDE_FROM_ALL
+  src/tetra_process.cpp src/tetra_tetmon.cpp tests/test_tetra_process.cpp)
+target_include_directories(test_tetra_process PRIVATE src)
+target_link_libraries(test_tetra_process PRIVATE Threads::Threads)
+target_compile_options(test_tetra_process PRIVATE -Wall -Wextra)
+add_dependencies(test_tetra_process tetra_fake_rx)
+add_test(NAME tetra_process_test
+         COMMAND test_tetra_process $<TARGET_FILE:tetra_fake_rx>)
+set_tests_properties(tetra_process_test PROPERTIES TIMEOUT 60)
+
 # AFC + freq_offset sign-convention tests (tests/test_afc.cpp). Core
 # cases are synthetic-tone only, no external deps. The liquid and DSDcc
 # variant blocks below add their sections to this target when those

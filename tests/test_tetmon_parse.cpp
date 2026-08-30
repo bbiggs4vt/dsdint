@@ -81,8 +81,9 @@ int main() {
     }
     {
         DsdEvent e = classify_tetmon_line("TETMON_begin FUNC:AFCVAL AFC:-3 RX:1 TETMON_end");
-        check(e.kind == "sync", "AFCVAL -> kind sync (diagnostic)");
+        check(e.kind == "unknown", "AFCVAL -> kind unknown (diagnostic, suppressed by default)");
         check(e.source_id.empty() && e.talkgroup.empty(), "AFCVAL -> no ids");
+        check(e.extra.find("afc=-3") != std::string::npos, "AFCVAL -> afc value kept in extra");
     }
     {
         // GSSI, when present, is treated as the talkgroup.

@@ -69,20 +69,23 @@ DsdEvent tetmon_to_event(const TetmonMessage& msg, const std::string& raw_line) 
 
     const std::string func = upper(msg.func);
 
-    // PROVISIONAL func -> kind. Confirmed: AFCVAL is a PHY/AFC status the
-    // fork emits periodically (we run our own CFO correction, so it is
-    // diagnostic here). The call-control funcs are the best current reading
-    // from telive's docs; unknown funcs pass through as "unknown" carrying
-    // their fields so nothing decoded is silently dropped.
-    if (func == "AFCVAL") {
-        ev.kind = "sync";
-    } else if (func == "SETUPDEC" || func == "DSETUP" || func == "SETUP" ||
-               func == "DSETUPDEC" || func == "CALLDEC") {
+    // PROVISIONAL func -> kind. The call-control funcs are the best current
+    // reading from telive's docs; unknown funcs pass through as "unknown"
+    // carrying their fields so nothing decoded is silently dropped.
+    //
+    // AFCVAL is deliberately classed "unknown": it is the fork's periodic
+    // AFC/PHY status (confirmed verbatim in the source), carries no call
+    // information, and is redundant here because we run our own CFO
+    // correction. Mapping it to "unknown" means the standard
+    // forward_unknown=false suppression drops this telemetry by default
+    // (the same treatment dsd-fme's banner noise gets) without a second
+    // flag; its afc/rx values are still preserved in `extra` for anyone who
+    // forwards unknowns for debugging.
+    if (func == "SETUPDEC" || func == "DSETUP" || func == "SETUP" ||
+        func == "DSETUPDEC" || func == "CALLDEC") {
         ev.kind = "call";
-    } else if (func.empty()) {
-        ev.kind = "unknown";
     } else {
-        ev.kind = "unknown";
+        ev.kind = "unknown"; // incl. AFCVAL diagnostics and any unrecognized func
     }
 
     // Ids. TETRA identifies parties by SSI; the transmitting/party SSI maps
@@ -108,6 +111,7 @@ DsdEvent tetmon_to_event(const TetmonMessage& msg, const std::string& raw_line) 
     add("idx", "IDX");
     add("cid", "CID");
     add("nid", "NID");
+    add("afc", "AFC"); // AFCVAL diagnostics: kept for debug, suppressed by default
     add("func", "FUNC");
 
     return ev;
