@@ -31,10 +31,10 @@ namespace {
 // stop_pipeline() releases the port when the session's pipeline stops.
 //
 // Only compiled for the dsd-fme subprocess backend: the DSDcc backend
-// decodes in-process, and the TETRA backend binds its own TETMON UDP port
+// decodes in-process, and the TETRA backends bind their own UDP ports
 // internally, so neither has an audio port to allocate here (udp_audio_port_
-// stays 0) and this allocator would be dead code for both.
-#if !defined(DSD_USE_DSDCC_BACKEND) && !defined(DSD_USE_TETRA_BACKEND)
+// stays 0). A TETRA session never calls acquire_udp_port() at run time.
+#if !defined(DSD_USE_DSDCC_BACKEND)
 std::mutex g_udp_port_mutex;
 std::set<uint16_t> g_udp_ports_in_use;
 
@@ -136,23 +136,19 @@ void Session::handle_text_message(const std::string& msg) {
             std::string key = json::get_string(obj, "key");
             start_pipeline(sample_rate, bw, offset, gain, afc, protocol, key_type, key);
         } else if (type == "set_gain") {
-#if defined(DSD_USE_TETRA_BACKEND)
-            // TETRA: no FM discriminator, so discriminator gain doesn't
-            // apply. Accept the message (no error) and ignore it.
-            (void)obj;
-#else
-            std::lock_guard<std::mutex> lock(demod_mutex_);
-            if (demod_) demod_->set_gain(static_cast<float>(json::get_number(obj, "gain", 26000.0)));
-#endif
+            // TETRA has no FM discriminator, so discriminator gain doesn't
+            // apply there -- accept the message (no error) and ignore it.
+            if (!tetra_active_.load()) {
+                std::lock_guard<std::mutex> lock(demod_mutex_);
+                if (demod_) demod_->set_gain(static_cast<float>(json::get_number(obj, "gain", 26000.0)));
+            }
         } else if (type == "set_freq_offset") {
-#if defined(DSD_USE_TETRA_BACKEND)
-            // TETRA: the π/4 demod estimates and removes residual CFO itself
-            // (±Rs/8), so there is no live NCO to retune. Accept and ignore.
-            (void)obj;
-#else
-            std::lock_guard<std::mutex> lock(demod_mutex_);
-            if (demod_) demod_->set_freq_offset(json::get_number(obj, "hz", 0.0));
-#endif
+            // The π/4 demod estimates and removes residual CFO itself (±Rs/8),
+            // so a TETRA session has no live NCO to retune -- accept and ignore.
+            if (!tetra_active_.load()) {
+                std::lock_guard<std::mutex> lock(demod_mutex_);
+                if (demod_) demod_->set_freq_offset(json::get_number(obj, "hz", 0.0));
+            }
         } else if (type == "stop") {
             stop_pipeline();
         } else {
@@ -202,7 +198,8 @@ namespace {
 // "not sure" asks the decoder to auto-detect, and anything unrecognized
 // also falls back to auto-detect rather than erroring (a typo shouldn't
 // kill a stream).
-enum class ProtocolHint { Default, Dmr, Nxdn48, Nxdn96, P25p1, P25p2, Dpmr, Dstar, Ysf, Auto };
+enum class ProtocolHint { Default, Dmr, Nxdn48, Nxdn96, P25p1, P25p2, Dpmr, Dstar, Ysf, Auto,
+                          Tetra, Tetrakit };
 
 ProtocolHint parse_protocol_hint(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -218,14 +215,23 @@ ProtocolHint parse_protocol_hint(std::string s) {
     if (k == "dpmr") return ProtocolHint::Dpmr;
     if (k == "dstar") return ProtocolHint::Dstar; // "d-star", "d star" also normalize here
     if (k == "ysf" || k == "fusion" || k == "systemfusion" || k == "c4fm") return ProtocolHint::Ysf;
+    // TETRA runs a different signal chain (π/4-DQPSK modem + a TETRA
+    // subprocess backend), selected at run time: "tetra" -> osmo tetra-rx,
+    // "tetrakit" -> tetra-kit's decoder. Both alias forms normalize here.
+    if (k == "tetra" || k == "tetraosmo" || k == "osmotetra") return ProtocolHint::Tetra;
+    if (k == "tetrakit") return ProtocolHint::Tetrakit;
     // "auto", "unknown", "notsure", and anything else -> auto-detect
     return ProtocolHint::Auto;
 }
 
-// Key handling is DSD-only: the TETRA build decrypts nothing here (TETRA's
-// TEA ciphers aren't handled), so guarding these out keeps that variant free
-// of unused-function warnings.
-#if !defined(DSD_USE_TETRA_BACKEND)
+bool hint_is_tetra(ProtocolHint h) {
+    return h == ProtocolHint::Tetra || h == ProtocolHint::Tetrakit;
+}
+
+// Key handling is DSD-only (a TETRA session decrypts nothing here -- TETRA's
+// TEA ciphers aren't handled), but these are always compiled now: the DSD
+// path is always present in the binary and the TETRA branch simply never
+// calls them.
 
 // Optional decryption key scheme from the client's "key_type" field. Only
 // DMR Basic Privacy (`Bp`) is decryptable on both backends; the rest are
@@ -266,8 +272,6 @@ bool key_value_is_valid(const std::string& v) {
     return saw_digit;
 }
 
-#endif // !DSD_USE_TETRA_BACKEND (key handling)
-
 } // namespace
 
 void Session::start_pipeline(double sample_rate, double channel_bw, double freq_offset,
@@ -277,154 +281,20 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
 
     const ProtocolHint hint = parse_protocol_hint(protocol);
 
-#if defined(DSD_USE_TETRA_BACKEND)
-    // ---- TETRA build: π/4-DQPSK modem front end + osmo tetra-rx backend ----
-    // The FM-path knobs (channel bandwidth, freq offset, gain, AFC) and the
-    // DSD protocol/key options don't apply to the TETRA chain; accept them
-    // for a uniform "start" shape and ignore them. Encryption (TEA) is not
-    // handled here.
-    (void)channel_bw; (void)freq_offset; (void)gain; (void)afc; (void)hint;
-    (void)key_type; (void)key;
+    const bool want_tetra = hint_is_tetra(hint);
 
-    // TETRA IQ must arrive at samples_per_symbol * 18000 Hz; derive sps from
-    // the client's sample_rate (e.g. 72000 -> 4) and clamp to a sane floor.
-    int tetra_sps = static_cast<int>(std::llround(sample_rate / 18000.0));
-    if (tetra_sps < 2) tetra_sps = 2;
-    {
-        TetraDemodConfig tdcfg;
-        tdcfg.samples_per_symbol = tetra_sps;
-        tdcfg.correct_cfo = true; // pull in residual SDR ppm error (±Rs/8)
-        std::lock_guard<std::mutex> lock(demod_mutex_);
-        tetra_demod_ = std::make_unique<TetraDpqskDemod>(tdcfg);
-    }
-
-    ActiveTetraBackendConfig bcfg; // defaults: tetra-rx on PATH, unknowns suppressed
-#else
-    // Validate the optional decryption key up front: a named key_type with
-    // a missing or non-hex/decimal value is a client error, and rejecting
-    // it here also guarantees only a digits-only token can ever reach
-    // dsd-fme's argv.
-    const KeyType key_type_enum = parse_key_type(key_type);
-    if (key_type_enum != KeyType::None && !key_value_is_valid(key)) {
-        send_text(json::Writer().field("type", std::string("error"))
-                      .field("message", std::string("invalid or missing key for key_type '")
-                             + key_type + "' (expected decimal/hex digits)").str());
-        return;
-    }
-
-    FmDemodConfig cfg;
-    cfg.input_sample_rate_hz = sample_rate;
-    cfg.output_sample_rate_hz = 48'000.0;
-    cfg.channel_bandwidth_hz = channel_bw;
-    cfg.freq_offset_hz = freq_offset;
-    cfg.disc_gain = gain;
-    cfg.afc_enabled = afc;
-    {
-        std::lock_guard<std::mutex> lock(demod_mutex_);
-        demod_ = std::make_unique<ActiveFmDemodulator>(cfg);
-    }
-
-    ActiveDsdBackendConfig dcfg;
-#if defined(DSD_USE_DSDCC_BACKEND)
-    // Map the hint to DsdccDecoder's mode string (see DsdccDecoder::start,
-    // which forwards it to DSDDecoder::setDecodeMode). Default -> "dmr",
-    // matching the historical behavior. NOTE: DSDcc's NXDN symbol recovery
-    // is fragile on real off-air signals (verified against a real NXDN48
-    // capture); the dsd-fme backend is the reliable NXDN decoder.
-    switch (hint) {
-        case ProtocolHint::Nxdn48: dcfg.mode = "nxdn48"; break;
-        case ProtocolHint::Nxdn96: dcfg.mode = "nxdn96"; break;
-        // DSDcc has a P25 Phase 1 decode mode; there's no separate Phase 2
-        // decoder, so both P25 hints select it. The DSDcc wrapper does not
-        // yet extract P25 metadata into fields (it emits sync only) -- the
-        // dsd-fme backend is the P25 decoder to use.
-        case ProtocolHint::P25p1:
-        case ProtocolHint::P25p2:  dcfg.mode = "p25";    break;
-        case ProtocolHint::Dpmr:   dcfg.mode = "dpmr";   break;
-        case ProtocolHint::Dstar:  dcfg.mode = "dstar";  break;
-        case ProtocolHint::Ysf:    dcfg.mode = "ysf";    break;
-        case ProtocolHint::Auto:   dcfg.mode = "auto";   break;
-        case ProtocolHint::Dmr:
-        case ProtocolHint::Default:
-        default:                   dcfg.mode = "dmr";    break;
-    }
-    dcfg.input_sample_rate_hz = 48000;
-    // DMR Basic Privacy is the only decryption DSDcc can do; the key value
-    // is the BP key NUMBER (decimal 1–255). Any other scheme is dsd-fme
-    // only, so warn and run without a key rather than pretending.
-    if (key_type_enum == KeyType::Bp) {
-        unsigned long n = std::strtoul(key.c_str(), nullptr, 10);
-        dcfg.bp_key = (n > 255) ? 255u : static_cast<unsigned>(n);
-    } else if (key_type_enum != KeyType::None) {
-        std::cerr << "dsd-server: DSDcc backend supports only DMR Basic Privacy "
-                     "('bp') keys; ignoring key_type='" << key_type << "'\n";
-    }
-    // DsdccDecoder is in-process, so there's no UDP audio port to
-    // allocate -- udp_audio_port_ stays 0 and the "started" message
-    // below reports that accurately (0 meaning "not applicable here",
-    // not "failed to allocate").
-#else
-    udp_audio_port_ = acquire_udp_port();
-    dcfg.input_sample_rate_hz = 48000;
-    // Map the hint to dsd-fme's "-f<letter>" mode. Default -> "s" (DMR),
-    // matching the historical behavior; dsd-fme applies the matching
-    // input matched-filter for the selected mode automatically. Letters
-    // verified against `dsd-fme -h`: s=DMR, i=NXDN48/IDAS, n=NXDN96,
-    // a=auto-detect, d=D-STAR, y=YSF, m=dPMR. P25: 1=Phase 1, 2=Phase 2
-    // (6000 sps TDMA).
-    switch (hint) {
-        case ProtocolHint::Nxdn48: dcfg.mode_flag = "i"; break;
-        case ProtocolHint::Nxdn96: dcfg.mode_flag = "n"; break;
-        case ProtocolHint::P25p1:  dcfg.mode_flag = "1"; break;
-        case ProtocolHint::P25p2:  dcfg.mode_flag = "2"; break;
-        case ProtocolHint::Dpmr:   dcfg.mode_flag = "m"; break;
-        case ProtocolHint::Dstar:  dcfg.mode_flag = "d"; break;
-        case ProtocolHint::Ysf:    dcfg.mode_flag = "y"; break;
-        case ProtocolHint::Auto:   dcfg.mode_flag = "a"; break;
-        case ProtocolHint::Dmr:
-        case ProtocolHint::Default:
-        default:                   dcfg.mode_flag = "s"; break;
-    }
-    dcfg.udp_audio_port = udp_audio_port_;
-    // Decryption key -> the matching dsd-fme flag, appended as a separate
-    // argv token (never a shell string, and key was validated digits-only
-    // above). Flag/value formats verified against dsd-fme's source
-    // (dsd_main.c): -b <dec> DMR Basic Privacy key number; -1 <hex>
-    // RC4/DES; -H <hex> Hytera BP or AES-128/256 (disambiguated by length
-    // inside dsd-fme); -R <dec> NXDN/dPMR EHR scrambler.
-    {
-        std::string kflag;
-        switch (key_type_enum) {
-            case KeyType::Bp:        kflag = "b"; break;
-            case KeyType::Rc4:
-            case KeyType::Des:       kflag = "1"; break;
-            case KeyType::Aes:
-            case KeyType::Hytera:    kflag = "H"; break;
-            case KeyType::Scrambler: kflag = "R"; break;
-            case KeyType::None:      break;
-        }
-        if (!kflag.empty()) {
-            dcfg.extra_args.push_back("-" + kflag);
-            dcfg.extra_args.push_back(key);
-        }
-    }
-#endif // DSD_USE_DSDCC_BACKEND
-#endif // DSD_USE_TETRA_BACKEND (else)
-
-    auto self = shared_from_this();
-    std::weak_ptr<Session> weak_self = self;
-
-    // Event/audio callbacks are backend-agnostic (both backends' start()
-    // take these same std::function signatures and hand us the same
+    // Event/audio callbacks are backend-agnostic (every backend's start()
+    // takes these same std::function signatures and hands us the same
     // DsdEvent / int16 PCM), so they're built once and passed to whichever
-    // backend this build selected below.
+    // chain this session selects below.
     //
     // weak_ptr, not shared_ptr: this callback is stored inside the backend,
     // which is itself a member of Session, so capturing shared_ptr here
     // would form Session -> backend -> callback -> shared_ptr<Session>, a
-    // strong reference cycle that leaks the session forever. For the
-    // subprocess backends the callback also fires from a reader thread; the
-    // lock() both breaks the cycle and makes the after-free case safe.
+    // strong reference cycle that leaks the session forever. The subprocess
+    // backends also fire the callback from a reader thread; the lock() both
+    // breaks the cycle and makes the after-free case safe.
+    std::weak_ptr<Session> weak_self = shared_from_this();
     std::function<void(const DsdEvent&)> on_event = [weak_self](const DsdEvent& ev) {
         auto self = weak_self.lock();
         if (!self) return;
@@ -459,23 +329,164 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         });
     };
 
-#if defined(DSD_USE_TETRA_BACKEND)
-    // TETRA voice is a separate per-call UDP stream needing the ETSI codec;
-    // on_audio is wired for parity but the osmo backend does not feed it yet.
-    bool ok = tetra_backend_.start(bcfg, on_event, on_audio);
-#else
-    bool ok = dsd_.start(dcfg, on_event, on_audio);
-#endif
+    if (want_tetra) {
+        // ---- TETRA: π/4-DQPSK modem front end + a TETRA subprocess backend ----
+        // The FM-path knobs (channel bandwidth, freq offset, gain, AFC) and the
+        // DSD key options don't apply to the TETRA chain; accept them for a
+        // uniform "start" shape and ignore them. Encryption (TEA) is not handled
+        // here.
+        (void)channel_bw; (void)freq_offset; (void)gain; (void)afc;
+        (void)key_type; (void)key;
 
-    if (!ok) {
-        send_text(json::Writer().field("type", std::string("error"))
-                      .field("message", std::string("failed to start DSD backend")).str());
-#if defined(DSD_USE_TETRA_BACKEND)
-        { std::lock_guard<std::mutex> lock(demod_mutex_); tetra_demod_.reset(); }
+        // TETRA IQ must arrive at samples_per_symbol * 18000 Hz; derive sps from
+        // the client's sample_rate (e.g. 72000 -> 4) and clamp to a sane floor.
+        int tetra_sps = static_cast<int>(std::llround(sample_rate / 18000.0));
+        if (tetra_sps < 2) tetra_sps = 2;
+        {
+            TetraDemodConfig tdcfg;
+            tdcfg.samples_per_symbol = tetra_sps;
+            tdcfg.correct_cfo = true; // pull in residual SDR ppm error (±Rs/8)
+            std::lock_guard<std::mutex> lock(demod_mutex_);
+            tetra_demod_ = std::make_unique<TetraDpqskDemod>(tdcfg);
+        }
+
+        // "tetra" -> osmo tetra-rx, "tetrakit" -> tetra-kit's decoder.
+        const TetraBackendKind kind = (hint == ProtocolHint::Tetrakit)
+            ? TetraBackendKind::Tetrakit : TetraBackendKind::Osmo;
+        tetra_backend_ = make_tetra_backend(kind);
+
+        // TETRA voice is a separate per-call stream needing the ETSI codec;
+        // on_audio is wired for parity but the backends do not feed it yet.
+        bool ok = tetra_backend_->start(on_event, on_audio);
+        if (!ok) {
+            send_text(json::Writer().field("type", std::string("error"))
+                          .field("message", std::string("failed to start TETRA backend")).str());
+            std::lock_guard<std::mutex> lock(demod_mutex_);
+            tetra_demod_.reset();
+            tetra_backend_.reset();
+            return;
+        }
+        tetra_active_.store(true);
+    } else {
+        // ---- FM discriminator + DSD backend ----
+        // Validate the optional decryption key up front: a named key_type with
+        // a missing or non-hex/decimal value is a client error, and rejecting
+        // it here also guarantees only a digits-only token can ever reach
+        // dsd-fme's argv.
+        const KeyType key_type_enum = parse_key_type(key_type);
+        if (key_type_enum != KeyType::None && !key_value_is_valid(key)) {
+            send_text(json::Writer().field("type", std::string("error"))
+                          .field("message", std::string("invalid or missing key for key_type '")
+                                 + key_type + "' (expected decimal/hex digits)").str());
+            return;
+        }
+
+        FmDemodConfig cfg;
+        cfg.input_sample_rate_hz = sample_rate;
+        cfg.output_sample_rate_hz = 48'000.0;
+        cfg.channel_bandwidth_hz = channel_bw;
+        cfg.freq_offset_hz = freq_offset;
+        cfg.disc_gain = gain;
+        cfg.afc_enabled = afc;
+        {
+            std::lock_guard<std::mutex> lock(demod_mutex_);
+            demod_ = std::make_unique<ActiveFmDemodulator>(cfg);
+        }
+
+        ActiveDsdBackendConfig dcfg;
+#if defined(DSD_USE_DSDCC_BACKEND)
+        // Map the hint to DsdccDecoder's mode string (see DsdccDecoder::start,
+        // which forwards it to DSDDecoder::setDecodeMode). Default -> "dmr",
+        // matching the historical behavior. NOTE: DSDcc's NXDN symbol recovery
+        // is fragile on real off-air signals (verified against a real NXDN48
+        // capture); the dsd-fme backend is the reliable NXDN decoder.
+        switch (hint) {
+            case ProtocolHint::Nxdn48: dcfg.mode = "nxdn48"; break;
+            case ProtocolHint::Nxdn96: dcfg.mode = "nxdn96"; break;
+            // DSDcc has a P25 Phase 1 decode mode; there's no separate Phase 2
+            // decoder, so both P25 hints select it. The DSDcc wrapper does not
+            // yet extract P25 metadata into fields (it emits sync only) -- the
+            // dsd-fme backend is the P25 decoder to use.
+            case ProtocolHint::P25p1:
+            case ProtocolHint::P25p2:  dcfg.mode = "p25";    break;
+            case ProtocolHint::Dpmr:   dcfg.mode = "dpmr";   break;
+            case ProtocolHint::Dstar:  dcfg.mode = "dstar";  break;
+            case ProtocolHint::Ysf:    dcfg.mode = "ysf";    break;
+            case ProtocolHint::Auto:   dcfg.mode = "auto";   break;
+            case ProtocolHint::Dmr:
+            case ProtocolHint::Default:
+            default:                   dcfg.mode = "dmr";    break;
+        }
+        dcfg.input_sample_rate_hz = 48000;
+        // DMR Basic Privacy is the only decryption DSDcc can do; the key value
+        // is the BP key NUMBER (decimal 1–255). Any other scheme is dsd-fme
+        // only, so warn and run without a key rather than pretending.
+        if (key_type_enum == KeyType::Bp) {
+            unsigned long n = std::strtoul(key.c_str(), nullptr, 10);
+            dcfg.bp_key = (n > 255) ? 255u : static_cast<unsigned>(n);
+        } else if (key_type_enum != KeyType::None) {
+            std::cerr << "dsd-server: DSDcc backend supports only DMR Basic Privacy "
+                         "('bp') keys; ignoring key_type='" << key_type << "'\n";
+        }
+        // DsdccDecoder is in-process, so there's no UDP audio port to
+        // allocate -- udp_audio_port_ stays 0 and the "started" message
+        // below reports that accurately (0 meaning "not applicable here",
+        // not "failed to allocate").
 #else
-        demod_.reset();
-#endif
-        return;
+        udp_audio_port_ = acquire_udp_port();
+        dcfg.input_sample_rate_hz = 48000;
+        // Map the hint to dsd-fme's "-f<letter>" mode. Default -> "s" (DMR),
+        // matching the historical behavior; dsd-fme applies the matching
+        // input matched-filter for the selected mode automatically. Letters
+        // verified against `dsd-fme -h`: s=DMR, i=NXDN48/IDAS, n=NXDN96,
+        // a=auto-detect, d=D-STAR, y=YSF, m=dPMR. P25: 1=Phase 1, 2=Phase 2
+        // (6000 sps TDMA).
+        switch (hint) {
+            case ProtocolHint::Nxdn48: dcfg.mode_flag = "i"; break;
+            case ProtocolHint::Nxdn96: dcfg.mode_flag = "n"; break;
+            case ProtocolHint::P25p1:  dcfg.mode_flag = "1"; break;
+            case ProtocolHint::P25p2:  dcfg.mode_flag = "2"; break;
+            case ProtocolHint::Dpmr:   dcfg.mode_flag = "m"; break;
+            case ProtocolHint::Dstar:  dcfg.mode_flag = "d"; break;
+            case ProtocolHint::Ysf:    dcfg.mode_flag = "y"; break;
+            case ProtocolHint::Auto:   dcfg.mode_flag = "a"; break;
+            case ProtocolHint::Dmr:
+            case ProtocolHint::Default:
+            default:                   dcfg.mode_flag = "s"; break;
+        }
+        dcfg.udp_audio_port = udp_audio_port_;
+        // Decryption key -> the matching dsd-fme flag, appended as a separate
+        // argv token (never a shell string, and key was validated digits-only
+        // above). Flag/value formats verified against dsd-fme's source
+        // (dsd_main.c): -b <dec> DMR Basic Privacy key number; -1 <hex>
+        // RC4/DES; -H <hex> Hytera BP or AES-128/256 (disambiguated by length
+        // inside dsd-fme); -R <dec> NXDN/dPMR EHR scrambler.
+        {
+            std::string kflag;
+            switch (key_type_enum) {
+                case KeyType::Bp:        kflag = "b"; break;
+                case KeyType::Rc4:
+                case KeyType::Des:       kflag = "1"; break;
+                case KeyType::Aes:
+                case KeyType::Hytera:    kflag = "H"; break;
+                case KeyType::Scrambler: kflag = "R"; break;
+                case KeyType::None:      break;
+            }
+            if (!kflag.empty()) {
+                dcfg.extra_args.push_back("-" + kflag);
+                dcfg.extra_args.push_back(key);
+            }
+        }
+#endif // DSD_USE_DSDCC_BACKEND
+
+        bool ok = dsd_.start(dcfg, on_event, on_audio);
+        if (!ok) {
+            send_text(json::Writer().field("type", std::string("error"))
+                          .field("message", std::string("failed to start DSD backend")).str());
+            std::lock_guard<std::mutex> lock(demod_mutex_);
+            demod_.reset();
+            return;
+        }
     }
 
     pipeline_active_ = true;
@@ -493,22 +504,29 @@ void Session::stop_pipeline() {
     iq_cv_.notify_all();
     if (worker_thread_.joinable()) worker_thread_.join();
 
-#if defined(DSD_USE_TETRA_BACKEND)
-    tetra_backend_.stop();
-#else
-    dsd_.stop();
-#endif
+    // Stop whichever chain this session ran. tetra_active_ was set in
+    // start_pipeline; the idle chain's members are null/stopped, so both
+    // stops are safe to attempt but we key off the flag for clarity.
+    const bool was_tetra = tetra_active_.exchange(false);
+    if (was_tetra) {
+        if (tetra_backend_) tetra_backend_->stop();
+    } else {
+        dsd_.stop();
+    }
     {
         // Safe to take here: the worker was joined above, so nothing is
         // inside process()/demodulate() holding this.
         std::lock_guard<std::mutex> lock(demod_mutex_);
-#if defined(DSD_USE_TETRA_BACKEND)
-        tetra_demod_.reset();
-#else
-        demod_.reset();
-#endif
+        if (was_tetra) {
+            tetra_demod_.reset();
+            tetra_backend_.reset();
+        } else {
+            demod_.reset();
+        }
     }
-#if !defined(DSD_USE_DSDCC_BACKEND) && !defined(DSD_USE_TETRA_BACKEND)
+#if !defined(DSD_USE_DSDCC_BACKEND)
+    // Only the dsd-fme subprocess path allocates an audio port; a TETRA
+    // session never did (udp_audio_port_ stayed 0, and release ignores 0).
     release_udp_port(udp_audio_port_);
     udp_audio_port_ = 0;
 #endif
@@ -520,34 +538,19 @@ void Session::stop_pipeline() {
 }
 
 void Session::demod_worker_loop() {
-#if defined(DSD_USE_TETRA_BACKEND)
-    // TETRA: demodulate each IQ block to bits and relay them to tetra-rx's
-    // stdin. TetraDpqskDemod is streaming -- filter history, the timing loop,
-    // the differential reference, the CFO estimate and the AGC all carry
-    // across demodulate() calls -- so decoding per WebSocket frame is
+    // tetra_active_ is fixed for this worker's lifetime: start_pipeline sets
+    // it (and creates the matching demod/backend) before launching the
+    // thread, and stop_pipeline joins the thread before clearing it. So we
+    // read it once and take the matching path.
+    //
+    // TETRA path: demodulate each IQ block to bits and relay them to the
+    // decoder. TetraDpqskDemod is streaming -- filter history, the timing
+    // loop, the differential reference, the CFO estimate and the AGC all
+    // carry across demodulate() calls -- so decoding per WebSocket frame is
     // continuous with no per-frame restart or seam glitch (a fresh demod is
-    // created per start(), which is the clean-slate boundary). The few
-    // trailing samples held back for filter context at a stop are immaterial.
-    while (worker_running_.load()) {
-        std::vector<cf32> block;
-        {
-            std::unique_lock<std::mutex> lock(iq_mutex_);
-            iq_cv_.wait(lock, [this] { return !iq_queue_.empty() || !worker_running_.load(); });
-            if (!worker_running_.load()) break;
-            block = std::move(iq_queue_.front());
-            iq_queue_.pop_front();
-        }
-
-        std::vector<unsigned char> bits;
-        {
-            std::lock_guard<std::mutex> lock(demod_mutex_);
-            if (tetra_demod_) bits = tetra_demod_->demodulate(block.data(), block.size());
-        }
-        if (!bits.empty()) {
-            tetra_backend_.write_bits(bits.data(), bits.size());
-        }
-    }
-#else
+    // created per start(), the clean-slate boundary). The few trailing
+    // samples held back for filter context at a stop are immaterial.
+    const bool tetra = tetra_active_.load();
     std::vector<int16_t> pcm_scratch;
     while (worker_running_.load()) {
         std::vector<cf32> block;
@@ -559,16 +562,26 @@ void Session::demod_worker_loop() {
             iq_queue_.pop_front();
         }
 
-        pcm_scratch.clear();
-        {
-            std::lock_guard<std::mutex> lock(demod_mutex_);
-            demod_->process(block.data(), block.size(), pcm_scratch);
-        }
-        if (!pcm_scratch.empty()) {
-            dsd_.write_audio(pcm_scratch.data(), pcm_scratch.size());
+        if (tetra) {
+            std::vector<unsigned char> bits;
+            {
+                std::lock_guard<std::mutex> lock(demod_mutex_);
+                if (tetra_demod_) bits = tetra_demod_->demodulate(block.data(), block.size());
+            }
+            if (!bits.empty() && tetra_backend_) {
+                tetra_backend_->write_bits(bits.data(), bits.size());
+            }
+        } else {
+            pcm_scratch.clear();
+            {
+                std::lock_guard<std::mutex> lock(demod_mutex_);
+                if (demod_) demod_->process(block.data(), block.size(), pcm_scratch);
+            }
+            if (!pcm_scratch.empty()) {
+                dsd_.write_audio(pcm_scratch.data(), pcm_scratch.size());
+            }
         }
     }
-#endif
 }
 
 void Session::send_text(const std::string& msg) {

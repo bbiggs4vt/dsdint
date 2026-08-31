@@ -155,7 +155,7 @@ bool TetraKitProcess::write_bits(const unsigned char* bits, std::size_t n) {
     // tetra-kit reads a fixed 1024 bytes per datagram and DISCARDS anything
     // beyond that (UDP truncation), so oversized datagrams silently drop most
     // of the bitstream and desync the decode -- found running a real capture
-    // end to end through dsd-server-tetrakit. See bits_datagram_bytes.
+    // end to end through a protocol":"tetrakit" session. See bits_datagram_bytes.
     const std::size_t kChunk = cfg_.bits_datagram_bytes ? cfg_.bits_datagram_bytes : 1024;
     std::size_t off = 0;
     while (off < n) {

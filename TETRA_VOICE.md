@@ -45,7 +45,7 @@ DSDcc/mbelib is for the in-process DMR backend:
 
 This is the crux, and the part with real unknowns.
 
-### tetra-kit (`dsd-server-tetrakit`)
+### tetra-kit (`protocol":"tetrakit"`)
 
 tetra-kit already carries speech **inside the JSON reports** we parse today:
 `common/report.cc` emits `"uzsize"` (uncompressed size) and `"zsize"` (zlib
@@ -64,7 +64,7 @@ JSON report (service:"U-PLANE") → base64-decode payload → zlib inflate
   that needs extending (extract the base64 string field).
 - zlib is already a common dep; base64 is trivial in-tree. No extra process.
 
-### osmo (`dsd-server-tetra`, sq5bpf fork)
+### osmo (`protocol":"tetra"`, sq5bpf fork)
 
 The sq5bpf fork sends **voice traffic as a separate UDP stream** (distinct from
 the TETMON event datagrams), one stream per traffic channel, which telive

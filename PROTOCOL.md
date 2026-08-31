@@ -133,41 +133,47 @@ reply and is dropped. Binary frames sent **before** any `start` are
 silently ignored — no error, no reply (documented behavior of
 `handle_binary_message`).
 
-### TETRA (`dsd-server-tetra` build)
+### TETRA (`protocol":"tetra"` / `protocol":"tetrakit"`)
 
-TETRA is π/4-DQPSK, not an FM mode, so it is a **separate build variant**
-(selected at compile time — the same build-time backend model as
-`dsd-server-dsdcc`), not a `protocol` hint on the default server. Two TETRA
-backends share the identical π/4 front end and wire protocol, differing only
-in the external decoder they drive:
+TETRA is π/4-DQPSK, not an FM mode, so it needs its own front end. It is
+**selected at run time by the `protocol` hint**, not a separate binary: the
+same `dsd-server` that decodes DMR/NXDN/… also decodes TETRA when a session
+starts with `protocol":"tetra"` or `protocol":"tetrakit"`, switching that
+session's whole signal chain to the π/4 modem + a TETRA subprocess backend.
+(The FM/DSD *backend* choice — dsd-fme vs DSDcc vs liquid — is still build
+time; the TETRA *decoder* choice is this runtime hint.) The two TETRA hints
+share the identical π/4 front end and wire protocol, differing only in the
+external decoder they drive:
 
-- **`dsd-server-tetra`** — osmo-tetra's `tetra-rx` (sq5bpf fork): bits on
+- **`protocol":"tetra"`** — osmo-tetra's `tetra-rx` (sq5bpf fork): bits on
   stdin, events over its TETMON UDP protocol. Its focus is the control plane:
   network/cell broadcasts (`NETINFO1`/`FREQINFO1`) come through as `kind:"sync"`
   with the colour code in `color_code` and `mcc`/`mnc`/`la`/`dlf` in `extra`;
   call-control PDUs (`DSETUPDEC`/`DCONNECTDEC`/…) are `kind:"call"` with the
   calling `SSI` → `source_id` and called `SSI2` → `talkgroup`.
-- **`dsd-server-tetrakit`** — tetra-kit's `decoder`: bits and JSON reports
+- **`protocol":"tetrakit"`** — tetra-kit's `decoder`: bits and JSON reports
   both over UDP (`-r`/`-t`). Its focus is full PDU decode: traffic
   (`UPLANE`/`TCH_S`) comes through as `kind:"voice"`, `source_id` from `ssi`,
   with `service`/`pdu`/`usage_marker` in `extra`.
 
 The two backends surface *different* views of the same signal — osmo the
 network/cell broadcasts, tetra-kit the traffic channel — so pick per what you
-need, or run both.
+need per session. The chosen decoder (`tetra-rx` / `decoder`) must be on the
+server's `PATH`; if it can't be spawned the session replies with an `error`
+frame and stays open.
 
-Point a client at whichever binary you built. The wire protocol is otherwise
-the same — `start` / `stop`, binary IQ in, `event` frames out — with these
-differences:
+The wire protocol is otherwise the same as the FM/DSD modes — `start` /
+`stop`, binary IQ in, `event` frames out — with these differences:
 
 - **IQ rate:** the demod is π/4-DQPSK at 18000 sym/s, so `sample_rate` must be
   `samples_per_symbol × 18000` (e.g. 72000 for 4 sps). The server derives
   `samples_per_symbol` from `sample_rate`. Tune near zero IF; the demod pulls
   in residual offset up to ±2250 Hz itself.
 - **Ignored `start` fields:** `channel_bandwidth`, `freq_offset`, `gain`,
-  `afc`, `protocol`, `key_type`, `key` don't apply to the TETRA chain and are
+  `afc`, `key_type`, `key` don't apply to the TETRA chain and are
   accepted-and-ignored (TETRA TEA encryption is not handled). `set_gain` /
-  `set_freq_offset` are likewise accepted no-ops.
+  `set_freq_offset` are likewise accepted no-ops. (`protocol` itself is what
+  selected this chain.)
 - **`started`:** `udp_audio_port` is always `0` (the backend binds its own
   internal control socket).
 - **`event` fields:** the osmo backend reports `source_id` = the party SSI,
@@ -186,11 +192,11 @@ the resulting bits, fed to a real tetra-kit `decoder`, decode coherently:
 neighbour-cell lists, and `UPLANE`/`TCH_S` traffic — the Viterbi/CRC/descramble
 all passing proves the bits are TETRA-correct, not merely grid-locked. The
 tetra-kit JSON parser's `service`/`pdu` → `kind` mapping is pinned against that
-output. The **full `dsd-server-tetrakit` binary** was also driven end to end —
-that capture streamed over a WebSocket comes back as `event` frames
-(`kind:"voice"` for the `TCH_S` traffic; broadcasts suppressed) — which is
-what surfaced the decoder's 1024-byte UDP read limit (now respected via
-`bits_datagram_bytes`). The **osmo `dsd-server-tetra`** binary was likewise
+output. The **full tetra-kit session** (`protocol":"tetrakit"`) was also driven
+end to end — that capture streamed over a WebSocket comes back as `event`
+frames (`kind:"voice"` for the `TCH_S` traffic; broadcasts suppressed) — which
+is what surfaced the decoder's 1024-byte UDP read limit (now respected via
+`bits_datagram_bytes`). The **osmo session** (`protocol":"tetra"`) was likewise
 driven end to end on the same capture: it returns 158 `kind:"sync"` events
 (`NETINFO1`/`FREQINFO1`, ColorCode 17, MCC/MNC 234/78, DLF 393.5125 MHz), and
 its TETMON `func`→`kind` mapping is pinned against that real output. Still

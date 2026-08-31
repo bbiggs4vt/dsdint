@@ -31,10 +31,18 @@
 //     - Binary frame, 1-byte tag + payload:
 //         tag 0x01: decoded voice PCM (int16 LE; 8 kHz -- stereo from
 //         dsd-fme's DMR mode, mono from the DSDcc backend)
-//     - Text frame, JSON: event records from the DSD backend, e.g.
+//     - Text frame, JSON: event records from the decode backend, e.g.
 //         {"type":"event","kind":"call","talkgroup":"19535",
 //          "source_id":"2222223","slot":"2","extra":"","raw":"..."}
 //     - Text frame, JSON: {"type":"error","message":"..."} on problems.
+//
+//   Runtime protocol selection: the client's "protocol" hint picks the whole
+//   signal chain for the session. Most hints ("dmr", "nxdn48", "p25", ...)
+//   and the default run the FM-discriminator + DSD backend; "tetra" and
+//   "tetrakit" instead run the π/4-DQPSK modem feeding a TETRA subprocess
+//   backend (osmo tetra-rx or tetra-kit's decoder respectively). One binary
+//   carries both front ends and instantiates whichever the hint selects; the
+//   two never run at once within a single session.
 //
 //   PROTOCOL.md at the repo root is the full reference -- exact shapes,
 //   all error texts, per-backend event semantics, real captured
@@ -54,19 +62,20 @@
 #include <mutex>
 #include <condition_variable>
 
-// Backend build variants. The default builds the FM-discriminator + DSD
-// pipeline (dsd-fme subprocess or in-process DSDcc). DSD_USE_TETRA_BACKEND
-// builds an entirely different signal chain -- a π/4-DQPSK modem feeding the
-// TETRA subprocess backend (osmo tetra-rx) -- because TETRA is not an FM
-// mode. See tetra_backend_selector.hpp. The two never coexist in one binary.
-#if defined(DSD_USE_TETRA_BACKEND)
-#include <complex>
-#include "tetra_backend_selector.hpp"
-#include "tetra_demod.hpp"
-#else
+// The server carries two signal chains and picks one per session at run time
+// (from the client's "protocol" hint -- see start_pipeline):
+//   * FM-discriminator + DSD backend (dsd-fme subprocess or in-process DSDcc,
+//     chosen at build time via dsd_backend_selector.hpp) for the analog-FM
+//     digital modes;
+//   * π/4-DQPSK modem + a TETRA subprocess backend (osmo tetra-rx or
+//     tetra-kit's decoder, chosen at run time via tetra_backend_iface.hpp)
+//     for TETRA, which is not an FM mode.
+// Both are always compiled in; a given session instantiates only the one its
+// hint selects.
 #include "fm_demod_selector.hpp"
 #include "dsd_backend_selector.hpp"
-#endif
+#include "tetra_demod.hpp"
+#include "tetra_backend_iface.hpp"
 
 namespace dsdsrv {
 
@@ -74,11 +83,6 @@ namespace beast = boost::beast;
 namespace websocket = beast::websocket;
 namespace net = boost::asio;
 using tcp = net::ip::tcp;
-
-#if defined(DSD_USE_TETRA_BACKEND)
-// cf32 otherwise comes from fm_demod.hpp, which the TETRA build doesn't pull.
-using cf32 = std::complex<float>;
-#endif
 
 class Session : public std::enable_shared_from_this<Session> {
 public:
@@ -120,21 +124,21 @@ private:
     // connection without them racing the network thread's own reads/
     // writes on ws_.
     beast::flat_buffer read_buffer_;
-#if defined(DSD_USE_TETRA_BACKEND)
-    // TETRA build: the π/4-DQPSK modem front end. Turns IQ into the
-    // demodulated bitstream the TETRA subprocess backend consumes.
-    std::unique_ptr<TetraDpqskDemod> tetra_demod_;
-#else
+    // Both front ends are members; start_pipeline instantiates exactly one
+    // per session, keyed by tetra_active_. FM path: demod_ + dsd_. TETRA
+    // path: tetra_demod_ (the π/4-DQPSK modem turning IQ into the bitstream)
+    // + tetra_backend_ (the chosen subprocess backend). The idle path's
+    // members stay null/stopped.
     std::unique_ptr<ActiveFmDemodulator> demod_;
-#endif
-    // Guards every use of the demod -- both the pointer and calls through
-    // it. The demodulator itself documents its setters as only safe
+    std::unique_ptr<TetraDpqskDemod> tetra_demod_;
+    // Guards every use of the demod (FM or TETRA) -- both the pointer and
+    // calls through it. The demodulators document their setters as only safe
     // "from the same thread that owns this object", but three threads
     // genuinely touch it: the connection's strand thread (set_gain/
     // set_freq_offset from control messages, and reset in
-    // stop_pipeline), the demod worker thread (process()), and
+    // stop_pipeline), the demod worker thread (process()/demodulate()), and
     // whichever thread drops the last shared_ptr<Session> (~Session ->
-    // stop_pipeline -> reset -- that can be a DsdProcess reader thread,
+    // stop_pipeline -> reset -- that can be a backend reader thread,
     // via a posted callback holding the pointer). The concurrency
     // test's TSan build confirmed the setter-vs-process() race, and the
     // reset path is worse than a race: set_gain through a demod_ being
@@ -142,11 +146,16 @@ private:
     // worker_thread_ (see stop_pipeline), so it cannot deadlock with
     // the worker taking it around process().
     std::mutex demod_mutex_;
-#if defined(DSD_USE_TETRA_BACKEND)
-    ActiveTetraBackend tetra_backend_;
-#else
     ActiveDsdBackend dsd_;
-#endif
+    // The runtime-selected TETRA backend, non-null only while a TETRA session
+    // is active (created in start_pipeline via make_tetra_backend).
+    std::unique_ptr<ITetraBackend> tetra_backend_;
+    // Which chain this session is running. Set in start_pipeline, read by the
+    // worker loop and the live setters, cleared in stop_pipeline. Only touched
+    // on the strand thread except worker_thread_ reads it after worker_running_
+    // is set (so it is stable for the worker's lifetime); an atomic keeps that
+    // publication well-defined.
+    std::atomic<bool> tetra_active_{false};
     uint16_t udp_audio_port_ = 0; // only meaningful for the DsdProcess (subprocess) backend; 0 under TETRA/DSDcc
 
     // Producer (network thread via on_binary) / consumer (worker thread)

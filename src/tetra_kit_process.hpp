@@ -1,11 +1,11 @@
 // tetra_kit_process.hpp
 //
 // Manages one tetra-kit `decoder` child process: the second TETRA backend,
-// selected at build time via TETRA_USE_TETRAKIT_BACKEND (see
-// tetra_backend_selector.hpp). It presents the exact same surface as the osmo
-// TetraProcess -- start / write_bits / stop / running, emitting the shared
-// DsdEvent -- so session.cpp drives either without change; only the transport
-// differs.
+// selected at run time when a session starts with protocol":"tetrakit" (see
+// tetra_backend_iface.hpp's make_tetra_backend). It presents the exact same
+// surface as the osmo TetraProcess -- start / write_bits / stop / running,
+// emitting the shared DsdEvent -- so the ITetraBackend adapter drives either
+// without change; only the transport differs.
 //
 // tetra-kit's decoder is UDP on both sides (verified from its -h):
 //   -r <port>  receive the demodulated bitstream (unpacked, one bit per byte

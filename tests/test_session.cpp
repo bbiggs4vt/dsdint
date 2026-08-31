@@ -258,6 +258,56 @@ void test_audio_pipeline_relays_events_and_audio() {
     client.close();
 }
 
+// Runtime protocol routing: a "start" with protocol:"tetra" must select the
+// TETRA chain (π/4-DQPSK demod + TetraProcess spawning tetra-rx), not the
+// FM/DSD chain -- the whole point of the runtime-model refactor. We prove it
+// end to end over the wire: a fake "tetra-rx" on PATH (the same stub
+// test_tetra_process uses, copied to that name next to the fake dsd-fme --
+// see CMakeLists) emits a TETMON call datagram on startup, which only reaches
+// the client if the session actually built and started the TETRA backend. If
+// the hint were ignored and the DSD chain ran instead, tetra-rx would never
+// be spawned and no such event would arrive.
+void test_tetra_protocol_routes_to_tetra_backend() {
+    std::printf("test_tetra_protocol_routes_to_tetra_backend\n");
+    TestClient client;
+    check(client.connect(kTestPort), "connects to server");
+
+    // sample_rate 72000 -> tetra samples_per_symbol 4 (72000/18000). No IQ is
+    // needed: the fake tetra-rx sends its TETMON datagrams on startup.
+    check(client.send_text(json::Writer()
+        .field("type", std::string("start"))
+        .field("sample_rate", 72'000.0)
+        .field("protocol", std::string("tetra"))
+        .str()), "sends start with protocol:tetra");
+
+    std::string started; bool is_text = false;
+    check(client.read(started, is_text), "receives a response after start");
+    if (is_text) {
+        auto obj = json::parse_flat_object(started);
+        check(json::get_string(obj, "type") == "started",
+              "TETRA start produces a \"started\" response");
+    }
+
+    // The fake emits a DSETUPDEC call (SSI:1234567 -> source_id) that is
+    // forwarded, and an AFCVAL diagnostic that is suppressed. Look for the
+    // call event; its arrival is proof the TETRA backend ran.
+    bool saw_tetra_call = false;
+    for (int i = 0; i < 20 && !saw_tetra_call; ++i) {
+        std::string resp;
+        if (!client.read(resp, is_text, std::chrono::seconds(3))) break;
+        if (!is_text) continue;
+        auto obj = json::parse_flat_object(resp);
+        if (json::get_string(obj, "type") == "event" &&
+            json::get_string(obj, "source_id") == "1234567") {
+            saw_tetra_call = true;
+        }
+    }
+    check(saw_tetra_call, "TETMON call event from the fake tetra-rx reaches the client");
+
+    client.send_text(json::Writer().field("type", std::string("stop")).str());
+    client.close();
+}
+
 } // namespace
 
 int main() {
@@ -296,6 +346,7 @@ int main() {
     test_malformed_binary_frame_gets_error_after_start();
     test_binary_before_start_is_silently_ignored();
     test_audio_pipeline_relays_events_and_audio();
+    test_tetra_protocol_routes_to_tetra_backend();
 
     server_ioc.stop();
     for (auto& t : pool) t.join();

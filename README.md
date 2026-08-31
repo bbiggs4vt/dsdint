@@ -159,19 +159,20 @@ full-stack tests).
 The provided `Dockerfile` builds everything — including the DSP
 dependencies Debian doesn't package (mbelib, DSDcc, dsd-fme, and the two
 TETRA decoders `tetra-rx`/tetra-kit, pinned to the commits the backends
-were verified against) — and produces a slim runtime image containing all
-four server variants plus the decoders each spawns:
+were verified against) — and produces a slim runtime image containing the
+server variants plus the decoders they spawn:
 
 ```bash
 docker build -t dsd-server .
 docker run --rm -p 8765:8765 dsd-server                     # subprocess backend (default)
 docker run --rm -p 8765:8765 dsd-server dsd-server-dsdcc     0.0.0.0 8765 4  # in-process DSDcc
-docker run --rm -p 8765:8765 dsd-server dsd-server-tetra     0.0.0.0 8765 4  # TETRA via osmo tetra-rx
-docker run --rm -p 8765:8765 dsd-server dsd-server-tetrakit  0.0.0.0 8765 4  # TETRA via tetra-kit
 ```
 
-(The image ships no ACELP voice codec — patent/GPL, see `TETRA_VOICE.md` —
-so the TETRA variants emit events only, not decoded audio.)
+TETRA is no longer a separate executable — every variant above decodes it
+when the client sends `protocol":"tetra"` (osmo `tetra-rx`) or
+`protocol":"tetrakit"` (tetra-kit's `decoder`); both decoders are on the
+image's `PATH`. (The image ships no ACELP voice codec — patent/GPL, see
+`TETRA_VOICE.md` — so TETRA sessions emit events only, not decoded audio.)
 
 `docker build --target test .` additionally runs the entire ctest suite
 (including the real-capture tests against the just-built dsd-fme and
@@ -359,29 +360,34 @@ thoroughly tested one):
   they build but print SKIPPED, since the capture ships in DSDcc's
   source tree, not its installed artifacts.
 
-## The TETRA variants
+## TETRA (runtime-selected)
 
-TETRA is π/4-DQPSK, not an FM mode, so it is its own build-time variant
-with its own front end (`src/tetra_demod.*`, a streaming π/4-DQPSK modem)
-feeding an external decoder — mirroring the DSDcc/dsd-fme split, but
-swapping the whole signal chain, not just the decoder. Two backends share
-that front end:
+TETRA is π/4-DQPSK, not an FM mode, so it needs its own front end
+(`src/tetra_demod.*`, a streaming π/4-DQPSK modem) feeding an external
+decoder. It is **not a separate executable**: the one `dsd-server` binary
+carries this chain alongside the FM/DSD chain and picks it per session from
+the client's `protocol` hint (see the Protocol table above). The FM/DSD
+backend choice (dsd-fme vs DSDcc vs liquid) is still build-time; the TETRA
+*decoder* choice is runtime:
 
-- **`dsd-server-tetra`** — spawns osmo-tetra's `tetra-rx` (sq5bpf fork);
+- **`protocol":"tetra"`** — spawns osmo-tetra's `tetra-rx` (sq5bpf fork);
   events over its TETMON protocol. Surfaces the control plane
   (`NETINFO1`/`FREQINFO1` → `sync`, call-control PDUs → `call`).
-- **`dsd-server-tetrakit`** — spawns tetra-kit's `decoder`; JSON reports.
+- **`protocol":"tetrakit"`** — spawns tetra-kit's `decoder`; JSON reports.
   Surfaces the traffic channel (`TCH_S` → `voice`).
 
-Both are **validated end to end on a real off-air capture**: our demod
+Both are selectable from any of the server variants (`dsd-server`,
+`dsd-server-dsdcc`, `dsd-server-liquid`) since the TETRA stack compiles into
+each. Both are **validated end to end on a real off-air capture**: our demod
 locks the burst grid, and the bits, fed to the real decoders, decode
 coherently (UK network, MCC/MNC 234/78). Voice speech frames are extracted
 (base64+zlib) but the ACELP codec is a documented external plug-in
 (patent/GPL, not vendored) — `TETRA_VOICE.md` has the design and the
 end-to-end validation. `PROTOCOL.md`'s TETRA section is the wire reference.
-The variants build only when their optional deps are present
-(`libosmocore` for tetra-rx-facing bits, zlib for tetra-kit); the
-`Dockerfile` bundles both decoders.
+zlib is a hard dependency of every server build (it backs the tetra-kit
+speech extraction); the decoders themselves must be on `PATH` at run time,
+and the `Dockerfile` bundles both. A session started with a TETRA `protocol`
+whose decoder isn't installed replies with an `error` frame and stays open.
 
 ## Comparing the two demod backends: demod_benchmark
 
@@ -559,7 +565,7 @@ the binary audio formats. The tables below are the quick summary.
 
 | Frame | Payload | Purpose |
 |---|---|---|
-| text | `{"type":"start","sample_rate":2000000,"channel_bandwidth":12500,"freq_offset":0,"gain":26000,"afc":false}` | Start the demod + dsd-fme pipeline for this connection. `sample_rate` is your IQ rate in Hz. `freq_offset` (positive = channel sits above 0 Hz in your IQ) shifts the channel to baseband. `afc:true` enables automatic frequency control — the server then corrects residual ppm error/drift itself (locks up to ~4 kHz of error in about a second; see PROTOCOL.md). `gain` scales discriminator output into PCM range — see Tuning below. |
+| text | `{"type":"start","sample_rate":2000000,"channel_bandwidth":12500,"freq_offset":0,"gain":26000,"afc":false,"protocol":"dmr"}` | Start the pipeline for this connection. `sample_rate` is your IQ rate in Hz. `freq_offset` (positive = channel sits above 0 Hz in your IQ) shifts the channel to baseband. `afc:true` enables automatic frequency control — the server then corrects residual ppm error/drift itself (locks up to ~4 kHz of error in about a second; see PROTOCOL.md). `gain` scales discriminator output into PCM range — see Tuning below. `protocol` (optional) picks the signal chain: absent/`dmr`/`nxdn48`/`p25`/`ysf`/… run the FM-discriminator + DSD path; **`tetra` or `tetrakit` switch the whole session to the π/4-DQPSK + TETRA chain** (osmo `tetra-rx` or tetra-kit's `decoder` respectively). The FM-only knobs (`channel_bandwidth`, `set_gain`, `set_freq_offset`) are accepted and ignored under TETRA. |
 | text | `{"type":"set_gain","gain":30000}` | Adjust discriminator gain live. |
 | text | `{"type":"set_freq_offset","hz":1500}` | Adjust the NCO shift live. |
 | text | `{"type":"stop"}` | Stop the pipeline (connection stays open). |

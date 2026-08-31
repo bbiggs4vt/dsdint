@@ -1,17 +1,20 @@
 # Dockerfile for dsd-server — Debian bookworm, multi-stage.
 #
-# Produces a runtime image containing all four server variants plus the
-# real decoders each spawns, so any backend runs from the same image:
+# Produces a runtime image containing the server variants plus the real
+# decoders they spawn, so any backend runs from the same image:
 #
 #   dsd-server          subprocess backend (spawns the bundled dsd-fme per
 #                       session; the image's default command)
 #   dsd-server-dsdcc    in-process DSDcc backend (no subprocess)
-#   dsd-server-tetra    TETRA via the bundled osmo tetra-rx
-#   dsd-server-tetrakit TETRA via the bundled tetra-kit decoder
 #
-# TETRA voice: the tetrakit variant decodes events and extracts speech
-# frames, but the image ships NO ACELP codec (patent-encumbered / GPLv3 —
-# see TETRA_VOICE.md), so it emits events only, not decoded audio.
+# TETRA is NOT a separate executable: every variant decodes TETRA at run time
+# when the client sends protocol":"tetra" (via the bundled osmo tetra-rx) or
+# protocol":"tetrakit" (via the bundled tetra-kit decoder). Both decoders are
+# on the image's PATH.
+#
+# TETRA voice: TETRA sessions decode events and extract speech frames, but the
+# image ships NO ACELP codec (patent-encumbered / GPLv3 — see TETRA_VOICE.md),
+# so they emit events only, not decoded audio.
 #
 # The three DSP dependencies that Debian doesn't package — mbelib, DSDcc,
 # and dsd-fme — are built from source, pinned to the exact commits this
@@ -87,18 +90,18 @@ RUN git clone https://github.com/lwvmobile/dsd-fme /opt/src/dsd-fme \
     && cmake --install /opt/src/dsd-fme/build \
     && ldconfig
 
-# tetra-rx — the osmo (sq5bpf fork) TETRA decoder the dsd-server-tetra
-# backend spawns. Reads the demodulated bitstream on stdin, emits TETMON
-# events over UDP. Links libosmocore (installed above).
+# tetra-rx — the osmo (sq5bpf fork) TETRA decoder the server spawns for a
+# protocol":"tetra" session. Reads the demodulated bitstream on stdin, emits
+# TETMON events over UDP. Links libosmocore (installed above).
 ARG OSMO_TETRA_COMMIT=4e9f1b23b460a6b24270ece685ac68d4d7fd4cc8
 RUN git clone https://github.com/sq5bpf/osmo-tetra-sq5bpf /opt/src/osmo-tetra \
     && git -C /opt/src/osmo-tetra checkout ${OSMO_TETRA_COMMIT} \
     && make -C /opt/src/osmo-tetra/src tetra-rx \
     && install -m 0755 /opt/src/osmo-tetra/src/tetra-rx /usr/local/bin/tetra-rx
 
-# tetra-kit decoder — the second TETRA decoder, for the dsd-server-tetrakit
-# backend. Reads bits over UDP, emits JSON reports over UDP. Needs rapidjson
-# (header-only) + zlib.
+# tetra-kit decoder — the second TETRA decoder, spawned for a
+# protocol":"tetrakit" session. Reads bits over UDP, emits JSON reports over
+# UDP. Needs rapidjson (header-only) + zlib.
 ARG TETRA_KIT_COMMIT=7306a08c2dc753de636aaea8187e6ac5a3a99d02
 RUN git clone https://gitlab.com/larryth/tetra-kit /opt/src/tetra-kit \
     && git -C /opt/src/tetra-kit checkout ${TETRA_KIT_COMMIT} \
@@ -118,7 +121,7 @@ RUN cmake -S /opt/dsd-server -B /opt/dsd-server/build \
         -DDSD_FME_BIN=/usr/local/bin/dsd-fme \
         -DDSDCC_SAMPLES_DIR=/opt/src/dsdcc/samples \
     && cmake --build /opt/dsd-server/build -j"$(nproc)" --target \
-        dsd-server dsd-server-dsdcc dsd-server-tetra dsd-server-tetrakit
+        dsd-server dsd-server-dsdcc
 
 # ----------------------------------------------------------------- test
 # Optional gate: `docker build --target test .` builds every test binary
@@ -189,8 +192,6 @@ COPY --from=build /usr/local/bin/tetra-rx /usr/local/bin/
 COPY --from=build /usr/local/bin/decoder /usr/local/bin/
 COPY --from=build /opt/dsd-server/build/dsd-server /usr/local/bin/
 COPY --from=build /opt/dsd-server/build/dsd-server-dsdcc /usr/local/bin/
-COPY --from=build /opt/dsd-server/build/dsd-server-tetra /usr/local/bin/
-COPY --from=build /opt/dsd-server/build/dsd-server-tetrakit /usr/local/bin/
 RUN ldconfig
 
 USER dsd

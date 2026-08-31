@@ -41,15 +41,35 @@ endif()
 # suite passes when built against it.
 find_package(Boost 1.74 REQUIRED COMPONENTS system)
 find_package(Threads REQUIRED)
+# zlib backs the tetra-kit voice extraction (base64+zlib speech frames) that
+# session.cpp now pulls in unconditionally; needed by every server/test that
+# compiles session.cpp.
+find_package(ZLIB REQUIRED)
+
+# TETRA runtime path. session.cpp selects the π/4-DQPSK + TETRA-subprocess
+# chain at run time from the client's "protocol" hint (see tetra_backend_iface.hpp),
+# so every binary that compiles session.cpp must also link the whole TETRA
+# stack -- both subprocess backends (osmo tetra-rx via TetraProcess, tetra-kit's
+# decoder via TetraKitProcess) plus the shared demod and parsers. These link
+# against libm (demod DSP) and ZLIB::ZLIB (tetra-kit speech extraction).
+set(TETRA_RUNTIME_SOURCES
+  src/tetra_demod.cpp
+  src/tetra_process.cpp
+  src/tetra_tetmon.cpp
+  src/tetra_kit_process.cpp
+  src/tetra_kit_json.cpp
+  src/tetra_voice.cpp
+)
 
 add_executable(dsd-server
   src/main.cpp
   src/session.cpp
   src/dsd_process.cpp
   src/fm_demod.cpp
+  ${TETRA_RUNTIME_SOURCES}
 )
 target_include_directories(dsd-server PRIVATE src ${Boost_INCLUDE_DIRS})
-target_link_libraries(dsd-server PRIVATE Boost::system Threads::Threads)
+target_link_libraries(dsd-server PRIVATE Boost::system Threads::Threads ZLIB::ZLIB m)
 target_compile_options(dsd-server PRIVATE -Wall -Wextra)
 
 # Standalone sanity test for the DSP core (no Boost/network dependency).
@@ -114,6 +134,16 @@ set_tests_properties(tetmon_parse_test PROPERTIES TIMEOUT 60)
 # A fake tetra-rx stub stands in for the real binary so the whole
 # fork/exec/env/pipe/UDP path is covered here (like the fake DSD server).
 add_executable(tetra_fake_rx EXCLUDE_FROM_ALL tests/tetra_fake_rx.cpp)
+# Also expose it under the name TetraProcess looks up on PATH ("tetra-rx"),
+# so the session integration test can drive the runtime TETRA path the same
+# way it drives the DSD path via a "dsd-fme"-named fake. test_tetra_process
+# still uses the explicit $<TARGET_FILE:tetra_fake_rx> path, unaffected.
+add_custom_command(TARGET tetra_fake_rx POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy
+    $<TARGET_FILE:tetra_fake_rx>
+    $<TARGET_FILE_DIR:tetra_fake_rx>/tetra-rx
+  COMMENT "Copying tetra_fake_rx to tetra-rx (PATH-based lookup expects this exact name)"
+)
 add_executable(test_tetra_process EXCLUDE_FROM_ALL
   src/tetra_process.cpp src/tetra_tetmon.cpp tests/test_tetra_process.cpp)
 target_include_directories(test_tetra_process PRIVATE src)
@@ -195,9 +225,10 @@ if(DSD_BUILD_LIQUID_VARIANT)
       src/session.cpp
       src/dsd_process.cpp
       src/fm_demod_liquid.cpp
+      ${TETRA_RUNTIME_SOURCES}
     )
     target_include_directories(dsd-server-liquid PRIVATE src ${Boost_INCLUDE_DIRS} ${LIQUID_INCLUDE_DIR})
-    target_link_libraries(dsd-server-liquid PRIVATE Boost::system Threads::Threads ${LIQUID_LIBRARY} m)
+    target_link_libraries(dsd-server-liquid PRIVATE Boost::system Threads::Threads ${LIQUID_LIBRARY} ZLIB::ZLIB m)
     target_compile_definitions(dsd-server-liquid PRIVATE DSD_USE_LIQUID_DEMOD)
     target_compile_options(dsd-server-liquid PRIVATE -Wall -Wextra)
 
@@ -258,12 +289,12 @@ if(DSD_BUILD_DSDCC_VARIANT)
       src/session.cpp
       src/fm_demod.cpp       # DSDcc variant still uses the original hand-rolled
       src/dsdcc_decoder.cpp  # demod by default -- this isolates the DSD
-    )                        # backend as the one variable changed from
-                              # baseline. Add -DDSD_USE_LIQUID_DEMOD plus
+      ${TETRA_RUNTIME_SOURCES} # backend as the one variable changed from
+    )                        # baseline. Add -DDSD_USE_LIQUID_DEMOD plus
                               # fm_demod_liquid.cpp instead if you want to
                               # combine both swaps in one binary.
     target_include_directories(dsd-server-dsdcc PRIVATE src ${Boost_INCLUDE_DIRS} ${DSDCC_INCLUDE_DIR})
-    target_link_libraries(dsd-server-dsdcc PRIVATE Boost::system Threads::Threads ${DSDCC_LIBRARY})
+    target_link_libraries(dsd-server-dsdcc PRIVATE Boost::system Threads::Threads ${DSDCC_LIBRARY} ZLIB::ZLIB m)
     if(MBE_LIBRARY)
       target_link_libraries(dsd-server-dsdcc PRIVATE ${MBE_LIBRARY})
     else()
@@ -392,10 +423,11 @@ if(DSD_BUILD_DSDCC_VARIANT)
       src/session.cpp
       src/fm_demod.cpp
       src/dsdcc_decoder.cpp
+      ${TETRA_RUNTIME_SOURCES}
       tests/test_session_dsdcc.cpp
     )
     target_include_directories(test_session_dsdcc PRIVATE src ${Boost_INCLUDE_DIRS} ${DSDCC_INCLUDE_DIR})
-    target_link_libraries(test_session_dsdcc PRIVATE Boost::system Threads::Threads ${DSDCC_LIBRARY})
+    target_link_libraries(test_session_dsdcc PRIVATE Boost::system Threads::Threads ${DSDCC_LIBRARY} ZLIB::ZLIB m)
     if(MBE_LIBRARY)
       target_link_libraries(test_session_dsdcc PRIVATE ${MBE_LIBRARY})
     endif()
@@ -454,58 +486,14 @@ if(DSD_BUILD_DSDCC_VARIANT)
   endif()
 endif()
 
-# --- TETRA variant: dsd-server-tetra ---
-# A separate build-time backend variant (mirroring dsd-server-dsdcc), but a
-# bigger swap than the DSD backends: TETRA is π/4-DQPSK, not an FM mode, so
-# this variant replaces the whole front end (FmDemodulator -> TetraDpqskDemod)
-# as well as the decoder (DSD -> the osmo tetra-rx subprocess, via
-# TetraProcess). Selected in session.cpp by DSD_USE_TETRA_BACKEND; no Boost
-# demod deps beyond what dsd-server already uses. It does NOT link fm_demod.cpp
-# or dsd_process.cpp -- the TETRA chain uses neither.
-#
-# STATUS: the demod, TETMON parser, and subprocess backend are unit/integration
-# tested (test_tetra_demod, test_tetmon_parse, test_tetra_process). Decoding a
-# real TETRA signal end to end additionally needs the sq5bpf osmo-tetra
-# `tetra-rx` on PATH at run time and a capture; those aren't in-tree, so this
-# variant is built (compile-verified) but not yet exercised against a live
-# signal here.
-option(DSD_BUILD_TETRA_VARIANT "Also build dsd-server-tetra (osmo TETRA subprocess backend)" ON)
-
-if(DSD_BUILD_TETRA_VARIANT)
-  add_executable(dsd-server-tetra
-    src/main.cpp
-    src/session.cpp
-    src/tetra_demod.cpp
-    src/tetra_process.cpp
-    src/tetra_tetmon.cpp
-  )
-  target_include_directories(dsd-server-tetra PRIVATE src ${Boost_INCLUDE_DIRS})
-  target_link_libraries(dsd-server-tetra PRIVATE Boost::system Threads::Threads m)
-  target_compile_definitions(dsd-server-tetra PRIVATE DSD_USE_TETRA_BACKEND)
-  target_compile_options(dsd-server-tetra PRIVATE -Wall -Wextra)
-
-  # Second TETRA backend: tetra-kit's decoder (UDP bits in, JSON out),
-  # selected by TETRA_USE_TETRAKIT_BACKEND on top of DSD_USE_TETRA_BACKEND.
-  # Same session/pipeline as dsd-server-tetra; swaps TetraProcess for
-  # TetraKitProcess via tetra_backend_selector.hpp. Also compile-verified
-  # only -- a live decode needs tetra-kit's `decoder` on PATH + a capture.
-  # tetra-kit carries speech in its JSON (base64+zlib); tetra_voice extracts
-  # it. zlib is required; the ACELP codec itself is an optional external
-  # plug-in (DSD_WITH_TETRA_CODEC), never vendored -- see TETRA_VOICE.md.
-  find_package(ZLIB REQUIRED)
-  add_executable(dsd-server-tetrakit
-    src/main.cpp
-    src/session.cpp
-    src/tetra_demod.cpp
-    src/tetra_kit_process.cpp
-    src/tetra_kit_json.cpp
-    src/tetra_voice.cpp
-  )
-  target_include_directories(dsd-server-tetrakit PRIVATE src ${Boost_INCLUDE_DIRS})
-  target_link_libraries(dsd-server-tetrakit PRIVATE Boost::system Threads::Threads m ZLIB::ZLIB)
-  target_compile_definitions(dsd-server-tetrakit PRIVATE DSD_USE_TETRA_BACKEND TETRA_USE_TETRAKIT_BACKEND)
-  target_compile_options(dsd-server-tetrakit PRIVATE -Wall -Wextra)
-endif()
+# TETRA is no longer a separate build-time variant: the single dsd-server
+# binary carries the π/4-DQPSK + TETRA-subprocess chain alongside the FM/DSD
+# chain and selects it at run time from the client's "protocol" hint ("tetra"
+# -> osmo tetra-rx, "tetrakit" -> tetra-kit's decoder). The TETRA sources are
+# compiled into every session.cpp binary via ${TETRA_RUNTIME_SOURCES} above.
+# Both TETRA backends still need their real decoder on PATH at run time
+# (sq5bpf osmo-tetra `tetra-rx`, tetra-kit's `decoder`) and are exercised by
+# the tetra_* unit/integration tests below.
 
 # --- Integration test for session.cpp/main.cpp (the WebSocket server) ---
 # Starts a real Server, connects a real WebSocket client, and exercises
@@ -538,12 +526,16 @@ add_executable(test_session EXCLUDE_FROM_ALL
   src/session.cpp
   src/dsd_process.cpp
   src/fm_demod.cpp
+  ${TETRA_RUNTIME_SOURCES}
   tests/test_session.cpp
 )
 target_include_directories(test_session PRIVATE src ${Boost_INCLUDE_DIRS})
-target_link_libraries(test_session PRIVATE Boost::system Threads::Threads)
+target_link_libraries(test_session PRIVATE Boost::system Threads::Threads ZLIB::ZLIB m)
 target_compile_options(test_session PRIVATE -Wall -Wextra)
-add_dependencies(test_session test-fake-dsd-fme)
+# test-fake-dsd-fme for the DSD path; tetra_fake_rx (copied to "tetra-rx")
+# for the runtime TETRA path. Both land in the same dir, which the test
+# prepends to PATH.
+add_dependencies(test_session test-fake-dsd-fme tetra_fake_rx)
 
 add_test(NAME session_integration_test COMMAND test_session)
 set_tests_properties(session_integration_test PROPERTIES
@@ -608,10 +600,11 @@ add_executable(test_session_real_fme EXCLUDE_FROM_ALL
   src/session.cpp
   src/dsd_process.cpp
   src/fm_demod.cpp
+  ${TETRA_RUNTIME_SOURCES}
   tests/test_session_real_fme.cpp
 )
 target_include_directories(test_session_real_fme PRIVATE src ${Boost_INCLUDE_DIRS})
-target_link_libraries(test_session_real_fme PRIVATE Boost::system Threads::Threads)
+target_link_libraries(test_session_real_fme PRIVATE Boost::system Threads::Threads ZLIB::ZLIB m)
 target_compile_options(test_session_real_fme PRIVATE -Wall -Wextra)
 
 if(DSD_FME_BIN AND EXISTS "${DSD_FME_BIN}" AND DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
@@ -631,10 +624,11 @@ add_executable(test_session_concurrency EXCLUDE_FROM_ALL
   src/session.cpp
   src/dsd_process.cpp
   src/fm_demod.cpp
+  ${TETRA_RUNTIME_SOURCES}
   tests/test_session_concurrency.cpp
 )
 target_include_directories(test_session_concurrency PRIVATE src ${Boost_INCLUDE_DIRS})
-target_link_libraries(test_session_concurrency PRIVATE Boost::system Threads::Threads)
+target_link_libraries(test_session_concurrency PRIVATE Boost::system Threads::Threads ZLIB::ZLIB m)
 target_compile_options(test_session_concurrency PRIVATE -Wall -Wextra)
 add_dependencies(test_session_concurrency test-fake-dsd-fme)
 
@@ -696,10 +690,11 @@ if(DSD_BUILD_TSAN_TESTS)
     src/session.cpp
     src/dsd_process.cpp
     src/fm_demod.cpp
+    ${TETRA_RUNTIME_SOURCES}
     tests/test_session_concurrency.cpp
   )
   target_include_directories(test_session_concurrency_tsan PRIVATE src ${Boost_INCLUDE_DIRS})
-  target_link_libraries(test_session_concurrency_tsan PRIVATE Boost::system Threads::Threads)
+  target_link_libraries(test_session_concurrency_tsan PRIVATE Boost::system Threads::Threads ZLIB::ZLIB m)
   target_compile_options(test_session_concurrency_tsan PRIVATE
     -Wall -Wextra -fsanitize=thread -fno-omit-frame-pointer -g -O1)
   target_link_options(test_session_concurrency_tsan PRIVATE -fsanitize=thread)
