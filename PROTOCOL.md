@@ -295,28 +295,30 @@ protocol; this table says which ones ever carry a non-`""` value for a
 given protocol (driven by the `protocol` start hint). A blank cell means
 the field stays `""` for that protocol — not that it is omitted.
 
-| field | DMR | NXDN | P25 | dPMR | D-STAR | YSF | notes |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|---|
-| `type` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | always `"event"` |
-| `kind` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `burst` is DSDcc/DMR-only; NXDN/P25 control messages are `unknown` |
-| `talkgroup` | ✓ | ✓ | ✓ | ✓ | ‡ | ‡ | DMR `TGT=`; NXDN `Dst/TG=`; P25 `TGT:`; dPMR `TG=` (zero-padding stripped). ‡ D-STAR/YSF: a **callsign** (the destination — e.g. `CQCQCQ`), not a numeric id |
-| `source_id` | ✓ | ✓ | ✓ | ✓ | ‡ | ‡ | `Src=` / `SRC:` (zero-padding stripped). ‡ D-STAR/YSF: the transmitting station's **callsign** |
-| `slot` | ✓ | — | — | — | — | — | DMR TDMA slot `1`/`2` |
-| `color_code` | ✓ | — | — | ✓* | — | — | DMR color code / dPMR channel code; *dPMR: dsd-fme backend only |
-| `ran` | — | ✓ | — | — | — | — | NXDN Radio Access Number |
-| `nac` | — | — | ✓* | — | — | — | P25 Network Access Code (hex); *dsd-fme backend only |
-| `emergency` | ✓* | ✓* | ✓* | ✓* | — | — | emergency flag; *dsd-fme backend only |
-| `alias` | ✓* | — | — | — | — | — | DMR talker alias; *dsd-fme backend only |
-| `crc_error` | ✓ | ✓ | ✓ | ✓ | ✓* | ✓* | FEC/CRC-failure flag (dsd-fme, and DSDcc for DMR/NXDN); *D-STAR/YSF: dsd-fme only |
-| `extra` | ✓ | ✓ | ✓ | — | ✓ | ✓ | protocol/backend-specific `key=value` tokens (see below) |
-| `raw` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | always the source line/description |
+| field | DMR | NXDN | P25 | dPMR | D-STAR | YSF | TETRA | notes |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|---|
+| `type` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | always `"event"` |
+| `kind` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `burst` is DSDcc/DMR-only; NXDN/P25 control messages are `unknown`. TETRA: `sync`/`call`/`unknown` (osmo), plus `voice` on the tetra-kit backend |
+| `talkgroup` | ✓ | ✓ | ✓ | ✓ | ‡ | ‡ | † | DMR `TGT=`; NXDN `Dst/TG=`; P25 `TGT:`; dPMR `TG=` (zero-padding stripped). ‡ D-STAR/YSF: a **callsign** (the destination — e.g. `CQCQCQ`), not a numeric id. † TETRA: the called group SSI on call-control PDUs — **osmo backend only** (tetra-kit associates the caller SSI later by usage marker and leaves this `""`) |
+| `source_id` | ✓ | ✓ | ✓ | ✓ | ‡ | ‡ | ✓ | `Src=` / `SRC:` (zero-padding stripped). ‡ D-STAR/YSF: the transmitting station's **callsign**. TETRA: the party SSI |
+| `slot` | ✓ | — | — | — | — | — | — | DMR TDMA slot `1`/`2` |
+| `color_code` | ✓ | — | — | ✓* | — | — | † | DMR color code / dPMR channel code; *dPMR: dsd-fme backend only. † TETRA: the network **colour code** (`NETINFO1 CCODE`) — **osmo backend only** |
+| `ran` | — | ✓ | — | — | — | — | — | NXDN Radio Access Number |
+| `nac` | — | — | ✓* | — | — | — | — | P25 Network Access Code (hex); *dsd-fme backend only |
+| `emergency` | ✓* | ✓* | ✓* | ✓* | — | — | — | emergency flag; *dsd-fme backend only |
+| `alias` | ✓* | — | — | — | — | — | — | DMR talker alias; *dsd-fme backend only |
+| `crc_error` | ✓ | ✓ | ✓ | ✓ | ✓* | ✓* | — | FEC/CRC-failure flag (dsd-fme, and DSDcc for DMR/NXDN); *D-STAR/YSF: dsd-fme only. TETRA: the external decoder discards failing PDUs itself, so surviving events aren't CRC-flagged |
+| `extra` | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | protocol/backend-specific `key=value` tokens (see below) |
+| `raw` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | always the source line/description |
 
 (`color_code`/`ran`/`nac` are the per-protocol access codes — DMR & dPMR,
 NXDN, P25 respectively — so at most one is populated for a given signal.
 D-STAR and YSF are amateur protocols that identify stations by **callsign**,
 so none of the numeric access codes apply; `source_id`/`talkgroup` carry
 callsign text instead of numbers, and the repeater/routing detail rides in
-`extra`.)
+`extra`. TETRA reuses `color_code` for its colour code, but only the osmo
+backend surfaces it; the network identity — MCC/MNC/LA and the up/downlink
+frequencies — rides in `extra` rather than in dedicated fields.)
 
 `extra` token vocabulary by protocol/backend:
 
@@ -349,6 +351,16 @@ callsign text instead of numbers, and the repeater/routing detail rides in
 | `call_mode=<mode>` | YSF | both | FICH call mode: `group_cq` / `radio_id` / `individual` |
 | `data_type=<type>` | YSF | both | FICH data type: `vd1` / `vd2` / `voice_full` / `data_full` |
 | `src_rid=<n>` / `dst_rid=<n>` | YSF | both | numeric DSQ radio IDs (Radio ID call mode) |
+| `mcc=<hex>` / `mnc=<hex>` | TETRA | osmo | Mobile Country / Network Code, hex as the fork emits (e.g. `00ea`=234, `004e`=78) |
+| `la=<n>` | TETRA | osmo | Location Area |
+| `dlf=<hz>` / `ulf=<hz>` | TETRA | osmo | down/uplink carrier frequency in Hz |
+| `crypt=<n>` | TETRA | osmo | air-interface encryption flag from `NETINFO1` |
+| `cid=<n>` / `nid=<n>` | TETRA | osmo | cell id / network id on call-control PDUs |
+| `idx=<n>` | TETRA | osmo | call index — associates later voice with this call |
+| `status=<n>` / `afc=<n>` / `func=<name>` | TETRA | osmo | short-data status; AFC diagnostic; raw TETMON `FUNC` name (mostly on `unknown` events) |
+| `service=<name>` / `pdu=<name>` | TETRA | tetra-kit | tetra-kit report's service (`UPLANE`/`MLE`/…) and PDU type (`TCH_S`/`MAC-SYNC`/…) |
+| `usage_marker=<n>` / `dl_usage_marker=<n>` | TETRA | tetra-kit | uplink / downlink usage marker — associates speech frames with a call |
+| `encr=<mode>` | TETRA | tetra-kit | encryption mode reported for the PDU |
 
 Both backends emit the NXDN fields (`ran`, `source_id`, `talkgroup`, and
 the `site_code`/`system_code`/`location_id` tokens) with the same shape,
