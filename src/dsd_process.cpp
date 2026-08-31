@@ -489,6 +489,17 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     // Talker alias text runs to end of line after "Alias: "; the colon
     // keeps it off "Alias CRC Error" / "Talker Alias LC Header" lines.
     static const std::regex alias_re(R"(\bAlias:\s*(\S.*?)\s*$)", std::regex::icase);
+    // DMR short data / SMS text. dsd-fme renders decoded short-data and UDT
+    // message bodies with an encoding-tagged label and the characters run to
+    // end of line -- its own fprintf strings (dmr_pdu.c "UTF8 Text: ",
+    // dmr_block.c "ISO7 Text: " / "ISO8 Text: " / "UTF16 Text: "). We capture
+    // the whole tail as free text (it may embed spaces, ';', '='), which is
+    // exactly why the message gets its own field rather than an `extra` token:
+    // an SMS body would corrupt the "; "-joined key=value extra string.
+    // Non-printable/padding bytes are rendered by dsd-fme as '_' (nulls) or
+    // '-'/spaces, so trailing runs of those are trimmed below.
+    static const std::regex sms_re(
+        R"(\b(?:UTF-?8|UTF-?16|ISO\s?7|ISO\s?8)\s*Text:\s*(.*\S)?\s*$)", std::regex::icase);
     // P25 (dsd-fme formats: dsd_frame.c "NAC: %03X;" / "NAC/CC: %03llX;",
     // p25p1_hdu.c/ldu2.c "ALG ID: 0x%02X KEY ID: 0x%04X", plus the
     // "ALG: 0x.. KEY ID: 0x.." error form). NAC is the P25 network access
@@ -557,6 +568,16 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     else if (std::regex_search(line, emerg_val_re)) ev.emergency = "1";
     if (std::regex_search(line, m, alias_re)) ev.alias = m[1].str();
     if (std::regex_search(line, err_re)) ev.crc_error = "1";
+    if (std::regex_search(line, m, sms_re) && m[1].matched) {
+        std::string msg = m[1].str();
+        // Trim leading whitespace and trailing padding: dsd-fme substitutes
+        // '_' for null bytes and '-'/space for other non-printables, so a
+        // short body in a fixed-width block is tail-padded with those.
+        std::size_t b = msg.find_first_not_of(" \t");
+        std::size_t e = msg.find_last_not_of(" \t_-");
+        if (b != std::string::npos && e != std::string::npos && e >= b)
+            ev.message = msg.substr(b, e - b + 1);
+    }
 
     // Assemble trunking/site detail into extra as key=value tokens.
     std::vector<std::string> tokens;
@@ -644,6 +665,7 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     if (cs_call) ev.kind = "call"; // callsign call info takes precedence
     else if (std::regex_search(line, voice_re)) ev.kind = "voice";
     else if (std::regex_search(line, sync_re)) ev.kind = "sync";
+    else if (!ev.message.empty()) ev.kind = "message"; // a decoded SMS/short-data body
     else if (!ev.talkgroup.empty() || !ev.source_id.empty()) ev.kind = "call";
 
     return ev;

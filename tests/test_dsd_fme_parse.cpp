@@ -314,6 +314,36 @@ int main() {
         check(e.kind == "call", "a real call line is not kind:unknown");
         check(dsd_fme_forward_event(e, false), "recognized events forward even with unknowns suppressed");
     }
+    // ---- DMR short data / SMS (dsd-fme's own text-label formats) ----
+    {
+        // UDT message: SRC/TGT and the ISO7 body share one line, so the
+        // event carries who sent it, to whom, and the text.
+        DsdEvent e = classify_dsd_fme_line("Slot 1 - SRC: 6789; TGT: 12345; UDT ISO7 Text: HELLO WORLD");
+        check(e.message == "HELLO WORLD", "UDT ISO7: message body extracted");
+        check(e.source_id == "6789", "UDT ISO7: source_id from SRC");
+        check(e.talkgroup == "12345", "UDT ISO7: talkgroup from TGT");
+        check(e.kind == "message", "UDT ISO7: kind is message");
+        check(dsd_fme_forward_event(e, false), "SMS event forwarded even with unknowns suppressed");
+    }
+    {
+        // Short-data UTF8 body on its own line (no SRC/TGT on this line).
+        DsdEvent e = classify_dsd_fme_line(" UTF8 Text: on my way");
+        check(e.message == "on my way", "UTF8 short data: message body extracted");
+        check(e.kind == "message", "UTF8 short data: kind is message");
+    }
+    {
+        // Trailing null/padding runs ('_' for nulls, '-'/space for other
+        // non-printables) are trimmed; interior spaces are kept.
+        DsdEvent e = classify_dsd_fme_line("UTF16 Text: see you at 5 ____----");
+        check(e.message == "see you at 5", "UTF16: trailing padding trimmed, interior kept");
+    }
+    {
+        // An all-padding body yields no message (and stays unknown, so the
+        // empty artifact is suppressed rather than sent as a blank message).
+        DsdEvent e = classify_dsd_fme_line("ISO7 Text: ________");
+        check(e.message.empty(), "all-padding body -> no message");
+        check(e.kind == "unknown", "all-padding SMS line stays unknown (suppressed)");
+    }
 
     if (g_failures == 0) {
         std::printf("\nALL DSD-FME PARSE TESTS PASSED\n");

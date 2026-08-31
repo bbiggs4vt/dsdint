@@ -217,6 +217,7 @@ void test_audio_pipeline_relays_events_and_audio() {
 
     bool saw_event = false;
     bool saw_call_event = false;
+    bool saw_message = false;
     bool saw_audio = false;
     // Read up to a handful of frames, or until we've seen both a
     // talkgroup-carrying event and an audio frame -- events and audio
@@ -234,7 +235,7 @@ void test_audio_pipeline_relays_events_and_audio() {
     // (DsdProcessConfig::forward_unknown), so the client does NOT receive
     // that line -- what's worth asserting is that the fake's TG=12345
     // decode line makes it through.
-    for (int i = 0; i < 20 && !(saw_call_event && saw_audio); ++i) {
+    for (int i = 0; i < 24 && !(saw_call_event && saw_message && saw_audio); ++i) {
         std::string resp;
         if (!client.read(resp, is_text, std::chrono::seconds(3))) break;
         if (is_text) {
@@ -242,6 +243,10 @@ void test_audio_pipeline_relays_events_and_audio() {
             if (json::get_string(obj, "type") == "event") {
                 saw_event = true;
                 if (json::get_string(obj, "talkgroup") == "12345") saw_call_event = true;
+                // The fake dsd-fme emits one DMR UDT SMS line; verify its
+                // decoded body reaches the client in the message field.
+                if (json::get_string(obj, "message") == "HELLO WORLD" &&
+                    json::get_string(obj, "kind") == "message") saw_message = true;
             }
         } else {
             if (!resp.empty() && static_cast<uint8_t>(resp[0]) == 0x01) {
@@ -252,6 +257,7 @@ void test_audio_pipeline_relays_events_and_audio() {
     }
     check(saw_event, "received at least one JSON event frame");
     check(saw_call_event, "an event carries the fake dsd-fme's talkgroup (12345)");
+    check(saw_message, "a DMR SMS event carries the decoded message body");
     check(saw_audio, "received at least one tagged binary audio frame");
 
     client.send_text(json::Writer().field("type", std::string("stop")).str());

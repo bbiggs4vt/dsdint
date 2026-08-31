@@ -126,4 +126,5 @@ message Event {
   string crc_error = 11 [json_name = "crc_error"];  // "1" on FEC/CRC failure
   string extra = 12;       // "; "-joined key=value tokens
   string raw = 13;         // underlying decoder line/description
+  string message = 14;     // DMR short-data / SMS text (free text)
 }

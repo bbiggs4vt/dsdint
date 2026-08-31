@@ -70,11 +70,18 @@ int main(int argc, char** argv) {
     }
 
     std::size_t total_bytes = 0;
+    bool sent_sms = false;
     char buf[4096];
     ssize_t n;
     while ((n = ::read(STDIN_FILENO, buf, sizeof(buf))) > 0) {
         total_bytes += static_cast<std::size_t>(n);
         std::printf("TG=12345 SRC=6789 TS=1 voice sync total=%zu\n", total_bytes);
+        // Emit one DMR short-data / SMS line (real dsd-fme UDT format) so the
+        // session test can verify the message field reaches the client.
+        if (!sent_sms) {
+            std::printf("Slot 1 - SRC: 6789; TGT: 12345; UDT ISO7 Text: HELLO WORLD\n");
+            sent_sms = true;
+        }
         std::fflush(stdout);
     }
 

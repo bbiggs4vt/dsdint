@@ -22,6 +22,7 @@ struct DsdEvent {
     std::string emergency;     // "1" when the line marks the call an emergency, else ""
     std::string alias;         // DMR talker alias text if present, else "" (free text)
     std::string crc_error;     // "1" when the decoder marked this line/burst as failing CRC/FEC, else ""
+    std::string message;       // DMR short-data / SMS text (free text) if present, else ""
     std::string extra;         // any other parsed detail, free-form ("; "-joined key=value tokens)
 };
 
