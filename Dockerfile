@@ -151,7 +151,7 @@ RUN cmake --build /opt/dsd-server/build -j"$(nproc)" --target \
         test_dsd_process test_session_real_fme \
         test_dsd_fme_parse \
         test_fake_dsd_server fake_dsd_server \
-        test_tetra_demod test_tetra_burst_sync \
+        test_tetra_demod test_tetra_burst_sync test_tetra_frontend \
         tetra_bit_source test_tetra_bit_source \
         test_tetmon_parse test_tetra_process tetra_fake_rx \
         test_tetra_kit_json test_tetra_kit_process tetra_kit_fake \
