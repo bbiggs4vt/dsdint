@@ -97,6 +97,40 @@ int main(int argc, char** argv) {
         proc.stop();
     }
 
+    // ---- bits are not lost to UDP datagram truncation ----
+    // The fake reads with a 1024-byte buffer like the real decoder and reports
+    // the total bytes it received. If write_bits sent an oversized datagram,
+    // the kernel would truncate it and the tally would fall short.
+    {
+        std::mutex m;
+        std::vector<DsdEvent> evs;
+        TetraKitProcess proc;
+        TetraKitProcessConfig cfg;
+        cfg.decoder_path = fake;
+        cfg.forward_unknown = true; // the BITCOUNT report is kind "unknown"
+        bool ok = proc.start(cfg,
+            [&](const DsdEvent& e) { std::lock_guard<std::mutex> lk(m); evs.push_back(e); }, nullptr);
+        check(ok, "start() for the truncation check");
+        // Wait until the fake is up (it binds its -r socket before sending its
+        // first JSON, so seeing any event means -r is ready to receive bits).
+        // Without this the datagrams would race the child's bind() -- a
+        // test-only concern; the real server streams bits continuously.
+        wait_for([&] { std::lock_guard<std::mutex> lk(m); return !evs.empty(); });
+        std::vector<unsigned char> bits(5000, 1); // > one 1024-byte datagram
+        check(proc.write_bits(bits.data(), bits.size()), "write_bits (5000 bits) succeeded");
+        DsdEvent bc;
+        bool got = wait_for([&] {
+            std::lock_guard<std::mutex> lk(m);
+            for (const auto& e : evs)
+                if (e.raw_line.find("BITCOUNT") != std::string::npos) { bc = e; return true; }
+            return false;
+        });
+        check(got, "fake reported a bit-count");
+        check(bc.source_id == "5000",
+              "all 5000 bits arrived (datagrams stay within the decoder's read buffer)");
+        proc.stop();
+    }
+
     // ---- exec failure reported ----
     {
         TetraKitProcess proc;

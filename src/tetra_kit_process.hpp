@@ -54,6 +54,14 @@ struct TetraKitProcessConfig {
     std::vector<std::string> extra_args;  // appended verbatim after -r/-t
     bool forward_unknown = false;         // forward kind:"unknown" reports too
     bool inherit_child_log = false;       // send child stdout/stderr to ours vs /dev/null
+
+    // Max bytes per bitstream datagram. MUST stay <= the decoder's UDP read
+    // buffer: tetra-kit's decoder reads with a fixed 1024-byte buffer
+    // (RXBUF_LEN in its main.cc), and a UDP datagram larger than that is
+    // TRUNCATED -- the excess bits are silently dropped, which desyncs the
+    // decode. 1024 matches that buffer; lower it only if a build uses a
+    // smaller one.
+    std::size_t bits_datagram_bytes = 1024;
 };
 
 class TetraKitProcess {

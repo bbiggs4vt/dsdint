@@ -178,8 +178,12 @@ the resulting bits, fed to a real tetra-kit `decoder`, decode coherently:
 neighbour-cell lists, and `UPLANE`/`TCH_S` traffic — the Viterbi/CRC/descramble
 all passing proves the bits are TETRA-correct, not merely grid-locked. The
 tetra-kit JSON parser's `service`/`pdu` → `kind` mapping is pinned against that
-output. Still open: the **osmo** path has not been run against a real
-`tetra-rx` (its TETMON mapping stays best-effort), the **CMCE call-setup**
+output. The **full `dsd-server-tetrakit` binary** was also driven end to end —
+that capture streamed over a WebSocket comes back as `event` frames
+(`kind:"voice"` for the `TCH_S` traffic; broadcasts suppressed) — which is
+what surfaced the decoder's 1024-byte UDP read limit (now respected via
+`bits_datagram_bytes`). Still open: the **osmo** path has not been run against a
+real `tetra-rx` (its TETMON mapping stays best-effort), the **CMCE call-setup**
 mapping needs a capture with a live call, and **voice PCM** is not emitted yet
 (see [`TETRA_VOICE.md`](TETRA_VOICE.md)). The demod is streaming (timing,
 differential, CFO and AGC state carry across IQ frames), so decoding is

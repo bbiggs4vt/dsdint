@@ -49,14 +49,28 @@ int main(int argc, char** argv) {
     send("{\"service\":\"CMCE\",\"pdu\":\"D-SETUP\",\"ssi\":1234567,\"usage marker\":3}");
     send("{\"service\":\"MM\",\"pdu\":\"D-LOCATION-UPDATE-ACCEPT\",\"ssi\":7}");
 
-    // Wait for a bit datagram (proves write_bits reached us), with a timeout
-    // so we don't hang if the parent sends nothing.
-    timeval tv{2, 0};
+    // Read the bitstream the way the REAL tetra-kit decoder does: a fixed
+    // 1024-byte buffer. A UDP datagram larger than this is truncated by the
+    // kernel and the excess is dropped -- so if TetraKitProcess ever sends
+    // oversized datagrams again, the total we tally here will fall short.
+    // After an idle gap we report the running total back as a JSON report
+    // (ssi = total bytes received) so the test can assert no bits were lost.
+    timeval tv{0, 300 * 1000};
     setsockopt(rfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    char buf[8192];
-    (void)::recv(rfd, buf, sizeof(buf), 0);
-
-    // Idle until the parent SIGTERMs us (default disposition terminates).
-    for (;;) pause();
+    unsigned char buf[1024];
+    long total = 0;
+    bool any = false;
+    for (;;) {
+        ssize_t k = ::recv(rfd, buf, sizeof(buf), 0);
+        if (k > 0) { total += k; any = true; continue; }
+        if (any) {
+            char m[96];
+            std::snprintf(m, sizeof(m),
+                          "{\"service\":\"TEST\",\"pdu\":\"BITCOUNT\",\"ssi\":%ld}", total);
+            send(m);
+            any = false; total = 0;
+        }
+        // keep looping until the parent SIGTERMs us
+    }
     return 0;
 }

@@ -149,9 +149,12 @@ bool TetraKitProcess::write_bits(const unsigned char* bits, std::size_t n) {
     dst.sin_family = AF_INET;
     dst.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     dst.sin_port = htons(bitstream_port_);
-    // Chunk into datagrams well under the UDP limit; the decoder concatenates
-    // the byte stream, so datagram boundaries don't matter.
-    constexpr std::size_t kChunk = 8192;
+    // Chunk into datagrams no larger than the decoder's UDP read buffer.
+    // tetra-kit reads a fixed 1024 bytes per datagram and DISCARDS anything
+    // beyond that (UDP truncation), so oversized datagrams silently drop most
+    // of the bitstream and desync the decode -- found running a real capture
+    // end to end through dsd-server-tetrakit. See bits_datagram_bytes.
+    const std::size_t kChunk = cfg_.bits_datagram_bytes ? cfg_.bits_datagram_bytes : 1024;
     std::size_t off = 0;
     while (off < n) {
         const std::size_t m = std::min(kChunk, n - off);
