@@ -400,6 +400,10 @@ constellation parity — which coherent detection must know — is resolved
 automatically from burst-grid lock (`src/tetra_frontend.*`); if it can't lock
 (non-TETRA or too-weak signal) the session falls back to differential. The
 `tetra_bit_source` bridge tool exposes the same choice via `--coherent`.
+Validated on the real off-air capture: coherent auto-picked the right parity,
+locked the same 18-burst grid, and — through the real `tetra-rx` — decoded the
+same network (MCC/MNC 234/78, ColorCode 0x17) while recovering ~5% more
+CRC-protected control-plane messages than differential (see PROTOCOL.md).
 
 ## Comparing the two demod backends: demod_benchmark
 

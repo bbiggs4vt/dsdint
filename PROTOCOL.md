@@ -215,6 +215,17 @@ capture with a live call, and **voice PCM** is not emitted yet
 differential, CFO and AGC state carry across IQ frames), so decoding is
 continuous across frame boundaries.
 
+The **coherent (Costas) path** (`DSD_TETRA_COHERENT=1`) is also validated on
+that same off-air capture: it auto-resolved the π/4 parity from burst-grid lock
+(picking the correct one — proven by a coherent decode of the real network),
+locked the identical 18-burst grid, and through the real `tetra-rx` decoded the
+same identity (MCC/MNC 234/78, ColorCode 0x17, DL 393.5125 MHz) while recovering
+**more** CRC-protected control-plane messages than differential — SYNC 84→88,
+SYSINFO 103→109, D-NWRK-BROADCAST 21→22 (208→219 total, +5%), with no extra
+decode errors. That is the predicted low-BER gain showing up on real RF at
+12 dB SNR (traffic-channel decode via tetra-kit was identical, TCH_S being
+robust at that SNR). See `src/tetra_frontend.*`.
+
 ---
 
 ## Server → Client
