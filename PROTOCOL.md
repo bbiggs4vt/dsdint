@@ -170,14 +170,20 @@ differences:
   the (patent-encumbered) ETSI codec. See [`TETRA_VOICE.md`](TETRA_VOICE.md)
   for the design.
 
-**Status:** the streaming modem, both event parsers (TETMON and tetra-kit
-JSON), and both subprocess backends are unit/integration-tested, but
-end-to-end decode of a real signal additionally needs the chosen decoder
-(`tetra-rx` or tetra-kit's `decoder`) on `PATH` at run time plus a capture —
-neither in-tree — so these variants are compile-verified but not yet exercised
-against a live TETRA signal. The demod is streaming (timing, differential,
-CFO and AGC state carry across IQ frames), so decoding is continuous across
-frame boundaries.
+**Status:** the streaming modem is **validated on a real off-air capture** —
+a 3 s, 12 dB-SNR UK TETRA downlink (≈40.7 kHz IQ, resampled to 72 kHz).
+Our π/4 demod locks the burst grid (18 confirmed bursts, ~140 Hz CFO), and
+the resulting bits, fed to a real tetra-kit `decoder`, decode coherently:
+`MAC-SYNC` (ColorCode 23, MCC/MNC 234/78, LA 6163), `D-NWRK-BROADCAST`
+neighbour-cell lists, and `UPLANE`/`TCH_S` traffic — the Viterbi/CRC/descramble
+all passing proves the bits are TETRA-correct, not merely grid-locked. The
+tetra-kit JSON parser's `service`/`pdu` → `kind` mapping is pinned against that
+output. Still open: the **osmo** path has not been run against a real
+`tetra-rx` (its TETMON mapping stays best-effort), the **CMCE call-setup**
+mapping needs a capture with a live call, and **voice PCM** is not emitted yet
+(see [`TETRA_VOICE.md`](TETRA_VOICE.md)). The demod is streaming (timing,
+differential, CFO and AGC state carry across IQ frames), so decoding is
+continuous across frame boundaries.
 
 ---
 

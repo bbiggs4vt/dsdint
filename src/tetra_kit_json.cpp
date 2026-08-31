@@ -125,13 +125,19 @@ DsdEvent tetrakit_to_event(const TetraKitReport& rep, const std::string& raw_lin
     const std::string service = upper(field(rep.fields, "service"));
     const std::string pdu = upper(field(rep.fields, "pdu"));
 
-    // PROVISIONAL service/pdu -> kind. Call-control setup/connect PDUs (CMCE)
-    // are calls; U-PLANE is traffic (voice); everything else passes through as
-    // "unknown" carrying its fields, so nothing decoded is dropped. Refine
-    // against real tetra-kit captures.
-    if (service == "U-PLANE" || contains(pdu, "TRAFFIC") || contains(pdu, "ACELP") ||
-        contains(pdu, "SPEECH")) {
+    // service/pdu -> kind. Pinned against real tetra-kit output from an
+    // off-air UK TETRA downlink (see tests): the traffic channel is
+    // service "UPLANE" (no hyphen) / pdu "TCH_S"; MAC-SYNC/BSCH is sync;
+    // CMCE setup/connect PDUs are calls. Everything else (e.g. MLE
+    // D-NWRK-BROADCAST system info) passes through as "unknown" carrying its
+    // fields, so nothing decoded is dropped but broadcasts are suppressed by
+    // default.
+    if (service == "UPLANE" || service == "U-PLANE" ||
+        pdu.rfind("TCH", 0) == 0 || contains(pdu, "TRAFFIC") ||
+        contains(pdu, "ACELP") || contains(pdu, "SPEECH")) {
         ev.kind = "voice";
+    } else if (contains(pdu, "SYNC") || service == "BSCH") {
+        ev.kind = "sync";
     } else if (contains(pdu, "SETUP") || contains(pdu, "CONNECT") ||
                contains(pdu, "D-CALL") || contains(pdu, "ALERT") ||
                contains(pdu, "TX-") || contains(pdu, "RELEASE")) {
@@ -140,9 +146,12 @@ DsdEvent tetrakit_to_event(const TetraKitReport& rep, const std::string& raw_lin
         ev.kind = "unknown";
     }
 
-    // Identity. ssi is always present; treat it as the party/source. Group vs
-    // individual is in address_type (pending), so talkgroup is left empty for
-    // now rather than guessed.
+    // Identity. ssi is the party/source when assigned; on traffic bursts it
+    // is often 0 or the all-ones broadcast id (16777215) -- the real caller
+    // SSI arrives on the CMCE call-setup PDU and is associated by usage
+    // marker (that association is a downstream concern, not this parser's).
+    // Group vs individual is in address_type (pending), so talkgroup is left
+    // empty rather than guessed.
     const std::string ssi = field(rep.fields, "ssi");
     if (!ssi.empty()) ev.source_id = ssi;
 
@@ -157,6 +166,7 @@ DsdEvent tetrakit_to_event(const TetraKitReport& rep, const std::string& raw_lin
     add("service", "service");
     add("pdu", "pdu");
     add("usage_marker", "usage marker");
+    add("dl_usage_marker", "downlink usage marker"); // the traffic-channel marker
     add("encr", "encryption mode");
 
     return ev;

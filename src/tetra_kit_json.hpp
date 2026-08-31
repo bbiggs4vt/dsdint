@@ -15,22 +15,32 @@
 //   "actual ssi", "ussi", "smi",         -- address variants (per address_type)
 //   "usage marker", "actual usage marker",
 //   "encryption mode",
-//   "uzsize", "zsize"                    -- speech: uncompressed/zlib sizes
+//   "uzsize", "zsize", "frame"           -- speech: sizes + base64(zlib) payload
+//   "downlink usage marker"              -- traffic-channel usage marker
 //
-// e.g. (illustrative, real shape):
-//   {"service":"CMCE","pdu":"D-SETUP","ssi":1234567,"usage marker":3,"tn":1,"fn":3}
+// Real lines, verbatim from an off-air UK TETRA downlink decoded through our
+// demod (MCC/MNC 234/78), abbreviated:
+//   {"service":"UPLANE","pdu":"TCH_S","ssi":0,"usage marker":0,
+//    "downlink usage marker":62,"encryption mode":0,"uzsize":1380,
+//    "zsize":157,"frame":"eJz...=="}                       <- traffic (voice)
+//   {"service":"MLE","pdu":"D-NWRK-BROADCAST",...,"cell 0":[{...},...]}  <- broadcast
+// (the MLE broadcast nests "cell N" arrays -- the parser skips those cleanly.)
 //
 // This is the direct analog of tetra_tetmon.hpp for the osmo backend: a pure,
 // text-in / DsdEvent-out function, unit-tested (tests/test_tetra_kit_json.cpp)
 // without the decoder binary or a live capture. TetraKitProcess spawns the
 // decoder and feeds these lines through it.
 //
-// CONFIDENCE. The keys above are confirmed from the decoder source and the
-// object is flat, so the field extraction is exact (and tolerant: it skips
-// any nested/array value, e.g. a speech data array, rather than choking).
-// The pdu->kind classification and which identity maps to source vs talkgroup
-// are the best current reading and are expected to be pinned against real
-// tetra-kit output -- the same posture taken for the osmo TETMON funcs.
+// CONFIDENCE. The keys are confirmed from the decoder source and the object
+// is flat (top-level), so the field extraction is exact -- and tolerant: it
+// skips nested values (the MLE broadcast's "cell N" arrays, a speech payload)
+// rather than choking. The service/pdu -> kind mapping is now **pinned
+// against a real off-air capture** (UK TETRA, MCC/MNC 234/78) decoded through
+// our own demod: UPLANE/TCH_S = voice, MAC-SYNC = sync, MLE broadcasts =
+// unknown. Call-setup (CMCE) mapping stays best-effort until a capture with a
+// live call exercises it. The caller-SSI-per-usage-marker association (for
+// attributing traffic to a subscriber) is a downstream concern, not this
+// parser's.
 
 #pragma once
 

@@ -88,6 +88,42 @@ int main() {
         check(e.kind == "unknown" && e.raw_line == "garbage", "non-JSON -> unknown, raw kept");
     }
 
+    // ---- REAL captured lines (off-air UK TETRA, MCC/MNC 234/78, decoded
+    //      through our own demod; frame payload trimmed for the literal) ----
+    {
+        // Traffic channel = voice. Note the real values: service "UPLANE"
+        // (no hyphen), pdu "TCH_S", a distinct "downlink usage marker".
+        DsdEvent e = classify_tetrakit_json(
+            "{\"service\":\"UPLANE\",\"pdu\":\"TCH_S\",\"tn\":2,\"fn\":3,\"mn\":33,"
+            "\"ssi\":0,\"usage marker\":0,\"address_type\":0,"
+            "\"downlink usage marker\":62,\"encryption mode\":0,"
+            "\"uzsize\":1380,\"zsize\":157,\"frame\":\"eJzlUlsOwCAI...\"}");
+        check(e.kind == "voice", "real UPLANE/TCH_S -> voice");
+        check(e.extra.find("dl_usage_marker=62") != std::string::npos,
+              "real traffic: downlink usage marker in extra");
+        check(e.extra.find("pdu=TCH_S") != std::string::npos, "real traffic: pdu token");
+    }
+    {
+        // MLE network broadcast: nested "cell 0" array must be skipped, and
+        // the flat fields around it still parse. Classified unknown
+        // (suppressed by default) -- it's system info, not a call.
+        DsdEvent e = classify_tetrakit_json(
+            "{\"time\":\"2026-08-31T13:36:05Z\",\"service\":\"MLE\","
+            "\"pdu\":\"D-NWRK-BROADCAST\",\"tn\":4,\"fn\":3,\"mn\":33,"
+            "\"ssi\":16777215,\"usage marker\":0,\"encryption mode\":0,"
+            "\"address_type\":1,\"actual ssi\":16777215,"
+            "\"number of neighbour cells\":3,"
+            "\"cell 0\":[{\"Cell identifier CA\":11},{\"LA\":6189}]}");
+        check(e.kind == "unknown", "real MLE broadcast -> unknown");
+        check(e.extra.find("service=MLE") != std::string::npos, "real MLE: service token");
+        check(e.extra.find("pdu=D-NWRK-BROADCAST") != std::string::npos, "real MLE: pdu token past the nested array");
+    }
+    {
+        // A synthesized MAC-SYNC (BSCH) line -> sync.
+        DsdEvent e = classify_tetrakit_json("{\"service\":\"MAC\",\"pdu\":\"MAC-SYNC\",\"ssi\":0}");
+        check(e.kind == "sync", "MAC-SYNC -> sync");
+    }
+
     if (g_failures == 0) std::printf("ALL TETRA-KIT JSON TESTS PASSED\n");
     else std::printf("%d TETRA-KIT JSON TEST(S) FAILED\n", g_failures);
     return g_failures == 0 ? 0 : 1;
