@@ -156,16 +156,22 @@ full-stack tests).
 
 ### Docker (Debian bookworm)
 
-The provided `Dockerfile` builds everything — including the three DSP
-dependencies Debian doesn't package (mbelib, DSDcc, dsd-fme, pinned to
-the commits the backends were verified against) — and produces a slim
-runtime image containing both server variants plus the real dsd-fme:
+The provided `Dockerfile` builds everything — including the DSP
+dependencies Debian doesn't package (mbelib, DSDcc, dsd-fme, and the two
+TETRA decoders `tetra-rx`/tetra-kit, pinned to the commits the backends
+were verified against) — and produces a slim runtime image containing all
+four server variants plus the decoders each spawns:
 
 ```bash
 docker build -t dsd-server .
 docker run --rm -p 8765:8765 dsd-server                     # subprocess backend (default)
-docker run --rm -p 8765:8765 dsd-server dsd-server-dsdcc 0.0.0.0 8765 4   # in-process DSDcc backend
+docker run --rm -p 8765:8765 dsd-server dsd-server-dsdcc     0.0.0.0 8765 4  # in-process DSDcc
+docker run --rm -p 8765:8765 dsd-server dsd-server-tetra     0.0.0.0 8765 4  # TETRA via osmo tetra-rx
+docker run --rm -p 8765:8765 dsd-server dsd-server-tetrakit  0.0.0.0 8765 4  # TETRA via tetra-kit
 ```
+
+(The image ships no ACELP voice codec — patent/GPL, see `TETRA_VOICE.md` —
+so the TETRA variants emit events only, not decoded audio.)
 
 `docker build --target test .` additionally runs the entire ctest suite
 (including the real-capture tests against the just-built dsd-fme and
@@ -352,6 +358,30 @@ thoroughly tested one):
   `cmake -DDSDCC_SAMPLES_DIR=/path/to/dsdcc/samples ..`. Without that
   they build but print SKIPPED, since the capture ships in DSDcc's
   source tree, not its installed artifacts.
+
+## The TETRA variants
+
+TETRA is π/4-DQPSK, not an FM mode, so it is its own build-time variant
+with its own front end (`src/tetra_demod.*`, a streaming π/4-DQPSK modem)
+feeding an external decoder — mirroring the DSDcc/dsd-fme split, but
+swapping the whole signal chain, not just the decoder. Two backends share
+that front end:
+
+- **`dsd-server-tetra`** — spawns osmo-tetra's `tetra-rx` (sq5bpf fork);
+  events over its TETMON protocol. Surfaces the control plane
+  (`NETINFO1`/`FREQINFO1` → `sync`, call-control PDUs → `call`).
+- **`dsd-server-tetrakit`** — spawns tetra-kit's `decoder`; JSON reports.
+  Surfaces the traffic channel (`TCH_S` → `voice`).
+
+Both are **validated end to end on a real off-air capture**: our demod
+locks the burst grid, and the bits, fed to the real decoders, decode
+coherently (UK network, MCC/MNC 234/78). Voice speech frames are extracted
+(base64+zlib) but the ACELP codec is a documented external plug-in
+(patent/GPL, not vendored) — `TETRA_VOICE.md` has the design and the
+end-to-end validation. `PROTOCOL.md`'s TETRA section is the wire reference.
+The variants build only when their optional deps are present
+(`libosmocore` for tetra-rx-facing bits, zlib for tetra-kit); the
+`Dockerfile` bundles both decoders.
 
 ## Comparing the two demod backends: demod_benchmark
 
