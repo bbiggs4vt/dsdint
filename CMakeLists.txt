@@ -88,6 +88,15 @@ target_compile_options(test_tetra_demod PRIVATE -Wall -Wextra)
 add_test(NAME tetra_demod_test COMMAND test_tetra_demod)
 set_tests_properties(tetra_demod_test PROPERTIES TIMEOUT 60)
 
+# GMSK demodulator (TETRAPOL physical layer). Like the π/4 demod: pure DSP with
+# a matching GMSK modulator carried in the test as ground truth — no deps.
+add_executable(test_tetrapol_demod EXCLUDE_FROM_ALL src/tetrapol_demod.cpp tests/test_tetrapol_demod.cpp)
+target_include_directories(test_tetrapol_demod PRIVATE src)
+target_link_libraries(test_tetrapol_demod PRIVATE m)
+target_compile_options(test_tetrapol_demod PRIVATE -Wall -Wextra)
+add_test(NAME tetrapol_demod_test COMMAND test_tetrapol_demod)
+set_tests_properties(tetrapol_demod_test PROPERTIES TIMEOUT 60)
+
 # TETRA burst/frame synchroniser: finds the real training sequences in the
 # demodulated bitstream to lock the 510-bit burst grid. Self-contained
 # (a burst generator plants the sequences; end-to-end case links the demod).
