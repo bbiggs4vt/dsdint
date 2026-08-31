@@ -649,6 +649,49 @@ LC while DSDcc reports 150607 from the embedded LC; the transmission
 genuinely carries both). Don't treat the values as interchangeable
 across backends.
 
+#### TETRA (`protocol":"tetra"` / `"tetrakit"`) — real examples
+
+TETRA runs a different chain and a different backend per hint (see the
+[TETRA section](#tetra-protocoltetra--protocoltetrakit) above), so its events
+look different from the FM/DSD ones: no `slot`, and the network identity rides
+in `extra`. The frames below are the exact wire JSON the two backends emit.
+
+**osmo (`protocol":"tetra"`, `tetra-rx` / TETMON).** The sync/broadcast frames
+are from the real off-air UK capture (colour code 17, MCC `00ea`=234, MNC
+`004e`=78); the call frame is the parser's pinned `DSETUPDEC` input — real
+TETMON shape, placeholder SSIs — since that capture carried no live call:
+
+```json
+{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"","color_code":"17","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"mcc=00ea; mnc=004e; la=0; dlf=0; ulf=0; crypt=0; func=NETINFO1","raw":"TETMON_begin FUNC:NETINFO1 CCODE:17 MCC:00ea MNC:004e DLF:0 ULF:0 LA:0 CRYPT:0 RX:1 TETMON_end"}
+{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"la=6189; dlf=393087500; func=FREQINFO1","raw":"TETMON_begin FUNC:FREQINFO1 DLF:393087500 LA:6189 RX:1 TETMON_end"}
+{"type":"event","kind":"call","talkgroup":"222","source_id":"1234567","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"idx=12; cid=5; nid=9; func=DSETUPDEC","raw":"TETMON_begin FUNC:DSETUPDEC IDX:12 SSI:1234567 SSI2:222 CID:5 NID:9 RX:1 TETMON_end"}
+```
+
+`NETINFO1` puts the colour code in `color_code` and the network id / crypt flag
+in `extra`; `FREQINFO1` carries a neighbour carrier (`dlf` in Hz); `DSETUPDEC`
+is a call with the calling `SSI` → `source_id` and the called `SSI2` →
+`talkgroup`. (`AFCVAL` and other PHY diagnostics classify as `unknown` and are
+suppressed by default.)
+
+**tetra-kit (`protocol":"tetrakit"`, `decoder` JSON).** The traffic and MLE
+broadcast frames are from the same real capture; the `D-SETUP` call frame is
+the parser's pinned CMCE input:
+
+```json
+{"type":"event","kind":"voice","talkgroup":"","source_id":"0","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"service=UPLANE; pdu=TCH_S; usage_marker=0; dl_usage_marker=62; encr=0","raw":"{\"service\":\"UPLANE\",\"pdu\":\"TCH_S\",\"tn\":2,\"fn\":3,\"mn\":33,\"ssi\":0,\"usage marker\":0,\"address_type\":0,\"downlink usage marker\":62,\"encryption mode\":0,\"uzsize\":1380,\"zsize\":157,\"frame\":\"eJzlUlsOwCAI...\"}"}
+{"type":"event","kind":"call","talkgroup":"","source_id":"1234567","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"service=CMCE; pdu=D-SETUP; usage_marker=3","raw":"{\"service\":\"CMCE\",\"pdu\":\"D-SETUP\",\"ssi\":1234567,\"usage marker\":3}"}
+{"type":"event","kind":"unknown","talkgroup":"","source_id":"16777215","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"","extra":"service=MLE; pdu=D-NWRK-BROADCAST; usage_marker=0; encr=0","raw":"{\"time\":\"2026-08-31T13:36:05Z\",\"service\":\"MLE\",\"pdu\":\"D-NWRK-BROADCAST\",\"tn\":4,\"fn\":3,\"mn\":33,\"ssi\":16777215,\"usage marker\":0,\"encryption mode\":0,\"address_type\":1,\"actual ssi\":16777215,\"number of neighbour cells\":3,\"cell 0\":[{\"Cell identifier CA\":11},{\"LA\":6189}]}"}
+```
+
+tetra-kit's focus is the traffic channel: `UPLANE`/`TCH_S` is `voice`, with the
+speech itself carried (base64+zlib) in the report's `frame` field for the codec
+path (see [TETRA_VOICE.md](TETRA_VOICE.md)), not in the event. On a traffic
+burst the `ssi` is often `0` or the all-ones broadcast id (`16777215`) — the
+real caller SSI arrives on the `D-SETUP` and is associated by `usage_marker`, so
+`talkgroup`/`color_code` stay `""` here (unlike the osmo backend). PDUs that are
+neither call nor traffic (e.g. the `MLE` `D-NWRK-BROADCAST` system info) pass
+through as `unknown`, suppressed by default but carrying their fields.
+
 ### Binary frames — decoded voice audio
 
 1-byte tag followed by payload. Only one tag exists:
