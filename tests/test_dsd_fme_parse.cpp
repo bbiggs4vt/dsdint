@@ -345,6 +345,50 @@ int main() {
         check(e.kind == "unknown", "all-padding SMS line stays unknown (suppressed)");
     }
 
+    // ---- EDACS / ProVoice (dsd-fme -fh/-fe/-fp bracket + colon formats) ----
+    {
+        // Digital group-call grant: Group -> talkgroup, Source -> source_id,
+        // LCN in extra; leading zeros stripped.
+        DsdEvent e = classify_dsd_fme_line(
+            " Digital Group Call :: Group [00123] Source [00012345] LCN [02]");
+        check(e.talkgroup == "123", "EDACS group call: talkgroup from Group []");
+        check(e.source_id == "12345", "EDACS group call: source_id from Source []");
+        check(e.extra.find("lcn=2") != std::string::npos, "EDACS group call: lcn in extra");
+        check(e.kind == "call", "EDACS group call: kind call");
+        check(dsd_fme_forward_event(e, false), "EDACS call forwarded (not suppressed)");
+    }
+    {
+        // ProVoice individual call: Callee -> talkgroup (destination),
+        // Caller -> source_id.
+        DsdEvent e = classify_dsd_fme_line(" Digital I-Call :: Callee [00042] Caller [00007] LCN [05]");
+        check(e.source_id == "7", "ProVoice I-call: source_id from Caller");
+        check(e.talkgroup == "42", "ProVoice I-call: talkgroup from Callee");
+        check(e.kind == "call", "ProVoice I-call: kind call");
+    }
+    {
+        // ProVoice colon form (Site/Group/Source/LCN).
+        DsdEvent e = classify_dsd_fme_line(" Site: 5 Group: 100 Source: 200 LCN: 3 ");
+        check(e.talkgroup == "100", "ProVoice colon: talkgroup from Group:");
+        check(e.source_id == "200", "ProVoice colon: source_id from Source:");
+        check(e.extra.find("lcn=3") != std::string::npos, "ProVoice colon: lcn in extra");
+    }
+    {
+        // A call-type line with no unit ids (e.g. All-Call) still classifies as
+        // a call rather than being dropped as unknown; System ID -> extra.
+        DsdEvent e = classify_dsd_fme_line(
+            " System All-Call Channel :: System ID [1A2B] CC LCN [01]");
+        check(e.kind == "call", "EDACS all-call: kind call even without ids");
+        check(e.extra.find("system_id=1A2B") != std::string::npos, "EDACS all-call: system_id in extra");
+    }
+    {
+        // A non-EDACS DMR line must NOT trip the EDACS block (no false group
+        // from the word "Group", no spurious call kind).
+        DsdEvent e = classify_dsd_fme_line(" SLOT 2 TGT=19535 SRC=2222223 Group Call  ");
+        check(e.talkgroup == "19535", "DMR line unaffected by EDACS block (talkgroup)");
+        check(e.source_id == "2222223", "DMR line unaffected by EDACS block (source)");
+        check(e.extra.empty(), "DMR line gets no EDACS extra tokens");
+    }
+
     if (g_failures == 0) {
         std::printf("\nALL DSD-FME PARSE TESTS PASSED\n");
         return 0;

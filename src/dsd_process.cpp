@@ -662,9 +662,51 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
         }
     }
 
+    // EDACS / ProVoice (dsd-fme -fh/-fH/-fe/-fE/-fp): trunking control + its
+    // ProVoice digital voice. dsd-fme prints identifiers in "Label [N]"
+    // brackets (some ProVoice lines in "Label: N" colon form) -- a different
+    // shape from the DMR/P25/NXDN "TGT=/SRC=" the regexes above key on, so the
+    // generic patterns don't populate these and a dedicated, context-gated
+    // block does. Pinned to dsd-fme's edacs*/provoice.c fprintf formats (e.g.
+    // "Group [%05d] Source [%08d] LCN [%02d]", "Digital Group Call",
+    // "AFS [%03d]"); tested against those in tests/test_dsd_fme_parse.cpp, not
+    // yet validated on a live EDACS/ProVoice signal (no capture in the tree).
+    bool edacs_call = false;
+    {
+        static const std::regex ed_ctx_re(
+            R"(\bLCN\s*[\[:]|\bAFS\b|\bCall(?:er|ee)\b|(?:Digital|Analog|Data)\s+(?:Group|System|I-|Individual))",
+            std::regex::icase);
+        if (std::regex_search(line, ed_ctx_re)) {
+            static const std::regex ed_src_re(R"(\b(?:Source|Caller)\D{0,4}(\d+))", std::regex::icase);
+            static const std::regex ed_grp_re(R"(\b(?:Group|Target|Callee)\D{0,4}(\d+))", std::regex::icase);
+            static const std::regex ed_lcn_re(R"(\bLCN\D{0,4}(\d+))", std::regex::icase);
+            static const std::regex ed_afs_re(R"(\bAFS\D{0,4}(\d+))", std::regex::icase);
+            static const std::regex ed_lid_re(R"(\bLID\D{0,4}(\d+))", std::regex::icase);
+            static const std::regex ed_sys_re(R"(\bSystem\s*ID\s*\[?\s*([0-9A-Fa-f]+))", std::regex::icase);
+            std::smatch em;
+            if (std::regex_search(line, em, ed_src_re)) ev.source_id = strip_leading_zeros(em[1].str());
+            if (std::regex_search(line, em, ed_grp_re)) ev.talkgroup = strip_leading_zeros(em[1].str());
+            std::vector<std::string> ed_extra;
+            if (std::regex_search(line, em, ed_lcn_re)) ed_extra.push_back("lcn=" + strip_leading_zeros(em[1].str()));
+            if (std::regex_search(line, em, ed_afs_re)) ed_extra.push_back("afs=" + strip_leading_zeros(em[1].str()));
+            if (std::regex_search(line, em, ed_lid_re)) ed_extra.push_back("lid=" + strip_leading_zeros(em[1].str()));
+            if (std::regex_search(line, em, ed_sys_re)) ed_extra.push_back("system_id=" + upper_hex(em[1].str()));
+            for (const auto& t : ed_extra) {
+                if (!ev.extra.empty()) ev.extra += "; ";
+                ev.extra += t;
+            }
+            // A recognized call-grant line, or one that yielded an id, is a
+            // call event (so "System All-Call"-type lines with no ids aren't
+            // dropped as unknown).
+            edacs_call = !ev.source_id.empty() || !ev.talkgroup.empty() ||
+                         line.find("Call") != std::string::npos;
+        }
+    }
+
     if (cs_call) ev.kind = "call"; // callsign call info takes precedence
     else if (std::regex_search(line, voice_re)) ev.kind = "voice";
     else if (std::regex_search(line, sync_re)) ev.kind = "sync";
+    else if (edacs_call) ev.kind = "call"; // EDACS/ProVoice trunking call
     else if (!ev.message.empty()) ev.kind = "message"; // a decoded SMS/short-data body
     else if (!ev.talkgroup.empty() || !ev.source_id.empty()) ev.kind = "call";
 

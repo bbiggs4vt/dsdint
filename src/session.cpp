@@ -199,7 +199,12 @@ namespace {
 // also falls back to auto-detect rather than erroring (a typo shouldn't
 // kill a stream).
 enum class ProtocolHint { Default, Dmr, Nxdn48, Nxdn96, P25p1, P25p2, Dpmr, Dstar, Ysf, Auto,
-                          Tetra, Tetrakit };
+                          Tetra, Tetrakit,
+                          // dsd-fme-only modes (no DSDcc decoder): EDACS trunking
+                          // + its ProVoice digital voice, and legacy Motorola
+                          // X2-TDMA. Edacs = Standard/NET, EdacsEa = Extended
+                          // Addressing; the *Esk forms add EDACS's 0xA0 ESK mask.
+                          ProVoice, Edacs, EdacsEsk, EdacsEa, EdacsEaEsk, X2tdma };
 
 ProtocolHint parse_protocol_hint(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -220,6 +225,15 @@ ProtocolHint parse_protocol_hint(std::string s) {
     // "tetrakit" -> tetra-kit's decoder. Both alias forms normalize here.
     if (k == "tetra" || k == "tetraosmo" || k == "osmotetra") return ProtocolHint::Tetra;
     if (k == "tetrakit") return ProtocolHint::Tetrakit;
+    // EDACS (+ its ProVoice digital voice) and legacy Motorola X2-TDMA -- all
+    // decoded by the dsd-fme backend only. "esk" selects the 0xA0 ESK-masked
+    // control-channel variant; "ea" selects Extended Addressing.
+    if (k == "provoice" || k == "pv") return ProtocolHint::ProVoice;
+    if (k == "edacsesk" || k == "edacsstdesk" || k == "edacsnetesk") return ProtocolHint::EdacsEsk;
+    if (k == "edacseaesk") return ProtocolHint::EdacsEaEsk;
+    if (k == "edacsea") return ProtocolHint::EdacsEa;
+    if (k == "edacs" || k == "edacsstd" || k == "edacsnet") return ProtocolHint::Edacs;
+    if (k == "x2tdma" || k == "x2" || k == "x2t") return ProtocolHint::X2tdma;
     // "auto", "unknown", "notsure", and anything else -> auto-detect
     return ProtocolHint::Auto;
 }
@@ -421,6 +435,15 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
             case ProtocolHint::Dpmr:   dcfg.mode = "dpmr";   break;
             case ProtocolHint::Dstar:  dcfg.mode = "dstar";  break;
             case ProtocolHint::Ysf:    dcfg.mode = "ysf";    break;
+            // DSDcc has no EDACS/ProVoice/X2-TDMA decoder; fall back to
+            // auto-detect (honest "nothing" rather than mis-decoding as DMR).
+            // Use the dsd-fme backend for these protocols.
+            case ProtocolHint::ProVoice:
+            case ProtocolHint::Edacs:
+            case ProtocolHint::EdacsEsk:
+            case ProtocolHint::EdacsEa:
+            case ProtocolHint::EdacsEaEsk:
+            case ProtocolHint::X2tdma: dcfg.mode = "auto";   break;
             case ProtocolHint::Auto:   dcfg.mode = "auto";   break;
             case ProtocolHint::Dmr:
             case ProtocolHint::Default:
@@ -447,21 +470,31 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         // Map the hint to dsd-fme's "-f<letter>" mode. Default -> "s" (DMR),
         // matching the historical behavior; dsd-fme applies the matching
         // input matched-filter for the selected mode automatically. Letters
-        // verified against `dsd-fme -h`: s=DMR, i=NXDN48/IDAS, n=NXDN96,
-        // a=auto-detect, d=D-STAR, y=YSF, m=dPMR. P25: 1=Phase 1, 2=Phase 2
-        // (6000 sps TDMA).
+        // verified against dsd-fme's source (dsd_main.c, getopt 'f' case, which
+        // matches on optarg): s=DMR, i=NXDN48/IDAS, n=NXDN96, a=auto-detect,
+        // d=D-STAR, y=YSF, m=dPMR. P25: 1=Phase 1, 2=Phase 2 (6000 sps TDMA).
+        // EDACS/ProVoice + X2-TDMA (dsd-fme only; no DSDcc decoder): p=ProVoice,
+        // h=EDACS STD/NET, H=EDACS STD/NET+ESK(0xA0), e=EDACS EA, E=EDACS EA+ESK,
+        // x=X2-TDMA. (EDACS modes also enable ProVoice; the H/E forms apply the
+        // 0xA0 ESK control-channel mask, with dsd-fme's default 4:4:3 AFS.)
         switch (hint) {
-            case ProtocolHint::Nxdn48: dcfg.mode_flag = "i"; break;
-            case ProtocolHint::Nxdn96: dcfg.mode_flag = "n"; break;
-            case ProtocolHint::P25p1:  dcfg.mode_flag = "1"; break;
-            case ProtocolHint::P25p2:  dcfg.mode_flag = "2"; break;
-            case ProtocolHint::Dpmr:   dcfg.mode_flag = "m"; break;
-            case ProtocolHint::Dstar:  dcfg.mode_flag = "d"; break;
-            case ProtocolHint::Ysf:    dcfg.mode_flag = "y"; break;
-            case ProtocolHint::Auto:   dcfg.mode_flag = "a"; break;
+            case ProtocolHint::Nxdn48:     dcfg.mode_flag = "i"; break;
+            case ProtocolHint::Nxdn96:     dcfg.mode_flag = "n"; break;
+            case ProtocolHint::P25p1:      dcfg.mode_flag = "1"; break;
+            case ProtocolHint::P25p2:      dcfg.mode_flag = "2"; break;
+            case ProtocolHint::Dpmr:       dcfg.mode_flag = "m"; break;
+            case ProtocolHint::Dstar:      dcfg.mode_flag = "d"; break;
+            case ProtocolHint::Ysf:        dcfg.mode_flag = "y"; break;
+            case ProtocolHint::ProVoice:   dcfg.mode_flag = "p"; break;
+            case ProtocolHint::Edacs:      dcfg.mode_flag = "h"; break;
+            case ProtocolHint::EdacsEsk:   dcfg.mode_flag = "H"; break;
+            case ProtocolHint::EdacsEa:    dcfg.mode_flag = "e"; break;
+            case ProtocolHint::EdacsEaEsk: dcfg.mode_flag = "E"; break;
+            case ProtocolHint::X2tdma:     dcfg.mode_flag = "x"; break;
+            case ProtocolHint::Auto:       dcfg.mode_flag = "a"; break;
             case ProtocolHint::Dmr:
             case ProtocolHint::Default:
-            default:                   dcfg.mode_flag = "s"; break;
+            default:                       dcfg.mode_flag = "s"; break;
         }
         dcfg.udp_audio_port = udp_audio_port_;
         // Decryption key -> the matching dsd-fme flag, appended as a separate

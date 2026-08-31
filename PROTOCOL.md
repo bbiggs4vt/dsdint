@@ -64,6 +64,12 @@ case-insensitive, and spaces/underscores/hyphens are ignored:
 | `dpmr` | dPMR (6.25 kHz FDMA) | FM + DSD | `-fm` | dPMR |
 | `dstar` (or `d-star`) | D-STAR | FM + DSD | `-fd` | D-STAR |
 | `ysf` (or `fusion`, `c4fm`) | Yaesu System Fusion | FM + DSD | `-fy` | YSF |
+| `provoice` (or `pv`) | EDACS ProVoice digital voice | FM + DSD | `-fp` | — (auto) |
+| `edacs` (or `edacs_std`, `edacs_net`) | EDACS Standard/NET + ProVoice | FM + DSD | `-fh` | — (auto) |
+| `edacs_esk` | EDACS Standard/NET + ProVoice, 0xA0 ESK mask | FM + DSD | `-fH` | — (auto) |
+| `edacs_ea` | EDACS Extended Addressing + ProVoice | FM + DSD | `-fe` | — (auto) |
+| `edacs_ea_esk` | EDACS EA + ProVoice, 0xA0 ESK mask | FM + DSD | `-fE` | — (auto) |
+| `x2tdma` (or `x2`) | Motorola X2-TDMA (legacy) | FM + DSD | `-fx` | — (auto) |
 | `auto` / `unknown` / `not sure` / anything else | auto-detect | FM + DSD | `-fa` | auto |
 | `tetra` (or `osmo_tetra`) | **TETRA** via osmo `tetra-rx` | π/4-DQPSK + TETRA | — | — |
 | `tetrakit` | **TETRA** via tetra-kit `decoder` | π/4-DQPSK + TETRA | — | — |
@@ -72,6 +78,16 @@ case-insensitive, and spaces/underscores/hyphens are ignored:
 the π/4-DQPSK modem and the DSD backend with a TETRA subprocess decoder, so
 the dsd-fme/DSDcc columns don't apply (`—`). Their IQ-rate and `event`-field
 differences are detailed in the [TETRA section](#tetra-protocoltetra--protocoltetrakit).
+
+`provoice` / `edacs*` / `x2tdma` are **dsd-fme-backend only** — DSDcc has no
+decoder for them, so on the `dsd-server-dsdcc` build they fall back to
+auto-detect (`— (auto)`) rather than mis-decoding as DMR; use the default
+subprocess build for these. EDACS identifiers ride in the usual fields
+(`Group`→`talkgroup`, `Source`/`Caller`→`source_id`, `Callee`/`Target`→
+`talkgroup`) with `lcn`/`afs`/`lid`/`system_id` in `extra`; that mapping is
+pinned to dsd-fme's own print formats and unit-tested, but not yet validated
+against a live EDACS/ProVoice signal.
+
 For the FM/DSD hints the choice only steers mode selection; it does not change
 the wire format or the `event` shape. Note the two backends differ in NXDN
 capability:
@@ -377,6 +393,10 @@ frequencies — rides in `extra` rather than in dedicated fields.)
 | `call_mode=<mode>` | YSF | both | FICH call mode: `group_cq` / `radio_id` / `individual` |
 | `data_type=<type>` | YSF | both | FICH data type: `vd1` / `vd2` / `voice_full` / `data_full` |
 | `src_rid=<n>` / `dst_rid=<n>` | YSF | both | numeric DSQ radio IDs (Radio ID call mode) |
+| `lcn=<n>` | EDACS/ProVoice | dsd-fme | logical channel number (control or working channel) |
+| `afs=<n>` | EDACS/ProVoice | dsd-fme | EDACS Agency-Fleet-Subfleet group id (decimal) |
+| `lid=<n>` | EDACS/ProVoice | dsd-fme | EDACS logical (unit) id, on login/regroup lines |
+| `system_id=<hex>` | EDACS/ProVoice | dsd-fme | EDACS system id from the control channel |
 | `mcc=<hex>` / `mnc=<hex>` | TETRA | osmo | Mobile Country / Network Code, hex as the fork emits (e.g. `00ea`=234, `004e`=78) |
 | `la=<n>` | TETRA | osmo | Location Area |
 | `dlf=<hz>` / `ulf=<hz>` | TETRA | osmo | down/uplink carrier frequency in Hz |
