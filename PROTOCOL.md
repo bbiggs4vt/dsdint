@@ -142,11 +142,19 @@ backends share the identical π/4 front end and wire protocol, differing only
 in the external decoder they drive:
 
 - **`dsd-server-tetra`** — osmo-tetra's `tetra-rx` (sq5bpf fork): bits on
-  stdin, events over its TETMON UDP protocol.
+  stdin, events over its TETMON UDP protocol. Its focus is the control plane:
+  network/cell broadcasts (`NETINFO1`/`FREQINFO1`) come through as `kind:"sync"`
+  with the colour code in `color_code` and `mcc`/`mnc`/`la`/`dlf` in `extra`;
+  call-control PDUs (`DSETUPDEC`/`DCONNECTDEC`/…) are `kind:"call"` with the
+  calling `SSI` → `source_id` and called `SSI2` → `talkgroup`.
 - **`dsd-server-tetrakit`** — tetra-kit's `decoder`: bits and JSON reports
-  both over UDP (`-r`/`-t`). Reports `source_id` from `ssi`, `kind` `call`
-  for call-control PDUs and `voice` for U-PLANE, with `service`/`pdu`/
-  `usage_marker` in `extra`.
+  both over UDP (`-r`/`-t`). Its focus is full PDU decode: traffic
+  (`UPLANE`/`TCH_S`) comes through as `kind:"voice"`, `source_id` from `ssi`,
+  with `service`/`pdu`/`usage_marker` in `extra`.
+
+The two backends surface *different* views of the same signal — osmo the
+network/cell broadcasts, tetra-kit the traffic channel — so pick per what you
+need, or run both.
 
 Point a client at whichever binary you built. The wire protocol is otherwise
 the same — `start` / `stop`, binary IQ in, `event` frames out — with these
@@ -182,9 +190,12 @@ output. The **full `dsd-server-tetrakit` binary** was also driven end to end —
 that capture streamed over a WebSocket comes back as `event` frames
 (`kind:"voice"` for the `TCH_S` traffic; broadcasts suppressed) — which is
 what surfaced the decoder's 1024-byte UDP read limit (now respected via
-`bits_datagram_bytes`). Still open: the **osmo** path has not been run against a
-real `tetra-rx` (its TETMON mapping stays best-effort), the **CMCE call-setup**
-mapping needs a capture with a live call, and **voice PCM** is not emitted yet
+`bits_datagram_bytes`). The **osmo `dsd-server-tetra`** binary was likewise
+driven end to end on the same capture: it returns 158 `kind:"sync"` events
+(`NETINFO1`/`FREQINFO1`, ColorCode 17, MCC/MNC 234/78, DLF 393.5125 MHz), and
+its TETMON `func`→`kind` mapping is pinned against that real output. Still
+open: the **call-control** mapping (`DSETUPDEC` etc. on both backends) needs a
+capture with a live call, and **voice PCM** is not emitted yet
 (see [`TETRA_VOICE.md`](TETRA_VOICE.md)). The demod is streaming (timing,
 differential, CFO and AGC state carry across IQ frames), so decoding is
 continuous across frame boundaries.

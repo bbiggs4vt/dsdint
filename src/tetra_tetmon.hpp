@@ -14,25 +14,29 @@
 //
 //     TETMON_begin FUNC:AFCVAL AFC:-3 RX:1 TETMON_end
 //
-// and a call-control example (field set per telive's documentation):
-//
-//     TETMON_begin FUNC:SETUPDEC IDX:12 SSI:1234567 CID:5 NID:9 RX:1 TETMON_end
+// Real lines, verbatim from this fork's tetra-rx decoding an off-air UK
+// downlink through our own demod:
+//     TETMON_begin FUNC:NETINFO1 CCODE:17 MCC:00ea MNC:004e DLF:0 ULF:0 LA:0 CRYPT:0 RX:1 TETMON_end
+//     TETMON_begin FUNC:FREQINFO1 DLF:393087500 LA:6189 RX:1 TETMON_end
+//     TETMON_begin FUNC:BURST RX:1 TETMON_end
+// and the call-control funcs (from the fork's source; not in that control-
+// channel capture): DSETUPDEC/DCONNECTDEC/DRELEASEDEC/DTXGRANTDEC carry
+// SSI (+ SSI2 called party), IDX, CID, NID; SDS/DSTATUS carry text. Note
+// MCC/MNC are hex (00ea/004e = 234/78). Some datagrams append a binary
+// payload after TETMON_end; classify_tetmon_line trims raw to the text.
 //
 // This is the direct analog of classify_dsd_fme_line(): a pure,
-// text-in / DsdEvent-out function so it is unit-testable on its own
-// (tests/test_tetmon_parse.cpp) without the tetra-rx binary or a live
-// capture. The TetraProcess backend that spawns tetra-rx and receives these
-// datagrams over UDP is a later increment; it will lean on this parser.
+// text-in / DsdEvent-out function, unit-tested (tests/test_tetmon_parse.cpp)
+// without the tetra-rx binary. TetraProcess spawns tetra-rx and feeds these
+// datagrams through it.
 //
-// CONFIDENCE. The wrapper grammar (TETMON_begin ... TETMON_end, space-
-// separated KEY:VALUE tokens) and the AFCVAL field set are confirmed against
-// the fork's source. The broader FUNC vocabulary and the exact id-field
-// semantics (which SSI is a group GSSI vs an individual ISSI, etc.) are
-// derived from telive's documentation, not yet pinned against captured
-// output -- the same posture we took for dsd-fme's un-captured line formats.
+// CONFIDENCE. The wrapper grammar and the field extraction are exact. The
+// func->kind mapping is **pinned against real captured output** for the funcs
+// that appeared (NETINFO1/FREQINFO1/BURST/ENCINFO1 -> sync/unknown) and taken
+// from the fork's source for the call-control funcs it didn't
+// (DSETUPDEC etc. -> call); a capture with a live call would confirm those.
 // parse_tetmon_line() extracts every field generically regardless, so
-// tightening the func->kind / id mapping later is a small, localized change
-// that does not affect parsing.
+// tightening the mapping is localized and never affects parsing.
 
 #pragma once
 

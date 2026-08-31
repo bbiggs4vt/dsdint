@@ -69,37 +69,40 @@ DsdEvent tetmon_to_event(const TetmonMessage& msg, const std::string& raw_line) 
 
     const std::string func = upper(msg.func);
 
-    // PROVISIONAL func -> kind. The call-control funcs are the best current
-    // reading from telive's docs; unknown funcs pass through as "unknown"
-    // carrying their fields so nothing decoded is silently dropped.
-    //
-    // AFCVAL is deliberately classed "unknown": it is the fork's periodic
-    // AFC/PHY status (confirmed verbatim in the source), carries no call
-    // information, and is redundant here because we run our own CFO
-    // correction. Mapping it to "unknown" means the standard
-    // forward_unknown=false suppression drops this telemetry by default
-    // (the same treatment dsd-fme's banner noise gets) without a second
-    // flag; its afc/rx values are still preserved in `extra` for anyone who
-    // forwards unknowns for debugging.
-    if (func == "SETUPDEC" || func == "DSETUP" || func == "SETUP" ||
-        func == "DSETUPDEC" || func == "CALLDEC") {
+    // func -> kind. Pinned against a real capture (this fork's tetra-rx run on
+    // an off-air UK downlink) and cross-checked against the fork's source for
+    // the funcs that capture didn't exercise:
+    //   call control  DSETUPDEC / DCONNECTDEC / DRELEASEDEC / DTXGRANTDEC -> call
+    //   network/sync  NETINFO1 / FREQINFO1 / FREQINFO2                    -> sync
+    //   everything else (BURST markers, ENCINFO1, AFCVAL diagnostics, the
+    //   SDS/DSTATUS text funcs) -> unknown, i.e. suppressed by default but
+    //   still carrying their fields for a forward_unknown consumer.
+    if (func == "DSETUPDEC" || func == "DCONNECTDEC" || func == "DRELEASEDEC" ||
+        func == "DTXGRANTDEC") {
         ev.kind = "call";
+    } else if (func == "NETINFO1" || func == "FREQINFO1" || func == "FREQINFO2") {
+        ev.kind = "sync";
     } else {
-        ev.kind = "unknown"; // incl. AFCVAL diagnostics and any unrecognized func
+        ev.kind = "unknown"; // BURST / ENCINFO1 / AFCVAL / SDS / DSTATUS / unrecognized
     }
 
-    // Ids. TETRA identifies parties by SSI; the transmitting/party SSI maps
-    // to source_id. Group vs individual (GSSI/ISSI) disambiguation is
-    // pending real output, so a dedicated GSSI field, when present, is what
-    // we treat as the talkgroup.
+    // Ids. TETRA identifies parties by SSI; the calling party SSI maps to
+    // source_id and the called party (SSI2, a group GSSI or an individual)
+    // to talkgroup.
     const std::string ssi = field(msg.fields, "SSI");
-    const std::string gssi = field(msg.fields, "GSSI");
+    const std::string ssi2 = field(msg.fields, "SSI2");
     if (!ssi.empty()) ev.source_id = ssi;
-    if (!gssi.empty()) ev.talkgroup = gssi;
+    if (!ssi2.empty()) ev.talkgroup = ssi2;
+
+    // TETRA colour code (NETINFO1 CCODE) -> the shared color_code field, the
+    // same slot DMR/dPMR use for their access code.
+    const std::string ccode = field(msg.fields, "CCODE");
+    if (!ccode.empty()) ev.color_code = ccode;
 
     // Structured extras kept as "; "-joined key=value tokens, mirroring the
-    // dsd-fme extra convention. IDX is the traffic-channel index used to
-    // associate later voice frames with this call; cid/nid locate the cell.
+    // dsd-fme extra convention. IDX associates later voice with this call;
+    // cid/nid/la locate the cell; mcc/mnc are the network id (hex, as the
+    // fork emits them); dlf/ulf are the down/uplink frequencies (Hz).
     auto add = [&](const char* label, const char* key) {
         const std::string v = field(msg.fields, key);
         if (v.empty()) return;
@@ -111,6 +114,13 @@ DsdEvent tetmon_to_event(const TetmonMessage& msg, const std::string& raw_line) 
     add("idx", "IDX");
     add("cid", "CID");
     add("nid", "NID");
+    add("mcc", "MCC");   // hex, e.g. 00ea = 234
+    add("mnc", "MNC");   // hex, e.g. 004e = 78
+    add("la", "LA");
+    add("dlf", "DLF");
+    add("ulf", "ULF");
+    add("crypt", "CRYPT");
+    add("status", "STATUS");
     add("afc", "AFC"); // AFCVAL diagnostics: kept for debug, suppressed by default
     add("func", "FUNC");
 
@@ -118,7 +128,13 @@ DsdEvent tetmon_to_event(const TetmonMessage& msg, const std::string& raw_line) 
 }
 
 DsdEvent classify_tetmon_line(const std::string& line) {
-    return tetmon_to_event(parse_tetmon_line(line), line);
+    // Some datagrams carry a binary payload appended after TETMON_end; keep
+    // only the text wrapper as `raw` so the event stays clean printable text.
+    const std::string kEnd = "TETMON_end";
+    const auto e = line.find(kEnd);
+    const std::string clean =
+        (e == std::string::npos) ? line : line.substr(0, e + kEnd.size());
+    return tetmon_to_event(parse_tetmon_line(line), clean);
 }
 
 } // namespace dsdsrv
