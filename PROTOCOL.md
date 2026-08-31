@@ -215,7 +215,8 @@ capture with a live call, and **voice PCM** is not emitted yet
 differential, CFO and AGC state carry across IQ frames), so decoding is
 continuous across frame boundaries.
 
-The **coherent (Costas) path** (`DSD_TETRA_COHERENT=1`) is also validated on
+The **coherent (Costas) path** is the default for TETRA sessions
+(`DSD_TETRA_COHERENT=0` forces plain differential), and is validated on
 that same off-air capture: it auto-resolved the π/4 parity from burst-grid lock
 (picking the correct one — proven by a coherent decode of the real network),
 locked the identical 18-burst grid, and through the real `tetra-rx` decoded the

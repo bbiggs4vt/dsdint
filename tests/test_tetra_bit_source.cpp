@@ -134,11 +134,11 @@ int main(int argc, char** argv) {
         check(lk.confirmations >= 18, label + ": nearly all bursts confirm the grid");
     };
 
-    // Default (differential) detection.
-    verify(run_tool(""), "differential");
-    // Coherent detection: the Costas path resolves its π/4 parity from the
-    // burst grid, so its emitted bits must lock exactly the same way.
-    verify(run_tool("--coherent "), "coherent");
+    // Differential detection (opt-out of the coherent default).
+    verify(run_tool("--differential "), "differential");
+    // Coherent detection (the default): the Costas path resolves its π/4
+    // parity from the burst grid, so its emitted bits must lock the same way.
+    verify(run_tool(""), "coherent (default)");
 
     std::remove(iqfile.c_str());
 

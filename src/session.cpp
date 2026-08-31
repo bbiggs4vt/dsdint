@@ -347,14 +347,14 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
             TetraFrontendConfig tdcfg;
             tdcfg.demod.samples_per_symbol = tetra_sps;
             tdcfg.demod.correct_cfo = true; // pull in residual SDR ppm error (±Rs/8)
-            // Detection defaults to differential (robust, phase-blind). Setting
-            // DSD_TETRA_COHERENT=1 switches to Costas coherent detection, which
-            // resolves its π/4 parity from burst-grid lock and falls back to
-            // differential if it can't lock (see tetra_frontend.hpp). It buys
-            // ~1.5-1.7 dB at mid SNR but can slip at the very low-SNR fringe,
-            // so it stays opt-in.
+            // Detection defaults to coherent (Costas): it resolves its π/4
+            // parity from burst-grid lock, decodes ~1.5-1.7 dB cleaner above the
+            // low-SNR crossover, and falls back to differential on its own when
+            // it can't lock (see tetra_frontend.hpp). Set DSD_TETRA_COHERENT=0
+            // to force the differential path (e.g. for the very low-SNR fringe
+            // below the crossover, where the loop can slip).
             const char* coh = std::getenv("DSD_TETRA_COHERENT");
-            tdcfg.coherent = (coh && coh[0] == '1');
+            tdcfg.coherent = !(coh && coh[0] == '0');
             std::lock_guard<std::mutex> lock(demod_mutex_);
             tetra_demod_ = std::make_unique<TetraDemodFrontend>(tdcfg);
         }

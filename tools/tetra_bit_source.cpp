@@ -60,21 +60,23 @@ int main(int argc, char** argv) {
     const char* input = nullptr;
     int sps = 4;
     bool correct_cfo = true;
-    bool coherent = false;
+    bool coherent = true;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--sps" && i + 1 < argc) sps = std::atoi(argv[++i]);
         else if (a == "--no-cfo") correct_cfo = false;
         else if (a == "--coherent") coherent = true;
+        else if (a == "--differential" || a == "--no-coherent") coherent = false;
         else if (a == "-h" || a == "--help") {
             std::fprintf(stderr,
-                "usage: %s [--sps N] [--no-cfo] [--coherent] <iq.cf32 | ->\n"
+                "usage: %s [--sps N] [--no-cfo] [--differential] <iq.cf32 | ->\n"
                 "  Reads interleaved float32 I/Q (sps*18000 Hz), writes the TETRA\n"
                 "  bitstream (1 byte per bit) to stdout for piping into tetra-rx.\n"
-                "  --coherent uses Costas carrier recovery (≈1.5-1.7 dB better at\n"
-                "  mid SNR), resolving the π/4 parity via burst-grid lock; it\n"
-                "  falls back to differential detection if it can't lock.\n",
+                "  Detection defaults to coherent Costas carrier recovery\n"
+                "  (≈1.5-1.7 dB better at mid SNR), resolving the π/4 parity via\n"
+                "  burst-grid lock and falling back to differential if it can't\n"
+                "  lock. --differential forces the plain differential path.\n",
                 argv[0]);
             return 0;
         } else if (a[0] != '-' || a == "-") {

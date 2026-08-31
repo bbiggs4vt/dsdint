@@ -15,14 +15,16 @@
 //   is the oracle: run both parities, keep the one whose bitstream locks.
 //
 // Modes:
-//   * Differential (default): a single differential demod, exactly today's
-//     behavior and cost. The robust, phase-blind path; no parity to resolve.
-//   * Coherent: during acquisition, run BOTH coherent parities in parallel and
-//     watch for a burst-grid lock; the moment one locks, keep that demod
-//     (steady state = one demod) and emit its bits. If neither locks within a
-//     bounded window (a non-TETRA or too-weak signal), fall back to the
-//     differential path -- so "keep the old non-Costas path" holds two ways:
-//     it is the default mode, and it is the coherent mode's safety net.
+//   * Coherent (default): during acquisition, run BOTH coherent parities in
+//     parallel and watch for a burst-grid lock; the moment one locks, keep that
+//     demod (steady state = one demod) and emit its bits. If neither locks
+//     within a bounded window (a non-TETRA or too-weak signal), fall back to
+//     the differential path. So the differential path is never lost -- it is
+//     the coherent mode's safety net and remains selectable outright.
+//   * Differential: a single differential demod, phase-blind and robust, with
+//     no parity to resolve. Select it to skip the Costas loop entirely (e.g.
+//     at the very low-SNR fringe below the ~1.3 dB crossover, where the loop
+//     can slip).
 //
 // The two paths produce the SAME TETRA bits (differential vs. coherent detect
 // the same symbols); coherent just trades a carrier loop for ~1.5-1.7 dB of
@@ -46,7 +48,11 @@ namespace dsdsrv {
 struct TetraFrontendConfig {
     TetraDemodConfig demod;            // modem params (sps, CFO, RRC, timing)
     TetraSyncConfig sync;              // burst-sync tolerances used to resolve parity
-    bool coherent = false;             // false = differential (default), true = coherent w/ auto parity
+    // Detection: coherent (Costas + auto parity) is the default -- it decodes
+    // ~1.5-1.7 dB cleaner above the low-SNR crossover and falls back to
+    // differential on its own when it can't lock the burst grid, so it is a
+    // safe default. Set false to force the differential path.
+    bool coherent = true;
     // Coherent acquisition budget: if no burst-grid lock is found within this
     // many demodulated bits, give up resolving parity and fall back to the
     // differential path. ~12 timeslots; generous for a real downlink, bounded
