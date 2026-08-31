@@ -47,25 +47,34 @@ liquid variant; it is now unified as stated and pinned by
 `tests/test_afc.cpp`.)
 
 `protocol`: an **advisory hint** telling the server which digital voice
-protocol the client believes the signal is, so the decoder is told which
-mode to run instead of relying on auto-detection. It is forgiving —
+protocol the client believes the signal is. For the FM/DSD modes it selects
+which decode mode to run instead of relying on auto-detection; for `tetra` /
+`tetrakit` it does more — it switches the session's **entire signal chain**
+(see [TETRA](#tetra-protocoltetra--protocoltetrakit) below). It is forgiving —
 case-insensitive, and spaces/underscores/hyphens are ignored:
 
-| value | selects | dsd-fme | DSDcc |
-|---|---|---|---|
-| `""` / absent | server default (**DMR**) — no change for existing clients | `-fs` | DMR |
-| `dmr` | DMR | `-fs` | DMR |
-| `nxdn48` (or `nxdn`, `idas`) | NXDN48 / IDAS (6.25 kHz) | `-fi` | NXDN48 |
-| `nxdn96` | NXDN96 (12.5 kHz) | `-fn` | NXDN96 |
-| `p25` (or `p25p1`) | P25 Phase 1 | `-f1` | P25p1 (mode only, no fields) |
-| `p25p2` | P25 Phase 2 (6000 sps TDMA) | `-f2` | P25p1 (mode only, no fields) |
-| `dpmr` | dPMR (6.25 kHz FDMA) | `-fm` | dPMR |
-| `dstar` (or `d-star`) | D-STAR | `-fd` | D-STAR |
-| `ysf` (or `fusion`, `c4fm`) | Yaesu System Fusion | `-fy` | YSF |
-| `auto` / `unknown` / `not sure` / anything else | auto-detect | `-fa` | auto |
+| value | selects | chain | dsd-fme | DSDcc |
+|---|---|---|---|---|
+| `""` / absent | server default (**DMR**) — no change for existing clients | FM + DSD | `-fs` | DMR |
+| `dmr` | DMR | FM + DSD | `-fs` | DMR |
+| `nxdn48` (or `nxdn`, `idas`) | NXDN48 / IDAS (6.25 kHz) | FM + DSD | `-fi` | NXDN48 |
+| `nxdn96` | NXDN96 (12.5 kHz) | FM + DSD | `-fn` | NXDN96 |
+| `p25` (or `p25p1`) | P25 Phase 1 | FM + DSD | `-f1` | P25p1 (mode only, no fields) |
+| `p25p2` | P25 Phase 2 (6000 sps TDMA) | FM + DSD | `-f2` | P25p1 (mode only, no fields) |
+| `dpmr` | dPMR (6.25 kHz FDMA) | FM + DSD | `-fm` | dPMR |
+| `dstar` (or `d-star`) | D-STAR | FM + DSD | `-fd` | D-STAR |
+| `ysf` (or `fusion`, `c4fm`) | Yaesu System Fusion | FM + DSD | `-fy` | YSF |
+| `auto` / `unknown` / `not sure` / anything else | auto-detect | FM + DSD | `-fa` | auto |
+| `tetra` (or `osmo_tetra`) | **TETRA** via osmo `tetra-rx` | π/4-DQPSK + TETRA | — | — |
+| `tetrakit` | **TETRA** via tetra-kit `decoder` | π/4-DQPSK + TETRA | — | — |
 
-The hint only steers mode selection; it does not change the wire format
-or the `event` shape. Note the two backends differ in NXDN capability:
+`tetra` / `tetrakit` are not FM modes: they replace the FM discriminator with
+the π/4-DQPSK modem and the DSD backend with a TETRA subprocess decoder, so
+the dsd-fme/DSDcc columns don't apply (`—`). Their IQ-rate and `event`-field
+differences are detailed in the [TETRA section](#tetra-protocoltetra--protocoltetrakit).
+For the FM/DSD hints the choice only steers mode selection; it does not change
+the wire format or the `event` shape. Note the two backends differ in NXDN
+capability:
 the subprocess **dsd-fme backend decodes NXDN reliably** (it applies the
 matching input matched-filter per mode and was verified against a real
 off-air NXDN48 capture — recovering source, talkgroup, RAN, site/system
