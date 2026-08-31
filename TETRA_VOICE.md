@@ -1,10 +1,20 @@
-# TETRA voice decode — design note
+# TETRA voice decode — design + status
 
-Status: **design only, not implemented.** The two TETRA backends
-(`dsd-server-tetra` / osmo, `dsd-server-tetrakit`) currently decode *events*
-only. This note is the plan for adding decoded **voice audio**, so it drops
-into the existing pipeline cleanly when picked up. It records the design and,
-just as importantly, the unknowns that need a real capture to pin down.
+Status: **frame extraction implemented and validated; codec is the remaining
+plug-in.** `src/tetra_voice.*` extracts encoded speech from tetra-kit's JSON
+(base64 + zlib) into 690-int16 frames, and `TetraKitProcess` is wired to feed
+them to an optional `TetraVoiceDecoder` → `AudioCallback`. What's not in-repo
+is the ACELP synthesis codec itself (patent-encumbered / GPLv3 — see CODEC
+below); `make_tetra_voice_decoder()` returns null without it, so today's build
+extracts frames but emits no audio.
+
+**Validated end to end on the real capture** (outside the repo, using
+tetra-kit's own GPLv3 codec as an oracle): our demod → tetra-kit decoder →
+these extracted frames → the codec produced ~2.7 s of intelligible 8 kHz
+speech from the off-air `TCH_S` traffic. So the data path and the extraction
+target are confirmed; only the codec binding remains.
+
+The rest of this note is the design and the remaining work.
 
 ## Goal
 
@@ -95,14 +105,19 @@ and the extraction paths above short-circuit (events-only build).
 
 ## Sequencing (smallest testable steps first)
 
-1. **`TetraVoiceDecoder` interface + CMake option**, with a no-op/absent-codec
-   build. Establishes the seam; zero behavior change when the codec is off.
-2. **tetra-kit extraction** (base64 + zlib inflate of the U-PLANE payload) →
-   frames. Unit-testable without the decoder binary: feed a known
-   base64+zlib blob, assert the recovered frame bytes. This is the lower-risk
-   path (all in-process, no second socket).
-3. **Wire codec → AudioCallback** on the tetra-kit path; verify an end-to-end
-   PCM frame reaches a fake client (extend `test_tetra_kit_process`).
+1. **`TetraVoiceDecoder` interface + CMake option** — DONE. The seam is in
+   `src/tetra_voice.hpp`; `make_tetra_voice_decoder()` returns null without a
+   codec build. Zero behavior change when the codec is off.
+2. **tetra-kit extraction** (base64 + zlib inflate of the UPLANE payload) →
+   690-int16 frames — DONE (`tetrakit_extract_speech_frame`). Unit-tested
+   against a real captured frame (`tests/test_tetra_voice.cpp`), and
+   `TetraKitProcess` is wired to call it per traffic report.
+3. **Wire codec → AudioCallback** — the extraction→decoder→`on_audio` wiring
+   is in place in `TetraKitProcess`; what remains is a concrete
+   `TetraVoiceDecoder` (below) so real PCM flows. Confirmed working with an
+   out-of-repo codec (the WAV validation above). Next: extend
+   `test_tetra_kit_process` with a stub decoder to assert PCM reaches the
+   client seam without needing the real codec.
 4. **osmo voice UDP receiver** in `TetraProcess` (second socket, framing pinned
    against the fork), then the same codec → AudioCallback wiring.
 5. **Codec round-trip test** when `DSD_WITH_TETRA_CODEC` is available (encode a

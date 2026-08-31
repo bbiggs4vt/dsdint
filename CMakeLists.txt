@@ -135,15 +135,26 @@ set_tests_properties(tetra_kit_json_test PROPERTIES TIMEOUT 60)
 # TetraKitProcess: the tetra-kit subprocess backend (bits out over UDP, JSON
 # in over UDP). Exercised against a fake decoder stub, like the osmo backend.
 add_executable(tetra_kit_fake EXCLUDE_FROM_ALL tests/tetra_kit_fake.cpp)
+find_package(ZLIB REQUIRED)
 add_executable(test_tetra_kit_process EXCLUDE_FROM_ALL
-  src/tetra_kit_process.cpp src/tetra_kit_json.cpp tests/test_tetra_kit_process.cpp)
+  src/tetra_kit_process.cpp src/tetra_kit_json.cpp src/tetra_voice.cpp
+  tests/test_tetra_kit_process.cpp)
 target_include_directories(test_tetra_kit_process PRIVATE src)
-target_link_libraries(test_tetra_kit_process PRIVATE Threads::Threads)
+target_link_libraries(test_tetra_kit_process PRIVATE Threads::Threads ZLIB::ZLIB)
 target_compile_options(test_tetra_kit_process PRIVATE -Wall -Wextra)
 add_dependencies(test_tetra_kit_process tetra_kit_fake)
 add_test(NAME tetra_kit_process_test
          COMMAND test_tetra_kit_process $<TARGET_FILE:tetra_kit_fake>)
 set_tests_properties(tetra_kit_process_test PROPERTIES TIMEOUT 60)
+
+# TETRA speech-frame extraction (base64 + zlib) against a real captured frame.
+add_executable(test_tetra_voice EXCLUDE_FROM_ALL
+  src/tetra_voice.cpp src/tetra_kit_json.cpp tests/test_tetra_voice.cpp)
+target_include_directories(test_tetra_voice PRIVATE src)
+target_link_libraries(test_tetra_voice PRIVATE ZLIB::ZLIB)
+target_compile_options(test_tetra_voice PRIVATE -Wall -Wextra)
+add_test(NAME tetra_voice_test COMMAND test_tetra_voice)
+set_tests_properties(tetra_voice_test PROPERTIES TIMEOUT 60)
 
 # AFC + freq_offset sign-convention tests (tests/test_afc.cpp). Core
 # cases are synthetic-tone only, no external deps. The liquid and DSDcc
@@ -478,15 +489,20 @@ if(DSD_BUILD_TETRA_VARIANT)
   # Same session/pipeline as dsd-server-tetra; swaps TetraProcess for
   # TetraKitProcess via tetra_backend_selector.hpp. Also compile-verified
   # only -- a live decode needs tetra-kit's `decoder` on PATH + a capture.
+  # tetra-kit carries speech in its JSON (base64+zlib); tetra_voice extracts
+  # it. zlib is required; the ACELP codec itself is an optional external
+  # plug-in (DSD_WITH_TETRA_CODEC), never vendored -- see TETRA_VOICE.md.
+  find_package(ZLIB REQUIRED)
   add_executable(dsd-server-tetrakit
     src/main.cpp
     src/session.cpp
     src/tetra_demod.cpp
     src/tetra_kit_process.cpp
     src/tetra_kit_json.cpp
+    src/tetra_voice.cpp
   )
   target_include_directories(dsd-server-tetrakit PRIVATE src ${Boost_INCLUDE_DIRS})
-  target_link_libraries(dsd-server-tetrakit PRIVATE Boost::system Threads::Threads m)
+  target_link_libraries(dsd-server-tetrakit PRIVATE Boost::system Threads::Threads m ZLIB::ZLIB)
   target_compile_definitions(dsd-server-tetrakit PRIVATE DSD_USE_TETRA_BACKEND TETRA_USE_TETRAKIT_BACKEND)
   target_compile_options(dsd-server-tetrakit PRIVATE -Wall -Wextra)
 endif()

@@ -33,6 +33,7 @@
 
 #include "dsd_backend_types.hpp"
 #include "tetra_kit_json.hpp"
+#include "tetra_voice.hpp"
 
 #include <string>
 #include <vector>
@@ -40,6 +41,7 @@
 #include <atomic>
 #include <functional>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 
 namespace dsdsrv {
@@ -111,6 +113,12 @@ private:
     std::thread json_thread_;
     std::atomic<bool> running_{false};
     std::mutex write_mutex_;
+
+    // Optional speech decoder. make_tetra_voice_decoder() returns null unless
+    // the build supplies a codec, so audio is emitted only in a codec build;
+    // otherwise speech frames are simply not extracted. Touched only by the
+    // json reader thread.
+    std::unique_ptr<TetraVoiceDecoder> voice_;
 };
 
 } // namespace dsdsrv

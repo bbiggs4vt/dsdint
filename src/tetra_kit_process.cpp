@@ -137,6 +137,8 @@ bool TetraKitProcess::start(const TetraKitProcessConfig& cfg, EventCallback on_e
     }
 
     child_pid_ = pid;
+    // Optional speech decoder (null unless a codec build supplies one).
+    voice_ = make_tetra_voice_decoder();
     running_ = true;
     json_thread_ = std::thread(&TetraKitProcess::json_reader_loop, this);
     return true;
@@ -187,6 +189,19 @@ void TetraKitProcess::json_reader_loop() {
             DsdEvent ev = classify_tetrakit_json(line);
             if (on_event_ && tetrakit_forward_event(ev, cfg_.forward_unknown))
                 on_event_(ev);
+
+            // Voice: on a codec build, pull the speech frame out of a traffic
+            // report and synthesize PCM for the client. Skipped entirely when
+            // no codec is present (voice_ is null), so there is no extraction
+            // cost in an events-only build.
+            if (voice_ && on_audio_) {
+                std::vector<int16_t> frame;
+                if (tetrakit_extract_speech_frame(line, frame)) {
+                    std::vector<int16_t> pcm;
+                    if (voice_->decode_frame(frame, pcm) && !pcm.empty())
+                        on_audio_(pcm.data(), pcm.size());
+                }
+            }
         }
     }
 }
@@ -217,6 +232,7 @@ void TetraKitProcess::stop() {
     if (bits_fd_ >= 0) { close(bits_fd_); bits_fd_ = -1; }
     json_port_ = 0;
     bitstream_port_ = 0;
+    voice_.reset(); // reader joined; safe to drop the decoder
 }
 
 } // namespace dsdsrv
