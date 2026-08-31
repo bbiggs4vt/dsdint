@@ -35,7 +35,9 @@ int main() {
     };
     // A call-control message (should be forwarded) and an AFC diagnostic
     // (kind "unknown", suppressed unless forward_unknown is set).
-    send("TETMON_begin FUNC:SETUPDEC IDX:3 SSI:1234567 CID:5 NID:9 RX:1 TETMON_end");
+    // Real osmo TETMON funcs: DSETUPDEC is a call (forwarded); AFCVAL is a
+    // diagnostic (kind "unknown", suppressed unless forward_unknown).
+    send("TETMON_begin FUNC:DSETUPDEC IDX:3 SSI:1234567 SSI2:222 CID:5 NID:9 RX:1 TETMON_end");
     send("TETMON_begin FUNC:AFCVAL AFC:-2 RX:1 TETMON_end");
 
     // Drain stdin until EOF (parent closed its write end in stop()).
