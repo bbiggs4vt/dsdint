@@ -193,18 +193,75 @@ TetraDpqskDemod::run(const std::complex<float>* iq, std::size_t n, bool final_fl
     }
     const float cfo_bias = 2.0f * kPi * nu_; // phase the CFO adds per symbol
 
-    // Slice each (CFO-corrected) transition. Per the TETRA table (header):
-    //   sign bit B(2k-1) = 1 when the transition is negative,
-    //   mag  bit B(2k)   = 1 when |transition| is 3π/4 (vs π/4).
-    bits.reserve(diff.size() * 2);
-    for (const auto& d : diff) {
-        float ang = std::atan2(std::imag(d), std::real(d)) - cfo_bias;
-        while (ang > kPi) ang -= 2.0f * kPi;
-        while (ang < -kPi) ang += 2.0f * kPi;
-        const unsigned char b1 = (ang < 0.0f) ? 1u : 0u;
-        const unsigned char b2 = (std::fabs(ang) > (kPi / 2.0f)) ? 1u : 0u;
-        bits.push_back(b1);
-        bits.push_back(b2);
+    if (cfg_.coherent) {
+        // ---- Coherent detection: Costas carrier recovery + differential
+        // decode of the hard symbol decisions. ----
+        // A decision-directed loop tracks absolute carrier phase; each symbol
+        // is de-rotated by the (feed-forward CFO + loop) phase, collapsed onto
+        // one QPSK grid, and hard-decided. Differencing consecutive *decisions*
+        // (each taken against the clean recovered reference) is what buys the
+        // ~2 dB over differencing two noisy samples. The loop's 4-fold lock
+        // ambiguity is harmless — a constant rotation cancels in the
+        // differential decode — but the even/odd collapse parity does matter
+        // (coherent_parity_offset; a real receiver resolves it from the sync).
+        const float Bn = 0.02f, zeta = 1.0f;
+        const float Kp = 2.0f * zeta * Bn, Ki = Bn * Bn;
+        const int paroff = cfg_.coherent_parity_offset & 1;
+        auto wrap = [](float a) { while (a > kPi) a -= 2.0f * kPi; while (a < -kPi) a += 2.0f * kPi; return a; };
+        bits.reserve(symbols_.size() * 2);
+        for (const auto& s : symbols_) {
+            coh_cfo_phase_ = std::fmod(coh_cfo_phase_ + cfo_bias, 2.0 * kPi);
+            // De-rotate by feed-forward CFO estimate and the Costas phase.
+            const float rot = -static_cast<float>(coh_cfo_phase_) - coh_car_phase_;
+            const std::complex<float> v = s * std::polar(1.0f, rot);
+            // Collapse the two alternating constellations onto one QPSK grid
+            // ({0, π/2, π, 3π/2}) by de-rotating the "odd" symbols by −π/4.
+            const int parity = (coh_idx_ + paroff) & 1;
+            const std::complex<float> c = parity ? v * std::polar(1.0f, -kPi / 4.0f) : v;
+            // Decision-directed phase error to the nearest grid point.
+            const float ang = std::atan2(c.imag(), c.real());
+            const float kq = std::round(ang / (kPi / 2.0f));
+            const float perr = wrap(ang - kq * (kPi / 2.0f));
+            // PI update of the carrier NCO (phase + per-symbol frequency).
+            coh_car_phase_ = wrap(coh_car_phase_ + coh_car_freq_ + Kp * perr);
+            coh_car_freq_ += Ki * perr;
+            // Hard QPSK index (0..3) -> absolute 8-PSK index (0..7).
+            int q = static_cast<int>(kq) & 3;
+            const int p = (2 * q + parity) & 7;
+            if (coh_have_prev_) {
+                const int d = (p - coh_prev_abs_) & 7; // one of {1,3,5,7}
+                // Same TETRA transition->bits table as the differential path:
+                //   +π/4->(0,0)  +3π/4->(0,1)  −3π/4->(1,1)  −π/4->(1,0)
+                unsigned char b1 = 0, b2 = 0;
+                switch (d) {
+                    case 1: b1 = 0; b2 = 0; break;
+                    case 3: b1 = 0; b2 = 1; break;
+                    case 5: b1 = 1; b2 = 1; break;
+                    case 7: b1 = 1; b2 = 0; break;
+                    default: break; // even d only under gross error; emit (0,0)
+                }
+                bits.push_back(b1);
+                bits.push_back(b2);
+            }
+            coh_prev_abs_ = p;
+            coh_have_prev_ = true;
+            ++coh_idx_;
+        }
+    } else {
+        // ---- Differential detection (default). Slice each (CFO-corrected)
+        // transition per the TETRA table (header):
+        //   sign bit B(2k-1) = 1 when the transition is negative,
+        //   mag  bit B(2k)   = 1 when |transition| is 3π/4 (vs π/4).
+        bits.reserve(diff.size() * 2);
+        for (const auto& d : diff) {
+            float ang = std::atan2(std::imag(d), std::real(d)) - cfo_bias;
+            while (ang > kPi) ang -= 2.0f * kPi;
+            while (ang < -kPi) ang += 2.0f * kPi;
+            const unsigned char b1 = (ang < 0.0f) ? 1u : 0u;
+            const unsigned char b2 = (std::fabs(ang) > (kPi / 2.0f)) ? 1u : 0u;
+            bits.push_back(b1);
+            bits.push_back(b2);
+        }
     }
 
     // Retain the tail for next call (or clear on flush): keep a small margin
@@ -246,6 +303,12 @@ void TetraDpqskDemod::reset() {
     cfo_hz_ = 0.0;
     agc_pow_ = 0.0f;
     agc_init_ = false;
+    coh_cfo_phase_ = 0.0;
+    coh_car_phase_ = 0.0f;
+    coh_car_freq_ = 0.0f;
+    coh_idx_ = 0;
+    coh_prev_abs_ = 0;
+    coh_have_prev_ = false;
 }
 
 } // namespace dsdsrv

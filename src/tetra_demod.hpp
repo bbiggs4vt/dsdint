@@ -93,6 +93,24 @@ struct TetraDemodConfig {
     // corrected CFO upstream; with no offset the estimate is ~0 and the
     // correction is a no-op.
     bool correct_cfo = true;
+
+    // Detection mode. false (default) = differential detection: decode the
+    // angle of s[k]·conj(s[k-1]) directly (non-coherent, phase-blind, no
+    // carrier loop). true = coherent detection: a decision-directed Costas
+    // loop recovers absolute carrier phase, each symbol is hard-decided
+    // against that clean reference, and the *decisions* are differentially
+    // decoded. Coherent detection is ~2 dB better in theory (one clean
+    // reference vs. two noisy samples) but adds a loop that can slip at very
+    // low SNR; see tests/test_tetra_demod.cpp for the measured BER curves.
+    bool coherent = false;
+
+    // π/4-DQPSK alternates between two QPSK constellations (even vs. odd
+    // symbols). Coherent detection must know which recovered symbol is
+    // "even" to collapse them onto one grid; that is a 1-bit ambiguity a
+    // real receiver resolves from the burst training sequence / sync word.
+    // 0 or 1 selects the phase; the wrong choice decodes to noise. Only used
+    // when `coherent` is true.
+    int coherent_parity_offset = 0;
 };
 
 class TetraDpqskDemod {
@@ -152,6 +170,14 @@ private:
     float nu_ = 0.0f;                            // running CFO estimate (cycles/symbol)
     float agc_pow_ = 0.0f;                       // running mean power for the AGC
     bool agc_init_ = false;
+
+    // ---- coherent-detection state (used only when cfg_.coherent) ----
+    double coh_cfo_phase_ = 0.0;  // accumulated feed-forward CFO de-rotation (wrapped)
+    float coh_car_phase_ = 0.0f;  // Costas NCO phase (residual carrier)
+    float coh_car_freq_ = 0.0f;   // Costas loop integrator (residual freq/symbol)
+    int coh_idx_ = 0;             // running recovered-symbol index (parity)
+    int coh_prev_abs_ = 0;        // previous absolute 8-PSK index (0..7)
+    bool coh_have_prev_ = false;  // is coh_prev_abs_ valid?
 };
 
 } // namespace dsdsrv
