@@ -227,6 +227,18 @@ decode errors. That is the predicted low-BER gain showing up on real RF at
 12 dB SNR (traffic-channel decode via tetra-kit was identical, TCH_S being
 robust at that SNR). See `src/tetra_frontend.*`.
 
+Broadened across **six** off-air windows from the same recording (~30–60 s in):
+every one locks cleanly (17–18 bursts, coherent parity 0) and decodes the same
+network (MCC/MNC 234/78, ColorCode 0x17, DL 393.5125 MHz) — good demod
+robustness on real RF. The coherent gain is **SNR-dependent**, exactly as the
+theory predicts: ~5% more messages on the more marginal window, but only
++0.8% (within per-capture noise) across the five cleaner control-channel
+windows, where both detectors already saturate near-zero BER and there is
+little headroom left. All six are **MCCH control-channel** captures with air
+encryption signalled and no in-the-clear traffic channel, so the **CMCE
+call-control** mapping (`DSETUPDEC`/`D-SETUP` etc.) and **voice PCM** still
+await a capture of an unencrypted traffic carrier carrying a live call.
+
 ---
 
 ## Server → Client
