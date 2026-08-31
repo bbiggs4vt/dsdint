@@ -30,7 +30,7 @@
 // the bits. That covers decoding a captured file (the validation path);
 // true streaming with state carried across reads is a later refinement.
 
-#include "tetra_demod.hpp"
+#include "tetra_frontend.hpp"
 #include "tetra_burst_sync.hpp"
 
 #include <cstdio>
@@ -60,16 +60,21 @@ int main(int argc, char** argv) {
     const char* input = nullptr;
     int sps = 4;
     bool correct_cfo = true;
+    bool coherent = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--sps" && i + 1 < argc) sps = std::atoi(argv[++i]);
         else if (a == "--no-cfo") correct_cfo = false;
+        else if (a == "--coherent") coherent = true;
         else if (a == "-h" || a == "--help") {
             std::fprintf(stderr,
-                "usage: %s [--sps N] [--no-cfo] <iq.cf32 | ->\n"
+                "usage: %s [--sps N] [--no-cfo] [--coherent] <iq.cf32 | ->\n"
                 "  Reads interleaved float32 I/Q (sps*18000 Hz), writes the TETRA\n"
-                "  bitstream (1 byte per bit) to stdout for piping into tetra-rx.\n",
+                "  bitstream (1 byte per bit) to stdout for piping into tetra-rx.\n"
+                "  --coherent uses Costas carrier recovery (≈1.5-1.7 dB better at\n"
+                "  mid SNR), resolving the π/4 parity via burst-grid lock; it\n"
+                "  falls back to differential detection if it can't lock.\n",
                 argv[0]);
             return 0;
         } else if (a[0] != '-' || a == "-") {
@@ -95,10 +100,11 @@ int main(int argc, char** argv) {
     std::vector<std::complex<float>> iq(nsamp);
     std::memcpy(iq.data(), raw.data(), nsamp * 2 * sizeof(float));
 
-    TetraDemodConfig cfg;
-    cfg.samples_per_symbol = sps;
-    cfg.correct_cfo = correct_cfo;
-    TetraDpqskDemod demod(cfg);
+    TetraFrontendConfig cfg;
+    cfg.demod.samples_per_symbol = sps;
+    cfg.demod.correct_cfo = correct_cfo;
+    cfg.coherent = coherent;
+    TetraDemodFrontend demod(cfg);
     std::vector<unsigned char> bits = demod.demodulate(iq.data(), iq.size());
     // Whole-file (non-streaming) use: drain the trailing samples the streaming
     // demod holds back for matched-filter context, so no symbols are lost.
@@ -115,10 +121,15 @@ int main(int argc, char** argv) {
     // Diagnostics + a "looks like TETRA?" lock check.
     TetraBurstSync sync;
     TetraLock lk = sync.synchronize(bits.data(), bits.size());
+    const char* mode = !coherent ? "differential"
+                       : demod.fell_back() ? "coherent->differential (no lock)"
+                       : "coherent";
     std::fprintf(stderr,
-        "tetra_bit_source: %zu IQ samples -> %zu bits; CFO est %.0f Hz; %s",
-        nsamp, bits.size(), demod.last_cfo_hz(),
+        "tetra_bit_source: %zu IQ samples -> %zu bits; detect=%s; CFO est %.0f Hz; %s",
+        nsamp, bits.size(), mode, demod.last_cfo_hz(),
         lk.locked ? "TETRA burst grid LOCKED" : "no burst-grid lock");
+    if (coherent && demod.coherent_locked())
+        std::fprintf(stderr, " [coherent parity %d]", demod.resolved_parity());
     if (lk.locked)
         std::fprintf(stderr, " (phase %ld, %d bursts)", lk.phase, lk.confirmations);
     std::fprintf(stderr, "\n");

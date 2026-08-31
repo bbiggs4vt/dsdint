@@ -74,7 +74,7 @@
 // hint selects.
 #include "fm_demod_selector.hpp"
 #include "dsd_backend_selector.hpp"
-#include "tetra_demod.hpp"
+#include "tetra_frontend.hpp"
 #include "tetra_backend_iface.hpp"
 
 namespace dsdsrv {
@@ -130,7 +130,7 @@ private:
     // + tetra_backend_ (the chosen subprocess backend). The idle path's
     // members stay null/stopped.
     std::unique_ptr<ActiveFmDemodulator> demod_;
-    std::unique_ptr<TetraDpqskDemod> tetra_demod_;
+    std::unique_ptr<TetraDemodFrontend> tetra_demod_;
     // Guards every use of the demod (FM or TETRA) -- both the pointer and
     // calls through it. The demodulators document their setters as only safe
     // "from the same thread that owns this object", but three threads

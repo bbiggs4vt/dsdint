@@ -107,31 +107,40 @@ int main(int argc, char** argv) {
         std::fclose(f);
     }
 
-    // Run the tool and capture its stdout (the bitstream).
-    const std::string cmd = "'" + tool + "' '" + iqfile + "'";
-    std::FILE* p = popen(cmd.c_str(), "r");
-    check(p != nullptr, "tetra_bit_source runs");
-    std::vector<uint8_t> bits;
-    if (p) {
-        uint8_t buf[4096]; std::size_t n;
-        while ((n = std::fread(buf, 1, sizeof(buf), p)) > 0) bits.insert(bits.end(), buf, buf + n);
-        pclose(p);
-    }
+    // Run the tool (optionally with extra flags) and return its stdout bits.
+    auto run_tool = [&](const std::string& flags) {
+        const std::string cmd = "'" + tool + "' " + flags + "'" + iqfile + "'";
+        std::FILE* p = popen(cmd.c_str(), "r");
+        std::vector<uint8_t> bits;
+        if (p) {
+            uint8_t buf[4096]; std::size_t n;
+            while ((n = std::fread(buf, 1, sizeof(buf), p)) > 0) bits.insert(bits.end(), buf, buf + n);
+            pclose(p);
+        }
+        return bits;
+    };
+    // Check one invocation's output: full binary bitstream that locks the grid.
+    auto verify = [&](const std::vector<uint8_t>& bits, const std::string& label) {
+        std::printf("  (%s: emitted %zu bits)\n", label.c_str(), bits.size());
+        check(bits.size() > 9000, label + ": full bitstream (~2 bits/symbol over 20 slots)");
+        bool binary_ok = true;
+        for (uint8_t b : bits) if (b > 1) { binary_ok = false; break; }
+        check(binary_ok, label + ": every emitted byte is an unpacked bit (0x00/0x01)");
+        TetraBurstSync sync;
+        TetraLock lk = sync.synchronize(bits.data(), bits.size());
+        std::printf("    (grid lock: %s, phase %ld, %d bursts)\n",
+                    lk.locked ? "yes" : "no", lk.phase, lk.confirmations);
+        check(lk.locked, label + ": bitstream locks the TETRA burst grid (ready for tetra-rx)");
+        check(lk.confirmations >= 18, label + ": nearly all bursts confirm the grid");
+    };
+
+    // Default (differential) detection.
+    verify(run_tool(""), "differential");
+    // Coherent detection: the Costas path resolves its π/4 parity from the
+    // burst grid, so its emitted bits must lock exactly the same way.
+    verify(run_tool("--coherent "), "coherent");
+
     std::remove(iqfile.c_str());
-
-    std::printf("  (tool emitted %zu bits)\n", bits.size());
-    check(bits.size() > 9000, "tool emits a full bitstream (~2 bits/symbol over 20 slots)");
-    bool binary_ok = true;
-    for (uint8_t b : bits) if (b > 1) { binary_ok = false; break; }
-    check(binary_ok, "every emitted byte is an unpacked bit (0x00/0x01)");
-
-    // The emitted bits must lock the TETRA burst grid.
-    TetraBurstSync sync;
-    TetraLock lk = sync.synchronize(bits.data(), bits.size());
-    std::printf("  (grid lock: %s, phase %ld, %d bursts)\n",
-                lk.locked ? "yes" : "no", lk.phase, lk.confirmations);
-    check(lk.locked, "emitted bitstream locks the TETRA burst grid (ready for tetra-rx)");
-    check(lk.confirmations >= 18, "nearly all bursts confirm the grid");
 
     if (g_failures == 0) { std::printf("\nALL TETRA BIT SOURCE TESTS PASSED\n"); return 0; }
     std::printf("\n%d CHECK(S) FAILED\n", g_failures);

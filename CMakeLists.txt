@@ -54,6 +54,8 @@ find_package(ZLIB REQUIRED)
 # against libm (demod DSP) and ZLIB::ZLIB (tetra-kit speech extraction).
 set(TETRA_RUNTIME_SOURCES
   src/tetra_demod.cpp
+  src/tetra_burst_sync.cpp
+  src/tetra_frontend.cpp
   src/tetra_process.cpp
   src/tetra_tetmon.cpp
   src/tetra_kit_process.cpp
@@ -97,11 +99,24 @@ target_compile_options(test_tetra_burst_sync PRIVATE -Wall -Wextra)
 add_test(NAME tetra_burst_sync_test COMMAND test_tetra_burst_sync)
 set_tests_properties(tetra_burst_sync_test PROPERTIES TIMEOUT 60)
 
+# TetraDemodFrontend: keeps the differential demod as default and adds the
+# coherent (Costas) path whose π/4 parity is resolved by burst-grid lock.
+# Self-contained (burst generator + modulator as ground truth); links the
+# demod, burst sync, and the frontend.
+add_executable(test_tetra_frontend EXCLUDE_FROM_ALL
+  src/tetra_frontend.cpp src/tetra_demod.cpp src/tetra_burst_sync.cpp
+  tests/test_tetra_frontend.cpp)
+target_include_directories(test_tetra_frontend PRIVATE src)
+target_link_libraries(test_tetra_frontend PRIVATE m)
+target_compile_options(test_tetra_frontend PRIVATE -Wall -Wextra)
+add_test(NAME tetra_frontend_test COMMAND test_tetra_frontend)
+set_tests_properties(tetra_frontend_test PROPERTIES TIMEOUT 60)
+
 # tetra_bit_source: the GNU-Radio-replacement bridge — IQ in, the TETRA
 # bitstream (1 byte/bit) out on stdout, for piping into osmo-tetra's
 # tetra-rx (or tetra-kit). The subprocess path to TETRA decode.
 add_executable(tetra_bit_source EXCLUDE_FROM_ALL
-  tools/tetra_bit_source.cpp src/tetra_demod.cpp src/tetra_burst_sync.cpp)
+  tools/tetra_bit_source.cpp src/tetra_frontend.cpp src/tetra_demod.cpp src/tetra_burst_sync.cpp)
 target_include_directories(tetra_bit_source PRIVATE src)
 target_link_libraries(tetra_bit_source PRIVATE m)
 target_compile_options(tetra_bit_source PRIVATE -Wall -Wextra)

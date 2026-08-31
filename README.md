@@ -389,6 +389,18 @@ speech extraction); the decoders themselves must be on `PATH` at run time,
 and the `Dockerfile` bundles both. A session started with a TETRA `protocol`
 whose decoder isn't installed replies with an `error` frame and stays open.
 
+**Detection mode (differential vs. coherent).** The modem defaults to
+differential detection — phase-blind, robust, no carrier loop. Setting
+`DSD_TETRA_COHERENT=1` in the server's environment switches TETRA sessions to
+**Costas coherent detection**, which decides each symbol against a recovered
+carrier reference for **≈1.5–1.7 dB** better BER in the mid-SNR range (measured
+in `tests/test_tetra_demod.cpp`). It carries a low-SNR crossover (~1.3 dB
+Eb/N0) below which the loop can slip, so it stays opt-in. π/4-DQPSK's even/odd
+constellation parity — which coherent detection must know — is resolved
+automatically from burst-grid lock (`src/tetra_frontend.*`); if it can't lock
+(non-TETRA or too-weak signal) the session falls back to differential. The
+`tetra_bit_source` bridge tool exposes the same choice via `--coherent`.
+
 ## Comparing the two demod backends: demod_benchmark
 
 `demod_benchmark.cpp` is a head-to-head performance comparison, not a

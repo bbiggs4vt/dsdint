@@ -344,11 +344,19 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         int tetra_sps = static_cast<int>(std::llround(sample_rate / 18000.0));
         if (tetra_sps < 2) tetra_sps = 2;
         {
-            TetraDemodConfig tdcfg;
-            tdcfg.samples_per_symbol = tetra_sps;
-            tdcfg.correct_cfo = true; // pull in residual SDR ppm error (±Rs/8)
+            TetraFrontendConfig tdcfg;
+            tdcfg.demod.samples_per_symbol = tetra_sps;
+            tdcfg.demod.correct_cfo = true; // pull in residual SDR ppm error (±Rs/8)
+            // Detection defaults to differential (robust, phase-blind). Setting
+            // DSD_TETRA_COHERENT=1 switches to Costas coherent detection, which
+            // resolves its π/4 parity from burst-grid lock and falls back to
+            // differential if it can't lock (see tetra_frontend.hpp). It buys
+            // ~1.5-1.7 dB at mid SNR but can slip at the very low-SNR fringe,
+            // so it stays opt-in.
+            const char* coh = std::getenv("DSD_TETRA_COHERENT");
+            tdcfg.coherent = (coh && coh[0] == '1');
             std::lock_guard<std::mutex> lock(demod_mutex_);
-            tetra_demod_ = std::make_unique<TetraDpqskDemod>(tdcfg);
+            tetra_demod_ = std::make_unique<TetraDemodFrontend>(tdcfg);
         }
 
         // "tetra" -> osmo tetra-rx, "tetrakit" -> tetra-kit's decoder.
