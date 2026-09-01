@@ -262,6 +262,20 @@ encryption signalled and no in-the-clear traffic channel, so the **CMCE
 call-control** mapping (`DSETUPDEC`/`D-SETUP` etc.) and **voice PCM** still
 await a capture of an unencrypted traffic carrier carrying a live call.
 
+A second, independent capture set later confirmed all of this on the same
+network: **29 IQ snapshots** (complex float32 at a non-round **40690.104 Hz**,
+resampled to the demod's rate) across **three carriers** — two MCCH control
+channels and, this time, an active **traffic** channel (392.5625 MHz, decoding
+`ACCESS-ASSIGN DL_USAGE:Traffic`, i.e. a live call in progress). Our π/4 demod +
+the real osmo `tetra-rx` decoded them cleanly — SYNC (MCC/MNC 234/78, CC 0x17),
+BNCH SYSINFO (DL 393.5125 MHz, LA 6163), and D-NWRK-BROADCAST neighbour-cell
+lists, all CRC-valid — re-confirming the demod on a fresh rate/format. But every
+SYSINFO again carried **Air encryption: 1**, so the call's CMCE setup PDUs stay
+encrypted and the call-control mapping remained undecodable even with a live
+traffic carrier present. The gap is therefore **not a capture-availability
+problem but an encrypted-network one**: it needs a TETRA network that runs its
+control plane in the clear (`Air encryption: 0`).
+
 ### TETRAPOL (`protocol":"tetrapol"`)
 
 TETRAPOL is a **different air interface** from TETRA — constant-envelope
