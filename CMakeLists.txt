@@ -97,6 +97,17 @@ target_compile_options(test_tetrapol_demod PRIVATE -Wall -Wextra)
 add_test(NAME tetrapol_demod_test COMMAND test_tetrapol_demod)
 set_tests_properties(tetrapol_demod_test PROPERTIES TIMEOUT 60)
 
+# TETRAPOL frame synchroniser: finds the 7-bit frame-sync word to lock the
+# 160-bit frame grid. Self-contained (planted grid); end-to-end case links the
+# GMSK demod.
+add_executable(test_tetrapol_frame_sync EXCLUDE_FROM_ALL
+  src/tetrapol_frame_sync.cpp src/tetrapol_demod.cpp tests/test_tetrapol_frame_sync.cpp)
+target_include_directories(test_tetrapol_frame_sync PRIVATE src)
+target_link_libraries(test_tetrapol_frame_sync PRIVATE m)
+target_compile_options(test_tetrapol_frame_sync PRIVATE -Wall -Wextra)
+add_test(NAME tetrapol_frame_sync_test COMMAND test_tetrapol_frame_sync)
+set_tests_properties(tetrapol_frame_sync_test PROPERTIES TIMEOUT 60)
+
 # TETRA burst/frame synchroniser: finds the real training sequences in the
 # demodulated bitstream to lock the 510-bit burst grid. Self-contained
 # (a burst generator plants the sequences; end-to-end case links the demod).
