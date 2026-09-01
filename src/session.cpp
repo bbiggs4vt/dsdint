@@ -136,16 +136,18 @@ void Session::handle_text_message(const std::string& msg) {
             std::string key = json::get_string(obj, "key");
             start_pipeline(sample_rate, bw, offset, gain, afc, protocol, key_type, key);
         } else if (type == "set_gain") {
-            // TETRA has no FM discriminator, so discriminator gain doesn't
-            // apply there -- accept the message (no error) and ignore it.
-            if (!tetra_active_.load()) {
+            // Only the FM discriminator has a gain knob; the TETRA (π/4) and
+            // TETRAPOL (GMSK) modems don't -- accept the message (no error) and
+            // ignore it on those chains.
+            if (chain_.load() == Chain::Fm) {
                 std::lock_guard<std::mutex> lock(demod_mutex_);
                 if (demod_) demod_->set_gain(static_cast<float>(json::get_number(obj, "gain", 26000.0)));
             }
         } else if (type == "set_freq_offset") {
-            // The π/4 demod estimates and removes residual CFO itself (±Rs/8),
-            // so a TETRA session has no live NCO to retune -- accept and ignore.
-            if (!tetra_active_.load()) {
+            // The TETRA π/4 demod estimates and removes residual CFO itself
+            // (±Rs/8) and the TETRAPOL GMSK path cancels CFO via per-sample DC
+            // removal, so neither has a live NCO to retune -- accept and ignore.
+            if (chain_.load() == Chain::Fm) {
                 std::lock_guard<std::mutex> lock(demod_mutex_);
                 if (demod_) demod_->set_freq_offset(json::get_number(obj, "hz", 0.0));
             }
@@ -199,7 +201,7 @@ namespace {
 // also falls back to auto-detect rather than erroring (a typo shouldn't
 // kill a stream).
 enum class ProtocolHint { Default, Dmr, Nxdn48, Nxdn96, P25p1, P25p2, Dpmr, Dstar, Ysf, Auto,
-                          Tetra, Tetrakit,
+                          Tetra, Tetrakit, Tetrapol,
                           // dsd-fme-only modes (no DSDcc decoder): EDACS trunking
                           // + its ProVoice digital voice, and legacy Motorola
                           // X2-TDMA. Edacs = Standard/NET, EdacsEa = Extended
@@ -225,6 +227,9 @@ ProtocolHint parse_protocol_hint(std::string s) {
     // "tetrakit" -> tetra-kit's decoder. Both alias forms normalize here.
     if (k == "tetra" || k == "tetraosmo" || k == "osmotetra") return ProtocolHint::Tetra;
     if (k == "tetrakit") return ProtocolHint::Tetrakit;
+    // TETRAPOL is its own chain again (GMSK modem + tetrapol_dump), distinct
+    // from TETRA -- different air interface, not just a different backend.
+    if (k == "tetrapol") return ProtocolHint::Tetrapol;
     // EDACS (+ its ProVoice digital voice) and legacy Motorola X2-TDMA -- all
     // decoded by the dsd-fme backend only. "esk" selects the 0xA0 ESK-masked
     // control-channel variant; "ea" selects Extended Addressing.
@@ -240,6 +245,10 @@ ProtocolHint parse_protocol_hint(std::string s) {
 
 bool hint_is_tetra(ProtocolHint h) {
     return h == ProtocolHint::Tetra || h == ProtocolHint::Tetrakit;
+}
+
+bool hint_is_tetrapol(ProtocolHint h) {
+    return h == ProtocolHint::Tetrapol;
 }
 
 // Key handling is DSD-only (a TETRA session decrypts nothing here -- TETRA's
@@ -296,6 +305,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
     const ProtocolHint hint = parse_protocol_hint(protocol);
 
     const bool want_tetra = hint_is_tetra(hint);
+    const bool want_tetrapol = hint_is_tetrapol(hint);
 
     // Event/audio callbacks are backend-agnostic (every backend's start()
     // takes these same std::function signatures and hands us the same
@@ -389,7 +399,46 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
             tetra_backend_.reset();
             return;
         }
-        tetra_active_.store(true);
+        chain_.store(Chain::Tetra);
+    } else if (want_tetrapol) {
+        // ---- TETRAPOL: GMSK modem front end + the tetrapol_dump backend ----
+        // Like the TETRA chain, the FM-path knobs and DSD key options don't
+        // apply; accept them for a uniform "start" shape and ignore them.
+        // TETRAPOL uses no encryption we handle here.
+        (void)channel_bw; (void)freq_offset; (void)gain; (void)afc;
+        (void)key_type; (void)key;
+
+        // TETRAPOL is 8000 bit/s GMSK (1 bit/symbol), so IQ must arrive at
+        // samples_per_symbol * 8000 Hz; derive sps from the client's
+        // sample_rate (e.g. 16000 -> 2) and clamp to a sane floor.
+        int tp_sps = static_cast<int>(std::llround(sample_rate / 8000.0));
+        if (tp_sps < 2) tp_sps = 2;
+        {
+            TetrapolDemodConfig tpcfg;
+            tpcfg.samples_per_symbol = tp_sps;
+            // Bit polarity is a 1-bit unknown on an SDR feed (spectral
+            // inversion). tetrapol_dump re-syncs from the raw stream and the
+            // differential decode is polarity-invariant, but its raw frame-sync
+            // search is not, so a spectrally-inverted feed may not lock. Expose
+            // the demod's invert as an escape hatch: DSD_TETRAPOL_INVERT=1.
+            const char* inv = std::getenv("DSD_TETRAPOL_INVERT");
+            tpcfg.invert = (inv && inv[0] == '1');
+            std::lock_guard<std::mutex> lock(demod_mutex_);
+            tetrapol_demod_ = std::make_unique<TetrapolGmskDemod>(tpcfg);
+        }
+
+        TetrapolProcessConfig tpp;
+        // tetrapol_dump path/args come from defaults; forward_unknown stays
+        // false (suppress CODOPs the parser doesn't map). No audio path.
+        bool ok = tetrapol_backend_.start(tpp, on_event);
+        if (!ok) {
+            send_text(json::Writer().field("type", std::string("error"))
+                          .field("message", std::string("failed to start TETRAPOL backend")).str());
+            std::lock_guard<std::mutex> lock(demod_mutex_);
+            tetrapol_demod_.reset();
+            return;
+        }
+        chain_.store(Chain::Tetrapol);
     } else {
         // ---- FM discriminator + DSD backend ----
         // Validate the optional decryption key up front: a named key_type with
@@ -546,28 +595,27 @@ void Session::stop_pipeline() {
     iq_cv_.notify_all();
     if (worker_thread_.joinable()) worker_thread_.join();
 
-    // Stop whichever chain this session ran. tetra_active_ was set in
-    // start_pipeline; the idle chain's members are null/stopped, so both
-    // stops are safe to attempt but we key off the flag for clarity.
-    const bool was_tetra = tetra_active_.exchange(false);
-    if (was_tetra) {
-        if (tetra_backend_) tetra_backend_->stop();
-    } else {
-        dsd_.stop();
+    // Stop whichever chain this session ran. chain_ was set in start_pipeline;
+    // the idle chains' members are null/stopped, so keying off chain_ just
+    // avoids redundant stops. Reset to Fm (the default) as we tear down.
+    const Chain chain = chain_.exchange(Chain::Fm);
+    switch (chain) {
+        case Chain::Tetra:    if (tetra_backend_) tetra_backend_->stop(); break;
+        case Chain::Tetrapol: tetrapol_backend_.stop(); break;
+        case Chain::Fm:       dsd_.stop(); break;
     }
     {
         // Safe to take here: the worker was joined above, so nothing is
         // inside process()/demodulate() holding this.
         std::lock_guard<std::mutex> lock(demod_mutex_);
-        if (was_tetra) {
-            tetra_demod_.reset();
-            tetra_backend_.reset();
-        } else {
-            demod_.reset();
+        switch (chain) {
+            case Chain::Tetra:    tetra_demod_.reset(); tetra_backend_.reset(); break;
+            case Chain::Tetrapol: tetrapol_demod_.reset(); break;
+            case Chain::Fm:       demod_.reset(); break;
         }
     }
 #if !defined(DSD_USE_DSDCC_BACKEND)
-    // Only the dsd-fme subprocess path allocates an audio port; a TETRA
+    // Only the dsd-fme subprocess path allocates an audio port; a TETRA/TETRAPOL
     // session never did (udp_audio_port_ stayed 0, and release ignores 0).
     release_udp_port(udp_audio_port_);
     udp_audio_port_ = 0;
@@ -580,19 +628,20 @@ void Session::stop_pipeline() {
 }
 
 void Session::demod_worker_loop() {
-    // tetra_active_ is fixed for this worker's lifetime: start_pipeline sets
-    // it (and creates the matching demod/backend) before launching the
-    // thread, and stop_pipeline joins the thread before clearing it. So we
-    // read it once and take the matching path.
+    // chain_ is fixed for this worker's lifetime: start_pipeline sets it (and
+    // creates the matching demod/backend) before launching the thread, and
+    // stop_pipeline joins the thread before clearing it. So we read it once and
+    // take the matching path.
     //
-    // TETRA path: demodulate each IQ block to bits and relay them to the
-    // decoder. TetraDpqskDemod is streaming -- filter history, the timing
-    // loop, the differential reference, the CFO estimate and the AGC all
-    // carry across demodulate() calls -- so decoding per WebSocket frame is
+    // The TETRA and TETRAPOL paths demodulate each IQ block to bits and relay
+    // them to their subprocess decoder; the FM path demodulates to PCM and
+    // feeds the DSD backend. All the demodulators are streaming -- filter
+    // history, the timing loop, the differential/CFO state and the AGC carry
+    // across demodulate()/process() calls -- so decoding per WebSocket frame is
     // continuous with no per-frame restart or seam glitch (a fresh demod is
-    // created per start(), the clean-slate boundary). The few trailing
-    // samples held back for filter context at a stop are immaterial.
-    const bool tetra = tetra_active_.load();
+    // created per start(), the clean-slate boundary). The few trailing samples
+    // held back for filter context at a stop are immaterial.
+    const Chain chain = chain_.load();
     std::vector<int16_t> pcm_scratch;
     while (worker_running_.load()) {
         std::vector<cf32> block;
@@ -604,7 +653,7 @@ void Session::demod_worker_loop() {
             iq_queue_.pop_front();
         }
 
-        if (tetra) {
+        if (chain == Chain::Tetra) {
             std::vector<unsigned char> bits;
             {
                 std::lock_guard<std::mutex> lock(demod_mutex_);
@@ -612,6 +661,15 @@ void Session::demod_worker_loop() {
             }
             if (!bits.empty() && tetra_backend_) {
                 tetra_backend_->write_bits(bits.data(), bits.size());
+            }
+        } else if (chain == Chain::Tetrapol) {
+            std::vector<unsigned char> bits;
+            {
+                std::lock_guard<std::mutex> lock(demod_mutex_);
+                if (tetrapol_demod_) bits = tetrapol_demod_->demodulate(block.data(), block.size());
+            }
+            if (!bits.empty()) {
+                tetrapol_backend_.write_bits(bits.data(), bits.size());
             }
         } else {
             pcm_scratch.clear();

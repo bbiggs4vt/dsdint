@@ -40,9 +40,10 @@
 //   signal chain for the session. Most hints ("dmr", "nxdn48", "p25", ...)
 //   and the default run the FM-discriminator + DSD backend; "tetra" and
 //   "tetrakit" instead run the π/4-DQPSK modem feeding a TETRA subprocess
-//   backend (osmo tetra-rx or tetra-kit's decoder respectively). One binary
-//   carries both front ends and instantiates whichever the hint selects; the
-//   two never run at once within a single session.
+//   backend (osmo tetra-rx or tetra-kit's decoder respectively); "tetrapol"
+//   runs the GMSK modem feeding the tetrapol_dump subprocess backend. One
+//   binary carries all three front ends and instantiates whichever the hint
+//   selects; they never run at once within a single session.
 //
 //   PROTOCOL.md at the repo root is the full reference -- exact shapes,
 //   all error texts, per-backend event semantics, real captured
@@ -62,20 +63,24 @@
 #include <mutex>
 #include <condition_variable>
 
-// The server carries two signal chains and picks one per session at run time
+// The server carries three signal chains and picks one per session at run time
 // (from the client's "protocol" hint -- see start_pipeline):
 //   * FM-discriminator + DSD backend (dsd-fme subprocess or in-process DSDcc,
 //     chosen at build time via dsd_backend_selector.hpp) for the analog-FM
 //     digital modes;
 //   * π/4-DQPSK modem + a TETRA subprocess backend (osmo tetra-rx or
 //     tetra-kit's decoder, chosen at run time via tetra_backend_iface.hpp)
-//     for TETRA, which is not an FM mode.
-// Both are always compiled in; a given session instantiates only the one its
+//     for TETRA, which is not an FM mode;
+//   * GMSK modem + the tetrapol_dump subprocess backend for TETRAPOL, also
+//     not an FM mode (constant-envelope 8 kbit/s GMSK, not π/4-DQPSK).
+// All are always compiled in; a given session instantiates only the one its
 // hint selects.
 #include "fm_demod_selector.hpp"
 #include "dsd_backend_selector.hpp"
 #include "tetra_frontend.hpp"
 #include "tetra_backend_iface.hpp"
+#include "tetrapol_demod.hpp"
+#include "tetrapol_process.hpp"
 
 namespace dsdsrv {
 
@@ -124,13 +129,23 @@ private:
     // connection without them racing the network thread's own reads/
     // writes on ws_.
     beast::flat_buffer read_buffer_;
-    // Both front ends are members; start_pipeline instantiates exactly one
-    // per session, keyed by tetra_active_. FM path: demod_ + dsd_. TETRA
-    // path: tetra_demod_ (the π/4-DQPSK modem turning IQ into the bitstream)
-    // + tetra_backend_ (the chosen subprocess backend). The idle path's
-    // members stay null/stopped.
+    // Which signal chain this session runs. Set in start_pipeline before the
+    // worker thread launches, read by the worker loop and the live setters,
+    // reset in stop_pipeline. Only touched on the strand thread except the
+    // worker, which reads it after worker_running_ is set (so it is stable for
+    // the worker's lifetime); the atomic keeps that publication well-defined.
+    enum class Chain { Fm, Tetra, Tetrapol };
+    std::atomic<Chain> chain_{Chain::Fm};
+
+    // All three front ends are members; start_pipeline instantiates exactly one
+    // per session, keyed by chain_. FM path: demod_ + dsd_. TETRA path:
+    // tetra_demod_ (the π/4-DQPSK modem turning IQ into the bitstream) +
+    // tetra_backend_ (the chosen subprocess backend). TETRAPOL path:
+    // tetrapol_demod_ (the GMSK modem) + tetrapol_backend_ (tetrapol_dump). The
+    // idle paths' members stay null/stopped.
     std::unique_ptr<ActiveFmDemodulator> demod_;
     std::unique_ptr<TetraDemodFrontend> tetra_demod_;
+    std::unique_ptr<TetrapolGmskDemod> tetrapol_demod_;
     // Guards every use of the demod (FM or TETRA) -- both the pointer and
     // calls through it. The demodulators document their setters as only safe
     // "from the same thread that owns this object", but three threads
@@ -150,13 +165,10 @@ private:
     // The runtime-selected TETRA backend, non-null only while a TETRA session
     // is active (created in start_pipeline via make_tetra_backend).
     std::unique_ptr<ITetraBackend> tetra_backend_;
-    // Which chain this session is running. Set in start_pipeline, read by the
-    // worker loop and the live setters, cleared in stop_pipeline. Only touched
-    // on the strand thread except worker_thread_ reads it after worker_running_
-    // is set (so it is stable for the worker's lifetime); an atomic keeps that
-    // publication well-defined.
-    std::atomic<bool> tetra_active_{false};
-    uint16_t udp_audio_port_ = 0; // only meaningful for the DsdProcess (subprocess) backend; 0 under TETRA/DSDcc
+    // The TETRAPOL subprocess backend (tetrapol_dump). A concrete value member
+    // like dsd_ (not polymorphic); idle unless chain_ == Tetrapol.
+    TetrapolProcess tetrapol_backend_;
+    uint16_t udp_audio_port_ = 0; // only meaningful for the DsdProcess (subprocess) backend; 0 under TETRA/TETRAPOL/DSDcc
 
     // Producer (network thread via on_binary) / consumer (worker thread)
     // queue of raw IQ blocks awaiting demodulation.

@@ -46,12 +46,16 @@ find_package(Threads REQUIRED)
 # compiles session.cpp.
 find_package(ZLIB REQUIRED)
 
-# TETRA runtime path. session.cpp selects the π/4-DQPSK + TETRA-subprocess
-# chain at run time from the client's "protocol" hint (see tetra_backend_iface.hpp),
-# so every binary that compiles session.cpp must also link the whole TETRA
-# stack -- both subprocess backends (osmo tetra-rx via TetraProcess, tetra-kit's
-# decoder via TetraKitProcess) plus the shared demod and parsers. These link
-# against libm (demod DSP) and ZLIB::ZLIB (tetra-kit speech extraction).
+# Non-FM runtime paths. session.cpp selects one of three signal chains at run
+# time from the client's "protocol" hint: the FM+DSD chain (compiled directly),
+# the π/4-DQPSK + TETRA-subprocess chain (see tetra_backend_iface.hpp), and the
+# GMSK + tetrapol_dump chain. So every binary that compiles session.cpp must
+# also link the whole TETRA stack -- both subprocess backends (osmo tetra-rx via
+# TetraProcess, tetra-kit's decoder via TetraKitProcess) plus the shared demod
+# and parsers -- and the TETRAPOL stack (GMSK demod + tetrapol_dump backend +
+# its parser). These link against libm (demod DSP) and ZLIB::ZLIB (tetra-kit
+# speech extraction). The variable keeps its historical name; it now carries
+# both non-FM chains.
 set(TETRA_RUNTIME_SOURCES
   src/tetra_demod.cpp
   src/tetra_burst_sync.cpp
@@ -61,6 +65,9 @@ set(TETRA_RUNTIME_SOURCES
   src/tetra_kit_process.cpp
   src/tetra_kit_json.cpp
   src/tetra_voice.cpp
+  src/tetrapol_demod.cpp
+  src/tetrapol_process.cpp
+  src/tetrapol_output.cpp
 )
 
 add_executable(dsd-server
