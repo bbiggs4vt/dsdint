@@ -437,6 +437,14 @@ in the tree — so the bit-polarity convention (escape hatch:
 source-pinned pending a real off-air signal. `PROTOCOL.md`'s TETRAPOL section is
 the wire reference.
 
+**Bridge tool.** `tetrapol_bit_source` (the analog of `tetra_bit_source`) is the
+validation path for when a real capture appears: it runs the same in-tree GMSK
+demod on an IQ file and writes the 1-byte-per-bit stream `tetrapol_dump`
+consumes, so you can drive the real decoder without GNU Radio —
+`tetrapol_bit_source capture.cf32 | tetrapol_dump` — and see whether the TSDU
+decode comes out. Its stderr reports a frame-grid lock check and the detected
+raw-stream polarity (telling you whether to add `--invert`).
+
 ## Comparing the two demod backends: demod_benchmark
 
 `demod_benchmark.cpp` is a head-to-head performance comparison, not a

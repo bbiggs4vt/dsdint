@@ -139,6 +139,29 @@ add_test(NAME tetrapol_process_test
          COMMAND test_tetrapol_process $<TARGET_FILE:tetrapol_fake_dump>)
 set_tests_properties(tetrapol_process_test PROPERTIES TIMEOUT 60)
 
+# tetrapol_bit_source: the GNU-Radio-replacement bridge for TETRAPOL — IQ in,
+# the GMSK bitstream (1 byte/bit) out on stdout, for piping into tetrapol-kit's
+# tetrapol_dump. The analog of tetra_bit_source. Validation path for a real
+# TETRAPOL capture (none in the tree yet).
+add_executable(tetrapol_bit_source EXCLUDE_FROM_ALL
+  tools/tetrapol_bit_source.cpp src/tetrapol_demod.cpp src/tetrapol_frame_sync.cpp)
+target_include_directories(tetrapol_bit_source PRIVATE src)
+target_link_libraries(tetrapol_bit_source PRIVATE m)
+target_compile_options(tetrapol_bit_source PRIVATE -Wall -Wextra)
+
+# End-to-end test of the bridge: runs the built binary as a subprocess on a
+# generated TETRAPOL GMSK IQ file and confirms the emitted bits lock the frame
+# grid (both polarities).
+add_executable(test_tetrapol_bit_source EXCLUDE_FROM_ALL
+  tests/test_tetrapol_bit_source.cpp src/tetrapol_frame_sync.cpp)
+target_include_directories(test_tetrapol_bit_source PRIVATE src)
+target_link_libraries(test_tetrapol_bit_source PRIVATE m)
+target_compile_options(test_tetrapol_bit_source PRIVATE -Wall -Wextra)
+add_dependencies(test_tetrapol_bit_source tetrapol_bit_source)
+add_test(NAME tetrapol_bit_source_test
+         COMMAND test_tetrapol_bit_source $<TARGET_FILE:tetrapol_bit_source>)
+set_tests_properties(tetrapol_bit_source_test PROPERTIES TIMEOUT 60)
+
 # TETRA burst/frame synchroniser: finds the real training sequences in the
 # demodulated bitstream to lock the 510-bit burst grid. Self-contained
 # (a burst generator plants the sequences; end-to-end case links the demod).
