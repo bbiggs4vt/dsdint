@@ -9,6 +9,13 @@
 // it accumulates the field lines under a CODOP header and emits one DsdEvent
 // when the next message (or end of stream) arrives.
 //
+// It also surfaces tetrapol_dump's one-line "unsupported codop 0xNN" reports as
+// events: those are PDUs it decoded through FEC/CRC but has no field printer
+// for, and they dominate real traffic (e.g. D_GROUP_IDLE 0x58 on a control
+// channel), so a codop->name table names and forwards them rather than dropping
+// them. Validated on a real off-air capture (sigidwiki), which decoded repeated
+// D_GROUP_IDLE messages this way.
+//
 // Output format pinned to tetrapol-kit (lib/tsdu.c, lib/addr.c) printf strings:
 //   CODOP=0x%02x (D_SYSTEM_INFO)      <- message header (message type name)
 //   \t\tCOUNTRY_CODE=%d

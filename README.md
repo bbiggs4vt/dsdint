@@ -431,18 +431,20 @@ decoder isn't installed replies with an `error` frame and stays open.
 matching GMSK modulator under phase/CFO/timing offsets and graceful AWGN
 degradation; frame lock on planted grids with polarity/error tolerance; and the
 parser against tetrapol-kit's exact `printf` output (pinned to `lib/tsdu.c` /
-`lib/addr.c`). The **physical layer is additionally validated on a real off-air
-capture** (a sigidwiki TETRAPOL IQ WAV): through `iq_wav_to_cf32.py` → the GMSK
-demod → the frame sync, the grid locks **continuously (183 consecutive frames,
-~3.7 s)** and the real `tetrapol_dump` acquires frame sync on our bits with
-`sync_errs=0` — the demod, polarity (that capture is I/Q-swapped), channelization
-and framing are correct on real RF. Full TSDU decode is **not** reached on that
-recording: its eye (~3.0, ≈5 % BER) is above the data-field FEC threshold (an
-independent reference demod hits the same wall), so the CODOP→`kind` mapping and
-address parsing stay source-pinned pending a higher-SNR capture — or a coherent
-GMSK detector (the GMSK analog of the TETRA Costas path). `PROTOCOL.md`'s
-TETRAPOL section is the wire reference; the polarity escape hatches are the
-demod's `DSD_TETRAPOL_INVERT=1` / `--invert` and the converter's `--swap-iq`.
+`lib/addr.c`). The **full chain is validated end to end on real off-air
+captures** (sigidwiki): a mono IF recording, run through `iq_wav_to_cf32.py`
+(Hilbert-reconstructs the analytic signal for a mono real recording) → the GMSK
+demod → frame sync → the real `tetrapol_dump`, **decodes real TETRAPOL TSDUs** —
+repeated `D_GROUP_IDLE` (CODOP 0x58) control-channel messages through
+deinterleave + FEC + CRC, with the frame grid locked ~500 consecutive frames.
+tetrapol-kit doesn't pretty-print that CODOP, so the parser names it from the
+CODOP table and surfaces it as an event rather than dropping it. Still pending a
+live example: the field-parsed CODOPs (`D_SYSTEM_INFO`/`D_GROUP_ACTIVATION`).
+Decode can be timing-sensitive on a marginal capture (sweep `--low-pass` /
+`--offset`); a weaker earlier capture frame-locked but stayed below the FEC
+threshold, so capture SNR is the gating factor. `PROTOCOL.md`'s TETRAPOL section
+is the wire reference; polarity escape hatches are the demod's
+`DSD_TETRAPOL_INVERT=1` / `--invert` and the converter's `--swap-iq`.
 
 **Bridge tool.** `tetrapol_bit_source` (the analog of `tetra_bit_source`) is the
 validation path for when a real capture appears: it runs the same in-tree GMSK

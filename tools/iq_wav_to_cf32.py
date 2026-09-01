@@ -41,7 +41,16 @@ import numpy as np
 
 
 def read_iq_wav(path):
-    """Return (iq_complex float64, sample_rate). LEFT=I, RIGHT=Q."""
+    """Return (iq_complex float64, sample_rate, is_real).
+
+    Two-channel WAV -> genuine IQ (LEFT=I, RIGHT=Q), is_real False.
+    One-channel WAV -> a REAL IF/passband recording (common on sigidwiki:
+    the channel captured as mono audio, not fully demodulated). Returned as a
+    real signal with is_real True; main() then Hilbert-transforms it to an
+    analytic complex signal before shifting the channel to baseband. (A
+    demodulated-audio clip will simply fail to frame-lock; a real IF recording
+    of the channel decodes.)
+    """
     # Prefer scipy (handles int16/int32/uint8/float32 and odd chunks); fall
     # back to stdlib wave for plain PCM if scipy isn't importable.
     rate = None
@@ -62,13 +71,18 @@ def read_iq_wav(path):
         data = np.frombuffer(raw, dtype=dt).reshape(-1, nch)
 
     data = np.asarray(data)
-    if data.ndim == 1:
-        raise SystemExit(
-            "iq_wav_to_cf32: mono WAV -- this is a single real channel, not IQ. "
-            "An IQ recording is 2-channel (I=left, Q=right)."
-        )
-    if data.shape[1] < 2:
-        raise SystemExit("iq_wav_to_cf32: need a 2-channel (I/Q) WAV")
+    # Mono (or single-column) -> a real IF recording. Normalize and return real.
+    if data.ndim == 1 or data.shape[1] < 2:
+        col = data if data.ndim == 1 else data[:, 0]
+        dt = col.dtype
+        if dt == np.uint8:
+            r = col.astype(np.float64) - 128.0
+        elif np.issubdtype(dt, np.integer):
+            r = col.astype(np.float64)
+        else:
+            r = col.astype(np.float64)
+        m = np.max(np.abs(r)) or 1.0
+        return (r / m).astype(np.complex128), int(rate), True
     if data.shape[1] > 2:
         sys.stderr.write(
             f"iq_wav_to_cf32: {data.shape[1]} channels; using ch0=I, ch1=Q\n"
@@ -92,16 +106,18 @@ def read_iq_wav(path):
         scale = 1.0
 
     iq = (i + 1j * q) / scale
-    return iq, int(rate)
+    return iq, int(rate), False
 
 
 def main():
     ap = argparse.ArgumentParser(description="Convert an IQ WAV to baseband .cf32 for tetrapol_bit_source")
-    ap.add_argument("input", help="input IQ WAV (stereo: I=left, Q=right)")
+    ap.add_argument("input", help="input WAV: stereo IQ (I=left, Q=right), or "
+                                  "mono real IF recording (Hilbert-reconstructed)")
     ap.add_argument("output", help="output interleaved float32 .cf32")
     ap.add_argument("--offset", type=float, default=0.0,
-                    help="channel frequency relative to capture center, Hz "
-                         "(positive = above center); shifted to 0 Hz. Default 0.")
+                    help="channel center to shift to 0 Hz, Hz. For stereo IQ: "
+                         "relative to capture center (+=above). For a mono IF "
+                         "recording: the channel's audio-band center frequency.")
     ap.add_argument("--out-rate", type=float, default=16000.0,
                     help="output sample rate, Hz -- must be N*8000 (default 16000 = 2 sps)")
     ap.add_argument("--low-pass", type=float, default=12500.0,
@@ -112,7 +128,15 @@ def main():
 
     from scipy import signal
 
-    iq, fs = read_iq_wav(args.input)
+    iq, fs, is_real = read_iq_wav(args.input)
+    if is_real:
+        # Mono real IF recording: reconstruct the analytic (complex) signal so
+        # the channel can be shifted to baseband. hilbert() keeps the positive
+        # frequencies, so a channel sitting at audio frequency f_c becomes a
+        # complex tone at +f_c -- pass --offset f_c to bring it to 0 Hz.
+        iq = signal.hilbert(iq.real)
+        sys.stderr.write("iq_wav_to_cf32: mono input -> analytic (Hilbert); "
+                         "give --offset = the channel's audio-band center Hz\n")
     n_in = iq.size
     dur = n_in / fs if fs else 0.0
     sys.stderr.write(
@@ -130,11 +154,17 @@ def main():
     # 2) Channel low-pass before decimation (only meaningful when the input is
     #    wider than the channel, i.e. we're about to downsample a lot). resample
     #    adds its own anti-alias filter at the new Nyquist, but an explicit
-    #    12.5 kHz channel filter on the wide input rejects strong adjacent
-    #    TETRAPOL channels the reference flowgraph also filtered out.
+    #    channel filter on the wide input rejects strong adjacent TETRAPOL
+    #    channels the reference flowgraph also filtered out. A causal FIR is used
+    #    deliberately (not zero-phase filtfilt): on a marginal capture the exact
+    #    symbol-timing phase decides whether the downstream decoder's per-frame
+    #    FEC succeeds, and the causal filter's fixed group delay lands it in a
+    #    workable spot -- so if a capture frame-locks but does not decode, sweep
+    #    --low-pass (e.g. 5000-6000 for a ~12.5 kHz channel) and --offset by a
+    #    few hundred Hz; the decode can turn on within that range.
     out_rate = args.out_rate
     if fs > out_rate * 1.5 and args.low_pass < fs / 2:
-        taps = signal.firwin(129, args.low_pass, fs=fs, window="hann")
+        taps = signal.firwin(201, args.low_pass, fs=fs, window="hann")
         iq = signal.lfilter(taps, 1.0, iq)
 
     # 3) Rational resample to out_rate.

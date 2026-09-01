@@ -306,22 +306,29 @@ graceful BER under AWGN), and the frame synchroniser + output parser are unit
 tested against planted frames and tetrapol-kit's exact `printf` output format
 (pinned to `lib/tsdu.c` / `lib/addr.c`).
 
-The **physical layer is now also validated on a real off-air capture** (a
-sigidwiki TETRAPOL IQ WAV, 48 kHz, ~13 s). Through the full pipeline —
-`iq_wav_to_cf32.py` (channel at ≈ ±6 kHz, capture spectrally **I/Q-swapped**, so
-`--swap-iq`) → the in-tree GMSK demod → the frame synchroniser — our frame grid
-**locks continuously (183 consecutive frames, ~3.7 s)** on the stronger of the
-two carriers in the capture, and the **real `tetrapol_dump` repeatedly acquires
-frame sync on our bits with `sync_errs=0`**. That proves the demod, bit
-polarity, channelization, and 160-bit framing are correct on real RF, not just
-in simulation. What this particular recording does **not** yield is a full TSDU
-decode: its eye is only ~3.0 (≈5 % BER, a moderate-SNR recording), above what
-the 152-bit data field's FEC/CRC can correct, so no `CODOP` message completes —
-confirmed by independent reference demodulators hitting the same ceiling. So the
-**CODOP → `kind` mapping and address-field parsing remain source-pinned**,
-awaiting a higher-SNR capture (or a coherent GMSK detector, the GMSK analog of
-the TETRA Costas path) to carry a frame through decode. See `src/tetrapol_*.*`
-and `tools/iq_wav_to_cf32.py`.
+The **full chain is validated end to end on real off-air captures** (sigidwiki
+TETRAPOL recordings). A **mono IF recording** (the channel captured as real
+audio, not IQ — `iq_wav_to_cf32.py` reconstructs the analytic signal via a
+Hilbert transform and shifts the channel to baseband) runs
+`iq_wav_to_cf32.py` → the in-tree GMSK demod → frame sync → the real
+`tetrapol_dump`, which **decodes real TETRAPOL TSDUs** — repeated
+`D_GROUP_IDLE` (CODOP 0x58) control-channel messages, all the way through
+deinterleave + FEC + CRC (the frame grid locks ~500 consecutive frames). That
+proves the entire physical + link layer on real RF, not just in simulation.
+tetrapol-kit has no field pretty-printer for `D_GROUP_IDLE`, so it emits it as a
+one-line `unsupported codop 0x58`; the parser **names it from the CODOP table
+and surfaces it as an event** (kind `call`) rather than dropping it — so the
+backend reports every decoded PDU, not only the dozen tetrapol-kit implements.
+
+Still source-pinned pending a live example: the **field pretty-printed CODOPs**
+(`D_SYSTEM_INFO`/`D_GROUP_ACTIVATION` etc., whose tree parsing populates
+`talkgroup`/`extra`) — this capture happened to carry mostly `D_GROUP_IDLE`.
+Note the decode can be **timing-sensitive on a marginal capture**: if a signal
+frame-locks but does not decode, sweep `--low-pass` / `--offset` by a few
+hundred Hz (the FEC turns on within a narrow window). An earlier, weaker capture
+(eye ~3.0, ≈5 % BER) frame-locked cleanly but stayed below the FEC threshold —
+so capture SNR is the gating factor. See `src/tetrapol_*.*` and
+`tools/iq_wav_to_cf32.py`.
 
 ---
 

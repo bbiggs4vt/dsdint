@@ -129,6 +129,29 @@ int main() {
         }
     }
 
+    // ---- 5b: an "unsupported codop" line -> a named event ----
+    // tetrapol_dump prints decoded-but-unimplemented PDUs as one line; these
+    // are real decoded messages (FEC/CRC already passed) and must surface.
+    // D_GROUP_IDLE (0x58) is the dominant real-capture example.
+    {
+        TetrapolParser p;
+        std::vector<DsdEvent> ev;
+        feed_block(p, {
+            "tsdu:1121 unsupported codop 0x58",
+            "tsdu:1121 unsupported codop 0x90", // D_SYSTEM_INFO byte, no tree
+            "tsdu:1121 unsupported codop 0xff", // not in the table
+        }, ev);
+        check(ev.size() == 3, "each unsupported-codop line emits one event");
+        if (ev.size() == 3) {
+            check(ev[0].kind == "call", "0x58 named D_GROUP_IDLE -> call");
+            check(ev[0].extra.find("msg=D_GROUP_IDLE") != std::string::npos, "0x58 named from the table");
+            check(ev[0].extra.find("note=unsupported") != std::string::npos, "flagged unsupported");
+            check(ev[1].kind == "sync", "0x90 named D_SYSTEM_INFO -> sync");
+            check(ev[2].kind == "unknown" && ev[2].extra.find("codop=0xff") != std::string::npos,
+                  "unknown codop 0xff still surfaces with its hex");
+        }
+    }
+
     // ---- 6: reset() discards the in-progress message ----
     {
         TetrapolParser p;
