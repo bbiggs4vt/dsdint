@@ -445,6 +445,21 @@ consumes, so you can drive the real decoder without GNU Radio —
 decode comes out. Its stderr reports a frame-grid lock check and the detected
 raw-stream polarity (telling you whether to add `--invert`).
 
+**IQ WAV input.** SDR captures (and the sigidwiki sample) are usually a stereo
+WAV (I=left, Q=right) at the capture rate, often wideband with the channel
+tuned off-center. `tools/iq_wav_to_cf32.py` converts one to the baseband `.cf32`
+the bridge wants — channelizing (`--offset HZ` shifts the wanted channel to
+0 Hz) and resampling to `N*8000` (`--out-rate`, default 16000 = 2 sps), the same
+freq-translate + decimate tetrapol-kit's own reference flowgraph does. So the
+full path from a raw capture is:
+
+```bash
+python3 tools/iq_wav_to_cf32.py capture.wav out.cf32 --offset -267000   # channel offset in Hz
+tetrapol_bit_source out.cf32 | tetrapol_dump
+```
+
+(`--swap-iq` handles an I/Q-swapped capture; needs numpy + scipy.)
+
 ## Comparing the two demod backends: demod_benchmark
 
 `demod_benchmark.cpp` is a head-to-head performance comparison, not a
