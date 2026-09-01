@@ -7,20 +7,23 @@
 #                       session; the image's default command)
 #   dsd-server-dsdcc    in-process DSDcc backend (no subprocess)
 #
-# TETRA is NOT a separate executable: every variant decodes TETRA at run time
-# when the client sends protocol":"tetra" (via the bundled osmo tetra-rx) or
-# protocol":"tetrakit" (via the bundled tetra-kit decoder). Both decoders are
-# on the image's PATH.
+# TETRA and TETRAPOL are NOT separate executables: every variant decodes them
+# at run time from the client's "protocol" hint — "tetra" (via the bundled osmo
+# tetra-rx), "tetrakit" (via the bundled tetra-kit decoder), and "tetrapol"
+# (via the bundled tetrapol-kit tetrapol_dump). All three decoders are on the
+# image's PATH.
 #
 # TETRA voice: TETRA sessions decode events and extract speech frames, but the
 # image ships NO ACELP codec (patent-encumbered / GPLv3 — see TETRA_VOICE.md),
-# so they emit events only, not decoded audio.
+# so they emit events only, not decoded audio. TETRAPOL likewise emits events
+# only (its voice needs the proprietary vocoder, not decoded by tetrapol-kit).
 #
-# The three DSP dependencies that Debian doesn't package — mbelib, DSDcc,
-# and dsd-fme — are built from source, pinned to the exact commits this
-# project's backends were verified against (see the verification notes in
-# src/dsd_process.cpp and src/dsdcc_decoder.cpp; bump the pins only in
-# step with re-running the real-binary tests). liquid-dsp is deliberately
+# The DSP dependencies that Debian doesn't package — mbelib, DSDcc, dsd-fme,
+# osmo tetra-rx, tetra-kit, and tetrapol-kit — are built from source, pinned to
+# exact commits (the DSD ones to the commits this project's backends were
+# verified against — see the notes in src/dsd_process.cpp and
+# src/dsdcc_decoder.cpp; bump those pins only in step with re-running the
+# real-binary tests). liquid-dsp is deliberately
 # not included: the hand-rolled demod outperformed it on x86 in this
 # project's own benchmark (see README's liquid section), so the variant
 # would only add image weight.
@@ -60,6 +63,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         zlib1g-dev \
         libosmocore-dev \
         rapidjson-dev \
+        libcmocka-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # mbelib — AMBE vocoder, needed by both DSDcc and dsd-fme.
@@ -107,6 +111,22 @@ RUN git clone https://gitlab.com/larryth/tetra-kit /opt/src/tetra-kit \
     && git -C /opt/src/tetra-kit checkout ${TETRA_KIT_COMMIT} \
     && make -C /opt/src/tetra-kit/decoder \
     && install -m 0755 /opt/src/tetra-kit/decoder/decoder /usr/local/bin/decoder
+
+# tetrapol_dump — the TETRAPOL decoder the server spawns for a
+# protocol":"tetrapol" session. Reads the demodulated bitstream (1 byte/bit) on
+# stdin and prints decoded TSDU trees to stdout (see src/tetrapol_output.cpp,
+# which parses that). libtetrapol is a static lib, so tetrapol_dump is
+# self-contained (libc only) -- nothing extra ships in the runtime image.
+# libcmocka-dev (installed above) satisfies the source tree's unit-test targets,
+# which its CMake configures unconditionally even when we build only the app.
+# NOTE: the parser and bit-polarity convention are source-pinned to this commit
+# but NOT yet validated against a live TETRAPOL capture (see src/tetrapol_*.*).
+ARG TETRAPOL_KIT_COMMIT=a99220026c20a6a1389a3736083465b8fb1f76d6
+RUN git clone https://github.com/aeburriel/tetrapol-kit /opt/src/tetrapol-kit \
+    && git -C /opt/src/tetrapol-kit checkout ${TETRAPOL_KIT_COMMIT} \
+    && cmake -S /opt/src/tetrapol-kit -B /opt/src/tetrapol-kit/build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /opt/src/tetrapol-kit/build -j"$(nproc)" --target tetrapol_dump \
+    && install -m 0755 /opt/src/tetrapol-kit/build/apps/tetrapol_dump /usr/local/bin/tetrapol_dump
 
 # The project itself. (.dockerignore keeps host build/ and .git out of
 # the context, so this is source-only.)
@@ -192,6 +212,9 @@ COPY --from=build /usr/local/bin/dsd-fme /usr/local/bin/
 COPY --from=build /usr/lib/x86_64-linux-gnu/libosmocore.so.* /usr/lib/x86_64-linux-gnu/
 COPY --from=build /usr/local/bin/tetra-rx /usr/local/bin/
 COPY --from=build /usr/local/bin/decoder /usr/local/bin/
+# TETRAPOL: tetrapol_dump is statically linked (libtetrapol.a), so the binary
+# alone is enough -- no extra shared library to copy.
+COPY --from=build /usr/local/bin/tetrapol_dump /usr/local/bin/
 COPY --from=build /opt/dsd-server/build/dsd-server /usr/local/bin/
 COPY --from=build /opt/dsd-server/build/dsd-server-dsdcc /usr/local/bin/
 RUN ldconfig

@@ -49,8 +49,9 @@ liquid variant; it is now unified as stated and pinned by
 `protocol`: an **advisory hint** telling the server which digital voice
 protocol the client believes the signal is. For the FM/DSD modes it selects
 which decode mode to run instead of relying on auto-detection; for `tetra` /
-`tetrakit` it does more — it switches the session's **entire signal chain**
-(see [TETRA](#tetra-protocoltetra--protocoltetrakit) below). It is forgiving —
+`tetrakit` / `tetrapol` it does more — it switches the session's **entire
+signal chain** (see [TETRA](#tetra-protocoltetra--protocoltetrakit) and
+[TETRAPOL](#tetrapol-protocoltetrapol) below). It is forgiving —
 case-insensitive, and spaces/underscores/hyphens are ignored:
 
 | value | selects | chain | dsd-fme | DSDcc |
@@ -73,11 +74,17 @@ case-insensitive, and spaces/underscores/hyphens are ignored:
 | `auto` / `unknown` / `not sure` / anything else | auto-detect | FM + DSD | `-fa` | auto |
 | `tetra` (or `osmo_tetra`) | **TETRA** via osmo `tetra-rx` | π/4-DQPSK + TETRA | — | — |
 | `tetrakit` | **TETRA** via tetra-kit `decoder` | π/4-DQPSK + TETRA | — | — |
+| `tetrapol` | **TETRAPOL** via tetrapol-kit `tetrapol_dump` | GMSK + TETRAPOL | — | — |
 
 `tetra` / `tetrakit` are not FM modes: they replace the FM discriminator with
 the π/4-DQPSK modem and the DSD backend with a TETRA subprocess decoder, so
 the dsd-fme/DSDcc columns don't apply (`—`). Their IQ-rate and `event`-field
 differences are detailed in the [TETRA section](#tetra-protocoltetra--protocoltetrakit).
+
+`tetrapol` is likewise not an FM mode and a **different air interface** from
+TETRA — constant-envelope **GMSK** at 8 kbit/s, not π/4-DQPSK — so it is its own
+third chain: the GMSK modem feeding tetrapol-kit's `tetrapol_dump`. See the
+[TETRAPOL section](#tetrapol-protocoltetrapol).
 
 `provoice` / `edacs*` / `x2tdma` are **dsd-fme-backend only** — DSDcc has no
 decoder for them, so on the `dsd-server-dsdcc` build they fall back to
@@ -255,6 +262,54 @@ encryption signalled and no in-the-clear traffic channel, so the **CMCE
 call-control** mapping (`DSETUPDEC`/`D-SETUP` etc.) and **voice PCM** still
 await a capture of an unencrypted traffic carrier carrying a live call.
 
+### TETRAPOL (`protocol":"tetrapol"`)
+
+TETRAPOL is a **different air interface** from TETRA — constant-envelope
+**GMSK** at 8 kbit/s (1 bit/symbol, 12.5 kHz channels), not π/4-DQPSK — so it is
+a **third** signal chain, again selected at run time by the `protocol` hint on
+the same `dsd-server`. The chain is: a GMSK demodulator (FM discrimination with
+a pre-detection channel filter + Gardner timing) → the demodulated bitstream →
+tetrapol-kit's `tetrapol_dump` subprocess, which does its own frame sync,
+differential decode, descramble and TSDU decode and prints decoded messages to
+stdout. `tetrapol_dump` must be on the server's `PATH`; if it can't be spawned
+the session replies with an `error` frame and stays open.
+
+The wire protocol is the same as the FM/DSD modes — `start` / `stop`, binary IQ
+in, `event` frames out — with these differences:
+
+- **IQ rate:** the GMSK modem runs at 8000 sym/s, so `sample_rate` must be
+  `samples_per_symbol × 8000` (e.g. 16000 for 2 sps). The server derives
+  `samples_per_symbol` from `sample_rate`. Tune near zero IF; the demod removes
+  residual CFO itself (per-sample DC cancellation on the discriminator output).
+- **Ignored `start` fields:** `channel_bandwidth`, `freq_offset`, `gain`,
+  `afc`, `key_type`, `key` don't apply and are accepted-and-ignored. `set_gain`
+  / `set_freq_offset` are likewise accepted no-ops.
+- **Bit polarity:** an SDR feed has a 1-bit polarity unknown (spectral
+  inversion). `tetrapol_dump`'s differential decode is polarity-invariant but
+  its *raw* frame-sync search is not, so a spectrally-inverted feed may not
+  lock. Set `DSD_TETRAPOL_INVERT=1` on the server to flip the demod's bit
+  polarity if a known-good signal won't sync.
+- **`started`:** `udp_audio_port` is always `0` (no subprocess audio socket).
+- **`event` fields:** broadcast CODOPs (`D_SYSTEM_INFO` and the cell/network
+  identity PDUs) are `kind:"sync"`, carrying `country_code`/`network`/`loc_id`/
+  `bs_id`/`rws_id`/`cell_bn` in `extra` and the CODOP name in `msg=`;
+  group/call CODOPs (`D_GROUP_ACTIVATION` etc.) are `kind:"call"` with the
+  `GROUP_ID` → `talkgroup`. CODOPs the parser doesn't map are `kind:"unknown"`
+  and suppressed by default. TETRAPOL has no colour-code / RAN / NAC analog, so
+  those fields stay `""`.
+- **Audio:** not emitted — TETRAPOL voice needs the proprietary vocoder, which
+  tetrapol-kit does not decode.
+
+**Status:** the GMSK demod is validated **in simulation** (unit tests:
+zero-BER through a matching GMSK modulator under phase/CFO/timing offsets, and
+graceful BER under AWGN), and the frame synchroniser + output parser are unit
+tested against planted frames and tetrapol-kit's exact `printf` output format
+(pinned to `lib/tsdu.c` / `lib/addr.c`). It is **NOT yet validated on a live
+TETRAPOL capture** — none is available in the tree. So the demod bit-polarity
+convention, the CODOP → `kind` mapping, and which address field carries the
+talkgroup are all source-pinned and await a real off-air signal to confirm, the
+way the TETRA path was confirmed on a real downlink. See `src/tetrapol_*.*`.
+
 ---
 
 ## Server → Client
@@ -336,22 +391,22 @@ protocol; this table says which ones ever carry a non-`""` value for a
 given protocol (driven by the `protocol` start hint). A blank cell means
 the field stays `""` for that protocol — not that it is omitted.
 
-| field | DMR | NXDN | P25 | dPMR | D-STAR | YSF | TETRA | notes |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|---|
-| `type` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | always `"event"` |
-| `kind` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `burst` is DSDcc/DMR-only; NXDN/P25 control messages are `unknown`. TETRA: `sync`/`call`/`unknown` (osmo), plus `voice` on the tetra-kit backend |
-| `talkgroup` | ✓ | ✓ | ✓ | ✓ | ‡ | ‡ | † | DMR `TGT=`; NXDN `Dst/TG=`; P25 `TGT:`; dPMR `TG=` (zero-padding stripped). ‡ D-STAR/YSF: a **callsign** (the destination — e.g. `CQCQCQ`), not a numeric id. † TETRA: the called group SSI on call-control PDUs — **osmo backend only** (tetra-kit associates the caller SSI later by usage marker and leaves this `""`) |
-| `source_id` | ✓ | ✓ | ✓ | ✓ | ‡ | ‡ | ✓ | `Src=` / `SRC:` (zero-padding stripped). ‡ D-STAR/YSF: the transmitting station's **callsign**. TETRA: the party SSI |
-| `slot` | ✓ | — | — | — | — | — | — | DMR TDMA slot `1`/`2` |
-| `color_code` | ✓ | — | — | ✓* | — | — | † | DMR color code / dPMR channel code; *dPMR: dsd-fme backend only. † TETRA: the network **colour code** (`NETINFO1 CCODE`) — **osmo backend only** |
-| `ran` | — | ✓ | — | — | — | — | — | NXDN Radio Access Number |
-| `nac` | — | — | ✓* | — | — | — | — | P25 Network Access Code (hex); *dsd-fme backend only |
-| `emergency` | ✓* | ✓* | ✓* | ✓* | — | — | — | emergency flag; *dsd-fme backend only |
-| `alias` | ✓* | — | — | — | — | — | — | DMR talker alias; *dsd-fme backend only |
-| `crc_error` | ✓ | ✓ | ✓ | ✓ | ✓* | ✓* | — | FEC/CRC-failure flag (dsd-fme, and DSDcc for DMR/NXDN); *D-STAR/YSF: dsd-fme only. TETRA: the external decoder discards failing PDUs itself, so surviving events aren't CRC-flagged |
-| `message` | ✓* | — | — | — | — | — | — | DMR short-data / SMS text; *dsd-fme backend only (DSDcc doesn't decode the DMR data plane) |
-| `extra` | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | protocol/backend-specific `key=value` tokens (see below) |
-| `raw` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | always the source line/description |
+| field | DMR | NXDN | P25 | dPMR | D-STAR | YSF | TETRA | TETRAPOL | notes |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|---|
+| `type` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | always `"event"` |
+| `kind` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `burst` is DSDcc/DMR-only; NXDN/P25 control messages are `unknown`. TETRA: `sync`/`call`/`unknown` (osmo), plus `voice` on the tetra-kit backend. TETRAPOL: `sync` (broadcast CODOPs) / `call` (group/call CODOPs) / `unknown` |
+| `talkgroup` | ✓ | ✓ | ✓ | ✓ | ‡ | ‡ | † | ✓ | DMR `TGT=`; NXDN `Dst/TG=`; P25 `TGT:`; dPMR `TG=` (zero-padding stripped). ‡ D-STAR/YSF: a **callsign** (the destination — e.g. `CQCQCQ`), not a numeric id. † TETRA: the called group SSI on call-control PDUs — **osmo backend only** (tetra-kit associates the caller SSI later by usage marker and leaves this `""`). TETRAPOL: the `GROUP_ID` on group CODOPs (or the `ADDR` triplet on other addressed CODOPs) |
+| `source_id` | ✓ | ✓ | ✓ | ✓ | ‡ | ‡ | ✓ | — | `Src=` / `SRC:` (zero-padding stripped). ‡ D-STAR/YSF: the transmitting station's **callsign**. TETRA: the party SSI. TETRAPOL: not surfaced (its addressing rides in `talkgroup`/`extra`) |
+| `slot` | ✓ | — | — | — | — | — | — | — | DMR TDMA slot `1`/`2` |
+| `color_code` | ✓ | — | — | ✓* | — | — | † | — | DMR color code / dPMR channel code; *dPMR: dsd-fme backend only. † TETRA: the network **colour code** (`NETINFO1 CCODE`) — **osmo backend only**. TETRAPOL has no colour-code analog |
+| `ran` | — | ✓ | — | — | — | — | — | — | NXDN Radio Access Number |
+| `nac` | — | — | ✓* | — | — | — | — | — | P25 Network Access Code (hex); *dsd-fme backend only |
+| `emergency` | ✓* | ✓* | ✓* | ✓* | — | — | — | — | emergency flag; *dsd-fme backend only |
+| `alias` | ✓* | — | — | — | — | — | — | — | DMR talker alias; *dsd-fme backend only |
+| `crc_error` | ✓ | ✓ | ✓ | ✓ | ✓* | ✓* | — | — | FEC/CRC-failure flag (dsd-fme, and DSDcc for DMR/NXDN); *D-STAR/YSF: dsd-fme only. TETRA/TETRAPOL: the external decoder discards failing PDUs itself, so surviving events aren't CRC-flagged |
+| `message` | ✓* | — | — | — | — | — | — | — | DMR short-data / SMS text; *dsd-fme backend only (DSDcc doesn't decode the DMR data plane) |
+| `extra` | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | protocol/backend-specific `key=value` tokens (see below) |
+| `raw` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | always the source line/description |
 
 (`color_code`/`ran`/`nac` are the per-protocol access codes — DMR & dPMR,
 NXDN, P25 respectively — so at most one is populated for a given signal.
@@ -360,7 +415,9 @@ so none of the numeric access codes apply; `source_id`/`talkgroup` carry
 callsign text instead of numbers, and the repeater/routing detail rides in
 `extra`. TETRA reuses `color_code` for its colour code, but only the osmo
 backend surfaces it; the network identity — MCC/MNC/LA and the up/downlink
-frequencies — rides in `extra` rather than in dedicated fields.)
+frequencies — rides in `extra` rather than in dedicated fields. TETRAPOL has
+none of the numeric access codes; its cell/network identity rides entirely in
+`extra`, and `talkgroup` carries the group/address id.)
 
 `extra` token vocabulary by protocol/backend:
 
@@ -407,6 +464,11 @@ frequencies — rides in `extra` rather than in dedicated fields.)
 | `service=<name>` / `pdu=<name>` | TETRA | tetra-kit | tetra-kit report's service (`UPLANE`/`MLE`/…) and PDU type (`TCH_S`/`MAC-SYNC`/…) |
 | `usage_marker=<n>` / `dl_usage_marker=<n>` | TETRA | tetra-kit | uplink / downlink usage marker — associates speech frames with a call |
 | `encr=<mode>` | TETRA | tetra-kit | encryption mode reported for the PDU |
+| `codop=<hex>` / `msg=<name>` | TETRAPOL | tetrapol_dump | the decoded PDU's CODOP byte (hex) and its message-type name (`D_SYSTEM_INFO`, `D_GROUP_ACTIVATION`, …) |
+| `country_code=<n>` / `network=<n>` | TETRAPOL | tetrapol_dump | network identity from `D_SYSTEM_INFO` (`COUNTRY_CODE`, `SYSTEM_ID`→`NETWORK`) |
+| `loc_id=<n>` | TETRAPOL | tetrapol_dump | location-area id (`LOC_AREA_ID`→`LOC_ID`) |
+| `bs_id=<n>` / `rws_id=<n>` / `cell_bn=<n>` | TETRAPOL | tetrapol_dump | cell identity (`CELL_ID: BS_ID/RWS_ID`, `CELL_BN`) |
+| `addr=<z.y.0xNNN>` | TETRAPOL | tetrapol_dump | a TETRAPOL address triplet on addressed CODOPs (also copied to `talkgroup` when no `GROUP_ID`) |
 
 Both backends emit the NXDN fields (`ran`, `source_id`, `talkgroup`, and
 the `site_code`/`system_code`/`location_id` tokens) with the same shape,
@@ -761,6 +823,27 @@ real caller SSI arrives on the `D-SETUP` and is associated by `usage_marker`, so
 `talkgroup`/`color_code` stay `""` here (unlike the osmo backend). PDUs that are
 neither call nor traffic (e.g. the `MLE` `D-NWRK-BROADCAST` system info) pass
 through as `unknown`, suppressed by default but carrying their fields.
+
+#### TETRAPOL (`protocol":"tetrapol"`) — format examples
+
+Unlike the TETRA examples above, these are **not** from a real capture — no
+off-air TETRAPOL signal is in the tree yet — so they are pinned to
+tetrapol-kit's exact `tetrapol_dump` output format (`lib/tsdu.c`), the same way
+the source-pinned TETRA call frame is. A `D_SYSTEM_INFO` broadcast becomes a
+`sync` event carrying the cell/network identity in `extra`; a
+`D_GROUP_ACTIVATION` becomes a `call` with the `GROUP_ID` in `talkgroup`. The
+`raw` field is the CODOP header line that opened the multi-line message tree:
+
+```json
+{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"","message":"","extra":"codop=0x90; msg=D_SYSTEM_INFO; country_code=1; network=42; loc_id=7; bs_id=12; rws_id=3; cell_bn=5","raw":"CODOP=0x90 (D_SYSTEM_INFO)"}
+{"type":"event","kind":"call","talkgroup":"1234","source_id":"","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"","message":"","extra":"codop=0x21; msg=D_GROUP_ACTIVATION","raw":"CODOP=0x21 (D_GROUP_ACTIVATION)"}
+```
+
+`tetrapol_dump` prints its decoder diagnostics to the same stdout it prints
+decoded messages on; the parser ignores any line that is neither a `CODOP=`
+header nor a recognized indented field, so those never become events. CODOPs the
+parser doesn't map (anything but the broadcast/cell and group/call sets) are
+`kind:"unknown"` and suppressed by default.
 
 ### Binary frames — decoded voice audio
 
