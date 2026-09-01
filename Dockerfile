@@ -156,6 +156,8 @@ RUN cmake --build /opt/dsd-server/build -j"$(nproc)" --target \
         test_tetmon_parse test_tetra_process tetra_fake_rx \
         test_tetra_kit_json test_tetra_kit_process tetra_kit_fake \
         test_tetra_voice \
+        test_tetrapol_demod test_tetrapol_frame_sync \
+        test_tetrapol_output test_tetrapol_process tetrapol_fake_dump \
         test_fm_demod test_afc \
     && cd /opt/dsd-server/build \
     && DSD_TEST_PACE_MS=${DSD_TEST_PACE_MS} ctest --output-on-failure

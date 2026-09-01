@@ -108,6 +108,30 @@ target_compile_options(test_tetrapol_frame_sync PRIVATE -Wall -Wextra)
 add_test(NAME tetrapol_frame_sync_test COMMAND test_tetrapol_frame_sync)
 set_tests_properties(tetrapol_frame_sync_test PROPERTIES TIMEOUT 60)
 
+# TETRAPOL output parser: turns tetrapol_dump's multi-line TSDU trees into
+# DsdEvents. Pure text parsing, no I/O.
+add_executable(test_tetrapol_output EXCLUDE_FROM_ALL
+  src/tetrapol_output.cpp tests/test_tetrapol_output.cpp)
+target_include_directories(test_tetrapol_output PRIVATE src)
+target_compile_options(test_tetrapol_output PRIVATE -Wall -Wextra)
+add_test(NAME tetrapol_output_test COMMAND test_tetrapol_output)
+set_tests_properties(tetrapol_output_test PROPERTIES TIMEOUT 60)
+
+# TETRAPOL subprocess backend: spawns tetrapol_dump, feeds bits on stdin,
+# parses its stdout. Exercised against a fake tetrapol_dump stub (the same
+# approach as tetra_fake_rx / the fake DSD server).
+add_executable(tetrapol_fake_dump EXCLUDE_FROM_ALL tests/tetrapol_fake_dump.cpp)
+target_compile_options(tetrapol_fake_dump PRIVATE -Wall -Wextra)
+add_executable(test_tetrapol_process EXCLUDE_FROM_ALL
+  src/tetrapol_process.cpp src/tetrapol_output.cpp tests/test_tetrapol_process.cpp)
+target_include_directories(test_tetrapol_process PRIVATE src)
+target_link_libraries(test_tetrapol_process PRIVATE Threads::Threads)
+target_compile_options(test_tetrapol_process PRIVATE -Wall -Wextra)
+add_dependencies(test_tetrapol_process tetrapol_fake_dump)
+add_test(NAME tetrapol_process_test
+         COMMAND test_tetrapol_process $<TARGET_FILE:tetrapol_fake_dump>)
+set_tests_properties(tetrapol_process_test PROPERTIES TIMEOUT 60)
+
 # TETRA burst/frame synchroniser: finds the real training sequences in the
 # demodulated bitstream to lock the 510-bit burst grid. Self-contained
 # (a burst generator plants the sequences; end-to-end case links the demod).
