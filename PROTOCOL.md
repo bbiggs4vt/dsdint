@@ -304,11 +304,24 @@ in, `event` frames out — with these differences:
 zero-BER through a matching GMSK modulator under phase/CFO/timing offsets, and
 graceful BER under AWGN), and the frame synchroniser + output parser are unit
 tested against planted frames and tetrapol-kit's exact `printf` output format
-(pinned to `lib/tsdu.c` / `lib/addr.c`). It is **NOT yet validated on a live
-TETRAPOL capture** — none is available in the tree. So the demod bit-polarity
-convention, the CODOP → `kind` mapping, and which address field carries the
-talkgroup are all source-pinned and await a real off-air signal to confirm, the
-way the TETRA path was confirmed on a real downlink. See `src/tetrapol_*.*`.
+(pinned to `lib/tsdu.c` / `lib/addr.c`).
+
+The **physical layer is now also validated on a real off-air capture** (a
+sigidwiki TETRAPOL IQ WAV, 48 kHz, ~13 s). Through the full pipeline —
+`iq_wav_to_cf32.py` (channel at ≈ ±6 kHz, capture spectrally **I/Q-swapped**, so
+`--swap-iq`) → the in-tree GMSK demod → the frame synchroniser — our frame grid
+**locks continuously (183 consecutive frames, ~3.7 s)** on the stronger of the
+two carriers in the capture, and the **real `tetrapol_dump` repeatedly acquires
+frame sync on our bits with `sync_errs=0`**. That proves the demod, bit
+polarity, channelization, and 160-bit framing are correct on real RF, not just
+in simulation. What this particular recording does **not** yield is a full TSDU
+decode: its eye is only ~3.0 (≈5 % BER, a moderate-SNR recording), above what
+the 152-bit data field's FEC/CRC can correct, so no `CODOP` message completes —
+confirmed by independent reference demodulators hitting the same ceiling. So the
+**CODOP → `kind` mapping and address-field parsing remain source-pinned**,
+awaiting a higher-SNR capture (or a coherent GMSK detector, the GMSK analog of
+the TETRA Costas path) to carry a frame through decode. See `src/tetrapol_*.*`
+and `tools/iq_wav_to_cf32.py`.
 
 ---
 
