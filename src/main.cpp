@@ -1,7 +1,7 @@
 // main.cpp — dsd-server entry point.
 //
 // Usage: dsd-server [listen_address] [port] [threads]
-//   defaults: 0.0.0.0 8765 4
+//   defaults: 0.0.0.0 22600 4
 
 #include "session.hpp"
 #include <iostream>
@@ -13,7 +13,7 @@ int main(int argc, char** argv) {
     using namespace dsdsrv;
 
     std::string address_str = argc > 1 ? argv[1] : "0.0.0.0";
-    unsigned short port = argc > 2 ? static_cast<unsigned short>(std::atoi(argv[2])) : 8765;
+    unsigned short port = argc > 2 ? static_cast<unsigned short>(std::atoi(argv[2])) : 22600;
     int threads = argc > 3 ? std::atoi(argv[3]) : 4;
     if (threads < 1) threads = 1;
 

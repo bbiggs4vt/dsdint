@@ -165,8 +165,8 @@ spawn:
 
 ```bash
 docker build -t dsd-server .
-docker run --rm -p 8765:8765 dsd-server                     # subprocess backend (default)
-docker run --rm -p 8765:8765 dsd-server dsd-server-dsdcc     0.0.0.0 8765 4  # in-process DSDcc
+docker run --rm -p 22600:22600 dsd-server                     # subprocess backend (default)
+docker run --rm -p 22600:22600 dsd-server dsd-server-dsdcc     0.0.0.0 22600 4  # in-process DSDcc
 ```
 
 TETRA is not a separate executable — every variant above decodes it from
@@ -209,7 +209,7 @@ sudo apt install build-essential cmake libboost-dev libboost-system-dev
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j
-./dsd-server            # listens on 0.0.0.0:8765 by default
+./dsd-server            # listens on 0.0.0.0:22600 by default
 ```
 
 If CMake finds liquid-dsp on your system, it also builds
@@ -527,7 +527,7 @@ hang means something else is wrong, or just change the port.
 ```bash
 ./dsd-server [listen_address] [port] [threads]
 # e.g.
-./dsd-server 0.0.0.0 8765 4
+./dsd-server 0.0.0.0 22600 4
 ```
 
 Make sure `dsd-fme` is on `PATH`, or edit `DsdProcessConfig::dsd_fme_path`
@@ -550,7 +550,7 @@ server sends to stdout, and writes the decoded audio to a WAV file
 Stdlib-only Python 3 — no pip installs.
 
 ```bash
-python3 tools/midas_ws_client.py capture.tmp --port 8765 --wav out.wav --afc
+python3 tools/midas_ws_client.py capture.tmp --port 22600 --wav out.wav --afc
 python3 tools/midas_ws_client.py capture.tmp --info   # just dump the header
 ```
 
@@ -637,7 +637,7 @@ import numpy as np
 import websockets
 
 async def main():
-    async with websockets.connect("ws://localhost:8765") as ws:
+    async with websockets.connect("ws://localhost:22600") as ws:
         await ws.send(json.dumps({
             "type": "start",
             "sample_rate": 2_000_000,

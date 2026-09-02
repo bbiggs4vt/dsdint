@@ -15,9 +15,9 @@
 // frame the client sends is echoed to stdout as one line.
 //
 // Build:  g++ -std=c++17 -O2 -pthread tools/fake_dsd_server.cpp -o fake_dsd_server
-// Run:    ./fake_dsd_server --port 8765 [--udp-port 46000]
+// Run:    ./fake_dsd_server --port 22600 [--udp-port 46000]
 //
-//   --port <n>      listen port (default 8765; 0 = ephemeral, printed on start)
+//   --port <n>      listen port (default 22600; 0 = ephemeral, printed on start)
 //   --udp-port <n>  value reported in "started".udp_audio_port (default 0 =
 //                   mimic the DSDcc backend; non-zero mimics dsd-fme)
 
@@ -32,7 +32,7 @@ using namespace fakedsd;
 
 int main(int argc, char** argv) {
     FakeDsdServer::Options opts;
-    opts.port = 8765;
+    opts.port = 22600;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--port" && i + 1 < argc) opts.port = static_cast<uint16_t>(std::atoi(argv[++i]));

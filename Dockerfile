@@ -32,8 +32,8 @@
 #                   (the test stage runs ctest against the real dsd-fme
 #                   and a real DMR capture; the build FAILS if any test
 #                   fails, so this doubles as CI)
-# Run:              docker run --rm -p 8765:8765 dsd-server
-#                   docker run --rm -p 8765:8765 dsd-server dsd-server-dsdcc 0.0.0.0 8765 4
+# Run:              docker run --rm -p 22600:22600 dsd-server
+#                   docker run --rm -p 22600:22600 dsd-server dsd-server-dsdcc 0.0.0.0 22600 4
 # Capacity test:    docker build --target loadtest -t dsd-server-loadtest .
 #                   docker run --rm dsd-server-loadtest
 #                   (measures N concurrent realtime streams ON THIS
@@ -196,12 +196,12 @@ COPY --from=build /opt/dsd-server/build/dsd-server-dsdcc /usr/local/bin/
 RUN ldconfig
 
 USER dsd
-EXPOSE 8765
+EXPOSE 22600
 
 # args after the image name replace CMD: address, port, io threads —
 # or name a different binary entirely (dsd-server-dsdcc ...).
 ENTRYPOINT ["tini", "--"]
-CMD ["dsd-server", "0.0.0.0", "8765", "4"]
+CMD ["dsd-server", "0.0.0.0", "22600", "4"]
 
 # ------------------------------------------------------------- loadtest
 # Self-contained capacity measurement: runs tools/stream_load_test.py

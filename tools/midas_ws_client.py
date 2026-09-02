@@ -15,7 +15,7 @@ available, with a pure-Python fallback.
 
 Usage:
     python3 tools/midas_ws_client.py capture.tmp
-    python3 tools/midas_ws_client.py capture.tmp --host 127.0.0.1 --port 8765 \
+    python3 tools/midas_ws_client.py capture.tmp --host 127.0.0.1 --port 22600 \
         --wav out.wav --afc --speed 4
     python3 tools/midas_ws_client.py capture.tmp --info   # dump header, no network
 
@@ -259,7 +259,7 @@ def main():
                     "events, save decoded audio to WAV.")
     ap.add_argument("bluefile", help="BLUE file with complex IQ data (attached header)")
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--port", type=int, default=22600)
     ap.add_argument("--wav", default="dsd_audio.wav", help="output WAV path (default dsd_audio.wav)")
     ap.add_argument("--sample-rate", type=float, default=None,
                     help="override the sample rate from the BLUE header")
