@@ -46,16 +46,12 @@ find_package(Threads REQUIRED)
 # compiles session.cpp.
 find_package(ZLIB REQUIRED)
 
-# Non-FM runtime paths. session.cpp selects one of three signal chains at run
-# time from the client's "protocol" hint: the FM+DSD chain (compiled directly),
-# the π/4-DQPSK + TETRA-subprocess chain (see tetra_backend_iface.hpp), and the
-# GMSK + tetrapol_dump chain. So every binary that compiles session.cpp must
-# also link the whole TETRA stack -- both subprocess backends (osmo tetra-rx via
-# TetraProcess, tetra-kit's decoder via TetraKitProcess) plus the shared demod
-# and parsers -- and the TETRAPOL stack (GMSK demod + tetrapol_dump backend +
-# its parser). These link against libm (demod DSP) and ZLIB::ZLIB (tetra-kit
-# speech extraction). The variable keeps its historical name; it now carries
-# both non-FM chains.
+# TETRA runtime path. session.cpp selects the π/4-DQPSK + TETRA-subprocess chain
+# at run time from the client's "protocol" hint (see tetra_backend_iface.hpp), so
+# every binary that compiles session.cpp must also link the whole TETRA stack --
+# both subprocess backends (osmo tetra-rx via TetraProcess, tetra-kit's decoder
+# via TetraKitProcess) plus the shared demod and parsers. These link against
+# libm (demod DSP) and ZLIB::ZLIB (tetra-kit speech extraction).
 set(TETRA_RUNTIME_SOURCES
   src/tetra_demod.cpp
   src/tetra_burst_sync.cpp
@@ -65,9 +61,6 @@ set(TETRA_RUNTIME_SOURCES
   src/tetra_kit_process.cpp
   src/tetra_kit_json.cpp
   src/tetra_voice.cpp
-  src/tetrapol_demod.cpp
-  src/tetrapol_process.cpp
-  src/tetrapol_output.cpp
 )
 
 add_executable(dsd-server
@@ -94,73 +87,6 @@ target_link_libraries(test_tetra_demod PRIVATE m)
 target_compile_options(test_tetra_demod PRIVATE -Wall -Wextra)
 add_test(NAME tetra_demod_test COMMAND test_tetra_demod)
 set_tests_properties(tetra_demod_test PROPERTIES TIMEOUT 60)
-
-# GMSK demodulator (TETRAPOL physical layer). Like the π/4 demod: pure DSP with
-# a matching GMSK modulator carried in the test as ground truth — no deps.
-add_executable(test_tetrapol_demod EXCLUDE_FROM_ALL src/tetrapol_demod.cpp tests/test_tetrapol_demod.cpp)
-target_include_directories(test_tetrapol_demod PRIVATE src)
-target_link_libraries(test_tetrapol_demod PRIVATE m)
-target_compile_options(test_tetrapol_demod PRIVATE -Wall -Wextra)
-add_test(NAME tetrapol_demod_test COMMAND test_tetrapol_demod)
-set_tests_properties(tetrapol_demod_test PROPERTIES TIMEOUT 60)
-
-# TETRAPOL frame synchroniser: finds the 7-bit frame-sync word to lock the
-# 160-bit frame grid. Self-contained (planted grid); end-to-end case links the
-# GMSK demod.
-add_executable(test_tetrapol_frame_sync EXCLUDE_FROM_ALL
-  src/tetrapol_frame_sync.cpp src/tetrapol_demod.cpp tests/test_tetrapol_frame_sync.cpp)
-target_include_directories(test_tetrapol_frame_sync PRIVATE src)
-target_link_libraries(test_tetrapol_frame_sync PRIVATE m)
-target_compile_options(test_tetrapol_frame_sync PRIVATE -Wall -Wextra)
-add_test(NAME tetrapol_frame_sync_test COMMAND test_tetrapol_frame_sync)
-set_tests_properties(tetrapol_frame_sync_test PROPERTIES TIMEOUT 60)
-
-# TETRAPOL output parser: turns tetrapol_dump's multi-line TSDU trees into
-# DsdEvents. Pure text parsing, no I/O.
-add_executable(test_tetrapol_output EXCLUDE_FROM_ALL
-  src/tetrapol_output.cpp tests/test_tetrapol_output.cpp)
-target_include_directories(test_tetrapol_output PRIVATE src)
-target_compile_options(test_tetrapol_output PRIVATE -Wall -Wextra)
-add_test(NAME tetrapol_output_test COMMAND test_tetrapol_output)
-set_tests_properties(tetrapol_output_test PROPERTIES TIMEOUT 60)
-
-# TETRAPOL subprocess backend: spawns tetrapol_dump, feeds bits on stdin,
-# parses its stdout. Exercised against a fake tetrapol_dump stub (the same
-# approach as tetra_fake_rx / the fake DSD server).
-add_executable(tetrapol_fake_dump EXCLUDE_FROM_ALL tests/tetrapol_fake_dump.cpp)
-target_compile_options(tetrapol_fake_dump PRIVATE -Wall -Wextra)
-add_executable(test_tetrapol_process EXCLUDE_FROM_ALL
-  src/tetrapol_process.cpp src/tetrapol_output.cpp tests/test_tetrapol_process.cpp)
-target_include_directories(test_tetrapol_process PRIVATE src)
-target_link_libraries(test_tetrapol_process PRIVATE Threads::Threads)
-target_compile_options(test_tetrapol_process PRIVATE -Wall -Wextra)
-add_dependencies(test_tetrapol_process tetrapol_fake_dump)
-add_test(NAME tetrapol_process_test
-         COMMAND test_tetrapol_process $<TARGET_FILE:tetrapol_fake_dump>)
-set_tests_properties(tetrapol_process_test PROPERTIES TIMEOUT 60)
-
-# tetrapol_bit_source: the GNU-Radio-replacement bridge for TETRAPOL — IQ in,
-# the GMSK bitstream (1 byte/bit) out on stdout, for piping into tetrapol-kit's
-# tetrapol_dump. The analog of tetra_bit_source. Validation path for a real
-# TETRAPOL capture (none in the tree yet).
-add_executable(tetrapol_bit_source EXCLUDE_FROM_ALL
-  tools/tetrapol_bit_source.cpp src/tetrapol_demod.cpp src/tetrapol_frame_sync.cpp)
-target_include_directories(tetrapol_bit_source PRIVATE src)
-target_link_libraries(tetrapol_bit_source PRIVATE m)
-target_compile_options(tetrapol_bit_source PRIVATE -Wall -Wextra)
-
-# End-to-end test of the bridge: runs the built binary as a subprocess on a
-# generated TETRAPOL GMSK IQ file and confirms the emitted bits lock the frame
-# grid (both polarities).
-add_executable(test_tetrapol_bit_source EXCLUDE_FROM_ALL
-  tests/test_tetrapol_bit_source.cpp src/tetrapol_frame_sync.cpp)
-target_include_directories(test_tetrapol_bit_source PRIVATE src)
-target_link_libraries(test_tetrapol_bit_source PRIVATE m)
-target_compile_options(test_tetrapol_bit_source PRIVATE -Wall -Wextra)
-add_dependencies(test_tetrapol_bit_source tetrapol_bit_source)
-add_test(NAME tetrapol_bit_source_test
-         COMMAND test_tetrapol_bit_source $<TARGET_FILE:tetrapol_bit_source>)
-set_tests_properties(tetrapol_bit_source_test PROPERTIES TIMEOUT 60)
 
 # TETRA burst/frame synchroniser: finds the real training sequences in the
 # demodulated bitstream to lock the 510-bit burst grid. Self-contained

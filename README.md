@@ -157,11 +157,11 @@ full-stack tests).
 ### Docker (Debian bookworm)
 
 The provided `Dockerfile` builds everything — including the DSP
-dependencies Debian doesn't package (mbelib, DSDcc, dsd-fme, the two
-TETRA decoders `tetra-rx`/tetra-kit, and tetrapol-kit's `tetrapol_dump`,
-each pinned to a fixed commit — the DSD ones to the commits the backends
-were verified against) — and produces a slim runtime image containing the
-server variants plus the decoders they spawn:
+dependencies Debian doesn't package (mbelib, DSDcc, dsd-fme, and the two
+TETRA decoders `tetra-rx`/tetra-kit, each pinned to a fixed commit — the
+DSD ones to the commits the backends were verified against) — and produces
+a slim runtime image containing the server variants plus the decoders they
+spawn:
 
 ```bash
 docker build -t dsd-server .
@@ -169,13 +169,11 @@ docker run --rm -p 8765:8765 dsd-server                     # subprocess backend
 docker run --rm -p 8765:8765 dsd-server dsd-server-dsdcc     0.0.0.0 8765 4  # in-process DSDcc
 ```
 
-TETRA and TETRAPOL are not separate executables — every variant above
-decodes them from the client's `protocol` hint: `tetra` (osmo `tetra-rx`),
-`tetrakit` (tetra-kit's `decoder`), and `tetrapol` (tetrapol-kit's
-`tetrapol_dump`); all three decoders are on the image's `PATH`. (The image
+TETRA is not a separate executable — every variant above decodes it from
+the client's `protocol` hint: `tetra` (osmo `tetra-rx`) or `tetrakit`
+(tetra-kit's `decoder`); both decoders are on the image's `PATH`. (The image
 ships no ACELP voice codec — patent/GPL, see `TETRA_VOICE.md` — so TETRA
-sessions emit events only; TETRAPOL likewise emits events only, its voice
-needing the proprietary vocoder.)
+sessions emit events only.)
 
 `docker build --target test .` additionally runs the entire ctest suite
 (including the real-capture tests against the just-built dsd-fme and
@@ -409,66 +407,6 @@ the right parity, locked the same 18-burst grid, and — through the real
 recovering ~5% more CRC-protected control-plane messages than differential
 (see PROTOCOL.md).
 
-## TETRAPOL (runtime-selected)
-
-TETRAPOL is a **different air interface** from TETRA — constant-envelope
-**GMSK** at 8 kbit/s, not π/4-DQPSK — so it is a **third** runtime chain in the
-same binary, selected by `protocol":"tetrapol"`. The chain is a streaming GMSK
-demodulator (`src/tetrapol_demod.*`: FM discrimination with a pre-detection
-channel filter + Gardner timing, matching GNU Radio's `gmsk_demod`) → the
-demodulated bitstream → tetrapol-kit's `tetrapol_dump` subprocess
-(`src/tetrapol_process.*`), which does its own frame sync, differential decode,
-descramble and TSDU decode and prints decoded messages that
-`src/tetrapol_output.*` parses into events. Broadcast CODOPs (`D_SYSTEM_INFO`
-and cell/network identity) → `sync`; group/call CODOPs (`D_GROUP_ACTIVATION`
-etc.) → `call` with `GROUP_ID` → `talkgroup`. Like TETRA, `udp_audio_port` is
-`0`, the FM knobs are accepted-and-ignored, and `tetrapol_dump` must be on
-`PATH` (the `Dockerfile` bundles it, statically linked); a session whose
-decoder isn't installed replies with an `error` frame and stays open.
-
-**Status:** the GMSK demod, frame synchroniser, and output parser are
-**unit-tested in simulation** (`tests/test_tetrapol_*.cpp`): zero-BER through a
-matching GMSK modulator under phase/CFO/timing offsets and graceful AWGN
-degradation; frame lock on planted grids with polarity/error tolerance; and the
-parser against tetrapol-kit's exact `printf` output (pinned to `lib/tsdu.c` /
-`lib/addr.c`). The **full chain is validated end to end on real off-air
-captures** (sigidwiki): a mono IF recording, run through `iq_wav_to_cf32.py`
-(Hilbert-reconstructs the analytic signal for a mono real recording) → the GMSK
-demod → frame sync → the real `tetrapol_dump`, **decodes real TETRAPOL TSDUs** —
-repeated `D_GROUP_IDLE` (CODOP 0x58) control-channel messages through
-deinterleave + FEC + CRC, with the frame grid locked ~500 consecutive frames.
-tetrapol-kit doesn't pretty-print that CODOP, so the parser names it from the
-CODOP table and surfaces it as an event rather than dropping it. Still pending a
-live example: the field-parsed CODOPs (`D_SYSTEM_INFO`/`D_GROUP_ACTIVATION`).
-Decode can be timing-sensitive on a marginal capture (sweep `--low-pass` /
-`--offset`); a weaker earlier capture frame-locked but stayed below the FEC
-threshold, so capture SNR is the gating factor. `PROTOCOL.md`'s TETRAPOL section
-is the wire reference; polarity escape hatches are the demod's
-`DSD_TETRAPOL_INVERT=1` / `--invert` and the converter's `--swap-iq`.
-
-**Bridge tool.** `tetrapol_bit_source` (the analog of `tetra_bit_source`) is the
-validation path for when a real capture appears: it runs the same in-tree GMSK
-demod on an IQ file and writes the 1-byte-per-bit stream `tetrapol_dump`
-consumes, so you can drive the real decoder without GNU Radio —
-`tetrapol_bit_source capture.cf32 | tetrapol_dump` — and see whether the TSDU
-decode comes out. Its stderr reports a frame-grid lock check and the detected
-raw-stream polarity (telling you whether to add `--invert`).
-
-**IQ WAV input.** SDR captures (and the sigidwiki sample) are usually a stereo
-WAV (I=left, Q=right) at the capture rate, often wideband with the channel
-tuned off-center. `tools/iq_wav_to_cf32.py` converts one to the baseband `.cf32`
-the bridge wants — channelizing (`--offset HZ` shifts the wanted channel to
-0 Hz) and resampling to `N*8000` (`--out-rate`, default 16000 = 2 sps), the same
-freq-translate + decimate tetrapol-kit's own reference flowgraph does. So the
-full path from a raw capture is:
-
-```bash
-python3 tools/iq_wav_to_cf32.py capture.wav out.cf32 --offset -267000   # channel offset in Hz
-tetrapol_bit_source out.cf32 | tetrapol_dump
-```
-
-(`--swap-iq` handles an I/Q-swapped capture; needs numpy + scipy.)
-
 ## Comparing the two demod backends: demod_benchmark
 
 `demod_benchmark.cpp` is a head-to-head performance comparison, not a
@@ -645,7 +583,7 @@ the binary audio formats. The tables below are the quick summary.
 
 | Frame | Payload | Purpose |
 |---|---|---|
-| text | `{"type":"start","sample_rate":2000000,"channel_bandwidth":12500,"freq_offset":0,"gain":26000,"afc":false,"protocol":"dmr"}` | Start the pipeline for this connection. `sample_rate` is your IQ rate in Hz. `freq_offset` (positive = channel sits above 0 Hz in your IQ) shifts the channel to baseband. `afc:true` enables automatic frequency control — the server then corrects residual ppm error/drift itself (locks up to ~4 kHz of error in about a second; see PROTOCOL.md). `gain` scales discriminator output into PCM range — see Tuning below. `protocol` (optional) picks the signal chain: absent/`dmr`/`nxdn48`/`p25`/`ysf`/`provoice`/`edacs`/`x2tdma`/… run the FM-discriminator + DSD path (EDACS/ProVoice and X2-TDMA are dsd-fme-backend only); **`tetra` or `tetrakit` switch the whole session to the π/4-DQPSK + TETRA chain** (osmo `tetra-rx` or tetra-kit's `decoder` respectively), and **`tetrapol` switches to the GMSK + TETRAPOL chain** (tetrapol-kit's `tetrapol_dump`). The FM-only knobs (`channel_bandwidth`, `set_gain`, `set_freq_offset`) are accepted and ignored under TETRA and TETRAPOL. |
+| text | `{"type":"start","sample_rate":2000000,"channel_bandwidth":12500,"freq_offset":0,"gain":26000,"afc":false,"protocol":"dmr"}` | Start the pipeline for this connection. `sample_rate` is your IQ rate in Hz. `freq_offset` (positive = channel sits above 0 Hz in your IQ) shifts the channel to baseband. `afc:true` enables automatic frequency control — the server then corrects residual ppm error/drift itself (locks up to ~4 kHz of error in about a second; see PROTOCOL.md). `gain` scales discriminator output into PCM range — see Tuning below. `protocol` (optional) picks the signal chain: absent/`dmr`/`nxdn48`/`p25`/`ysf`/`provoice`/`edacs`/`x2tdma`/… run the FM-discriminator + DSD path (EDACS/ProVoice and X2-TDMA are dsd-fme-backend only); **`tetra` or `tetrakit` switch the whole session to the π/4-DQPSK + TETRA chain** (osmo `tetra-rx` or tetra-kit's `decoder` respectively). The FM-only knobs (`channel_bandwidth`, `set_gain`, `set_freq_offset`) are accepted and ignored under TETRA. |
 | text | `{"type":"set_gain","gain":30000}` | Adjust discriminator gain live. |
 | text | `{"type":"set_freq_offset","hz":1500}` | Adjust the NCO shift live. |
 | text | `{"type":"stop"}` | Stop the pipeline (connection stays open). |
