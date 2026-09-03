@@ -15,8 +15,7 @@ asyncapi: "2.6.0"
 # ambiguity regardless of how your tooling labels it.
 #
 # Source of truth for the wire format is PROTOCOL.md (generated from
-# session.cpp). A companion openapi.yaml documents the same JSON frames in
-# OpenAPI 3.1 for tooling that expects it.
+# session.cpp); proto/dsd_server.proto is a protobuf mirror of the same frames.
 # ---------------------------------------------------------------------------
 
 info:
@@ -40,7 +39,7 @@ info:
 
 servers:
   local:
-    url: "localhost:8080"
+    url: "localhost:22600"
     protocol: ws
     description: dsd-server WebSocket endpoint (ws:// — no TLS by default; any path is accepted).
 
@@ -108,6 +107,11 @@ components:
             protocol: dmr
             key_type: bp
             key: "1"
+        - name: tetra
+          payload:
+            type: start
+            sample_rate: 72000
+            protocol: tetra
 
     SetGainRequest:
       name: set_gain
@@ -209,6 +213,7 @@ components:
             emergency: ""
             alias: ""
             crc_error: ""
+            message: ""
             extra: ""
             raw: "20:37:20 Sync: +DMR   slot1  [SLOT2] | Color Code=04 | VC6 "
         - name: dmr-call
@@ -224,8 +229,25 @@ components:
             emergency: ""
             alias: ""
             crc_error: ""
+            message: ""
             extra: ""
             raw: " SLOT 2 TGT=19535 SRC=2222223 Group Call  "
+        - name: tetra-sync
+          payload:
+            type: event
+            kind: sync
+            talkgroup: ""
+            source_id: ""
+            slot: ""
+            color_code: "17"
+            ran: ""
+            nac: ""
+            emergency: ""
+            alias: ""
+            crc_error: ""
+            message: ""
+            extra: "mcc=00ea; mnc=004e; la=6163; func=NETINFO1"
+            raw: "TETMON_begin FUNC:NETINFO1 CCODE:17 MCC:00ea MNC:004e LA:6163 RX:1 TETMON_end"
 
     # -------------------------------------------- server -> client (binary)
     AudioFrame:
@@ -346,24 +368,24 @@ components:
       type: object
       required:
         [type, kind, talkgroup, source_id, slot, color_code, ran, nac,
-         emergency, alias, crc_error, extra, raw]
+         emergency, alias, crc_error, message, extra, raw]
       additionalProperties: false
       properties:
         type: { const: event }
         kind: { $ref: "#/components/schemas/EventKind" }
         talkgroup:
           type: string
-          description: Decimal id, or a callsign for D-STAR/YSF, or "".
+          description: Decimal id; a callsign for D-STAR/YSF; the TETRA group SSI; or "".
         source_id:
           type: string
-          description: Decimal source radio id, or a callsign for D-STAR/YSF, or "".
+          description: Decimal source radio id; a callsign (D-STAR/YSF); the TETRA party SSI; or "".
         slot:
           type: string
           enum: ["", "1", "2"]
           description: DMR TDMA slot, or "" when not slot-specific.
         color_code:
           type: string
-          description: DMR color code / dPMR channel code (bare decimal), or "".
+          description: DMR color code / dPMR channel code (bare decimal); also the TETRA colour code; or "".
         ran:
           type: string
           description: NXDN Radio Access Number (bare decimal), or "".
@@ -381,11 +403,14 @@ components:
           type: string
           enum: ["", "1"]
           description: '"1" on FEC/CRC failure; then other fields are unreliable.'
+        message:
+          type: string
+          description: Decoded DMR short-data / SMS text (free text), or "". dsd-fme only.
         extra:
           type: string
           description: |
             Zero or more `key=value` tokens joined by "; " (e.g. `burst=VOX`,
-            `rpt1=…`, `call_mode=group_cq`), or "". See PROTOCOL.md.
+            `rpt1=…`, EDACS `lcn=…`, TETRA `mcc=…`/`la=…`), or "". See PROTOCOL.md.
         raw:
           type: string
           description: Underlying decoder line/description (free text; varies by dsd-fme version).
@@ -398,7 +423,15 @@ components:
         Advisory protocol selector. Forgiving: case-insensitive,
         spaces/underscores/hyphens ignored, documented aliases accepted; ""/auto
         and anything unrecognized fall back to server default (DMR) / auto.
-      enum: ["", dmr, nxdn48, nxdn96, p25, p25p2, dpmr, dstar, ysf, auto]
+
+        FM/DSD chain: dmr, nxdn48, nxdn96, p25, p25p2, dpmr, dstar, ysf, and the
+        dsd-fme-backend-only provoice, edacs, edacs_esk, edacs_ea, edacs_ea_esk,
+        x2tdma (these fall back to auto on the DSDcc build). TETRA runs a
+        separate signal path (not FM/DSD): tetra (osmo tetra-rx) or tetrakit
+        (tetra-kit's decoder).
+      enum: ["", dmr, nxdn48, nxdn96, p25, p25p2, dpmr, dstar, ysf,
+             provoice, edacs, edacs_esk, edacs_ea, edacs_ea_esk, x2tdma,
+             tetra, tetrakit, auto]
 
     KeyType:
       type: string
@@ -411,6 +444,7 @@ components:
     EventKind:
       type: string
       description: |
-        Best-effort event classification. `burst` is DSDcc/DMR-only; `unknown`
-        is suppressed by default on the dsd-fme backend (startup banner noise).
-      enum: [voice, sync, call, burst, unknown]
+        Best-effort event classification. `message` is a decoded DMR
+        short-data/SMS body (dsd-fme backend). `burst` is DSDcc/DMR-only;
+        `unknown` is suppressed by default (startup banner / diagnostics).
+      enum: [voice, sync, call, message, burst, unknown]
