@@ -361,6 +361,8 @@ components:
             One of: `unknown message type: <type>`,
             `bad control message: <detail>`,
             `binary frame length not a multiple of 8 bytes`,
+            `invalid or missing key for key_type '<type>' (expected decimal/hex digits)`,
+            `failed to start TETRA backend`,
             `failed to start DSD backend`. Branch on the prefix up to the
             first `:`.
 

@@ -296,12 +296,14 @@ strand and therefore run after it).
 ### `error` — something was rejected
 
 The connection **stays open** after every error; only the offending
-message is affected. Exactly four message texts exist:
+message is affected. Exactly six message texts exist:
 
 ```json
 {"type":"error","message":"unknown message type: <type>"}
 {"type":"error","message":"bad control message: <parser detail>"}
 {"type":"error","message":"binary frame length not a multiple of 8 bytes"}
+{"type":"error","message":"invalid or missing key for key_type '<type>' (expected decimal/hex digits)"}
+{"type":"error","message":"failed to start TETRA backend"}
 {"type":"error","message":"failed to start DSD backend"}
 ```
 
@@ -310,6 +312,8 @@ message is affected. Exactly four message texts exist:
 | `unknown message type: ...` | Text frame parsed as JSON but its `type` isn't one of the four control types. The unrecognized type is echoed after the colon. |
 | `bad control message: ...` | Text frame that isn't valid flat JSON (or a field with an impossible value that throws in parsing). The detail after the colon is the parser's exception text — useful for debugging, not stable enough to match on programmatically. |
 | `binary frame length not a multiple of 8 bytes` | Malformed binary IQ frame received after `start`. The frame is dropped. |
+| `invalid or missing key for key_type '...' ...` | A `start` named a `key_type` (bp/rc4/des/aes/hytera/scrambler) but its `key` was empty or not decimal/hex digits. The key is validated before any backend is launched, so no pipeline starts; retry `start` with a valid key. |
+| `failed to start TETRA backend` | A `start` with `protocol` `tetra`/`tetrakit` couldn't bring up the TETRA decoder subprocess (usually: no `tetra-rx` / `tetra-kit` on the server's PATH). No pipeline is running after this; a corrected `start` may be retried. |
 | `failed to start DSD backend` | `start` couldn't bring up the decoder — for the subprocess backend, the fork/exec of dsd-fme failed (usually: no `dsd-fme` on the server's PATH); for the DSDcc backend, an unsupported config (e.g. a non-48 kHz internal rate). No pipeline is running after this; a corrected `start` may be retried. |
 
 Match on the prefix up to the first `:` if you need to branch on error

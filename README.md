@@ -595,7 +595,7 @@ the binary audio formats. The tables below are the quick summary.
 |---|---|---|
 | text | `{"type":"started","udp_audio_port":47213}` | Pipeline is up. |
 | text | `{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","extra":"","raw":"..."}` | Decoder activity, parsed from a dsd-fme log line (or synthesized from DSDcc state). `kind` is `voice`/`sync`/`call`/`message`/`unknown` (plus `burst` on DSDcc); `message` carries decoded DMR short-data/SMS text in the `message` field. All fields always present, `""` when unknown. See PROTOCOL.md for per-backend semantics and real examples. |
-| text | `{"type":"error","message":"..."}` | Something was rejected (bad control message, DSD backend failed to start, malformed binary frame). Connection stays open. PROTOCOL.md lists all four message texts. |
+| text | `{"type":"error","message":"..."}` | Something was rejected (bad control message, invalid key, DSD/TETRA backend failed to start, malformed binary frame). Connection stays open. PROTOCOL.md lists all six message texts. |
 | binary | `0x01` + `int16` LE PCM | Decoded voice audio. 8000 Hz; **stereo interleaved** (slot1 left / slot2 right) from real dsd-fme's DMR mode, mono per-burst from the DSDcc backend — see PROTOCOL.md. |
 
 ## Tuning notes
