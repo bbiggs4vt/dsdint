@@ -63,8 +63,12 @@ message StartRequest {
   double freq_offset = 4 [json_name = "freq_offset"];            // default 0
   double gain = 5;                                        // default 26000
   bool afc = 6;                                           // default false
-  // Advisory protocol hint: dmr | nxdn48 | nxdn96 | p25 | p25p2 | dpmr |
-  // dstar | ysf | auto. "" / absent keeps the server default (DMR).
+  // Advisory protocol hint. FM/DSD chain: dmr | nxdn48 | nxdn96 | p25 |
+  // p25p2 | dpmr | dstar | ysf | provoice | edacs | edacs_esk | edacs_ea |
+  // edacs_ea_esk | x2tdma | auto (provoice / edacs* / x2tdma are
+  // dsd-fme-backend only — they fall back to auto on the DSDcc build).
+  // TETRA chain (a separate signal path, not FM/DSD): tetra (osmo tetra-rx) |
+  // tetrakit (tetra-kit's decoder). "" / absent keeps the server default (DMR).
   string protocol = 7;
   // Optional decryption key. key_type: bp | rc4 | des | aes | hytera |
   // scrambler ("" = none). key: decimal or hex digits (see PROTOCOL.md).
@@ -114,17 +118,19 @@ message ErrorMessage {
 // token vocabulary.
 message Event {
   string type = 1;                                    // = "event"
-  string kind = 2;         // voice | sync | call | burst | unknown
-  string talkgroup = 3;    // decimal, or a callsign for D-STAR/YSF
-  string source_id = 4 [json_name = "source_id"];   // decimal, or a callsign
+  string kind = 2;         // voice | sync | call | message | burst | unknown
+  string talkgroup = 3;    // decimal; a callsign for D-STAR/YSF; TETRA group SSI
+  string source_id = 4 [json_name = "source_id"];   // decimal, a callsign, or TETRA party SSI
   string slot = 5;         // DMR TDMA slot "1"/"2"
-  string color_code = 6 [json_name = "color_code"]; // DMR/dPMR access code
+  string color_code = 6 [json_name = "color_code"]; // DMR/dPMR access code; also the TETRA colour code
   string ran = 7;          // NXDN Radio Access Number
   string nac = 8;          // P25 Network Access Code (hex)
   string emergency = 9;    // "1" when flagged
   string alias = 10;       // DMR talker alias (free text)
   string crc_error = 11 [json_name = "crc_error"];  // "1" on FEC/CRC failure
-  string extra = 12;       // "; "-joined key=value tokens
+  // "; "-joined key=value tokens (DMR/P25 trunking, D-STAR/YSF routing,
+  // EDACS/ProVoice, TETRA network/cell identity — see PROTOCOL.md).
+  string extra = 12;
   string raw = 13;         // underlying decoder line/description
   string message = 14;     // DMR short-data / SMS text (free text)
 }
