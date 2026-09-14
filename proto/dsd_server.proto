@@ -133,8 +133,62 @@ message Event {
   string emergency = 9;    // "1" when flagged
   string alias = 10;       // DMR talker alias (free text)
   string crc_error = 11 [json_name = "crc_error"];  // "1" on FEC/CRC failure
-  // "; "-joined key=value tokens (DMR/P25 trunking, D-STAR/YSF routing,
-  // EDACS/ProVoice, TETRA network/cell identity — see PROTOCOL.md).
+  // Zero or more "; "-joined key=value tokens carrying protocol/backend-
+  // specific detail that has no dedicated field ("" when none). Tokens are
+  // backend-specific -- a given token only appears on the backend(s) noted.
+  // Full vocabulary, mirrored from PROTOCOL.md's "extra token vocabulary"
+  // table (see PROTOCOL.md for per-backend field-population tables):
+  //
+  //   DMR (DSDcc backend):
+  //     unit_target=<id>          private-call target (not a talkgroup)
+  //     burst=<type>              slot burst type (IDL/CSB/VLC/TLC/VOX/UNK)
+  //     sync_type=<flavor>        dmr_bs_data / dmr_ms_voice / ...
+  //   DMR (dsd-fme backend):
+  //     network_type=<con+|cap+>  Motorola trunking flavor (Connect/Capacity Plus)
+  //     network_id=<n>            trunked network ID (Tier III / Con+ / Cap+)
+  //     site_id=<n>               trunked site ID (may be N.M form)
+  //     rest_channel=<n>          rest channel / rest LSN
+  //     lcn=<n>                   logical channel number (LCN/LPCN)
+  //   P25 (dsd-fme backend):
+  //     rfss=<n>                  RF Sub-System id (trunking)
+  //     site_id=<n>               site id (P25 "Site:"/"SITE [ ]"; also DMR)
+  //     system_id=<hex>           P25 System ID
+  //     wacn=<hex>                Wide Area Communications Network id
+  //     alg_id=<hex>              encryption algorithm id (80=clear, 84=AES256, AA=ADP, ...)
+  //     key_id=<hex>              encryption key id (0000=unencrypted)
+  //   NXDN (both backends; category is dsd-fme only):
+  //     site_code=<n>             site code (home or adjacent -- see raw)
+  //     system_code=<n>           trunked system code
+  //     location_id=<hex>         site location ID
+  //     category=<name>           system scope, e.g. Global
+  //   D-STAR (both backends; gps is DSDcc only):
+  //     rpt1=<call>               uplink repeater callsign (RPT1)
+  //     rpt2=<call>               gateway/link repeater callsign (RPT2)
+  //     radio_text=<text>         slow-data message text (free text)
+  //     gps=<locator>             Maidenhead locator from slow-data GPS
+  //   YSF (both backends):
+  //     uplink=<call>             repeater uplink callsign (U/L)
+  //     downlink=<call>           repeater downlink callsign (D/L)
+  //     call_mode=<mode>          FICH call mode: group_cq / radio_id / individual
+  //     data_type=<type>          FICH data type: vd1 / vd2 / voice_full / data_full
+  //     src_rid=<n> / dst_rid=<n> numeric DSQ radio IDs (Radio ID call mode)
+  //   EDACS/ProVoice (dsd-fme backend):
+  //     lcn=<n>                   logical channel number (control or working channel)
+  //     afs=<n>                   Agency-Fleet-Subfleet group id (decimal)
+  //     lid=<n>                   logical (unit) id, on login/regroup lines
+  //     system_id=<hex>           EDACS system id from the control channel
+  //   TETRA (osmo tetra-rx backend):
+  //     mcc=<hex> / mnc=<hex>     Mobile Country / Network Code, hex (00ea=234, 004e=78)
+  //     la=<n>                    Location Area
+  //     dlf=<hz> / ulf=<hz>       down/uplink carrier frequency in Hz
+  //     crypt=<n>                 air-interface encryption flag from NETINFO1
+  //     cid=<n> / nid=<n>         cell id / network id on call-control PDUs
+  //     idx=<n>                   call index -- associates later voice with this call
+  //     status=<n> / afc=<n> / func=<name>  short-data status; AFC diag; raw TETMON FUNC name
+  //   TETRA (tetra-kit backend):
+  //     service=<name> / pdu=<name>          report service (UPLANE/MLE/...) and PDU (TCH_S/MAC-SYNC/...)
+  //     usage_marker=<n> / dl_usage_marker=<n>  uplink/downlink usage marker (associates speech with a call)
+  //     encr=<mode>               encryption mode reported for the PDU
   string extra = 12;
   string raw = 13;         // underlying decoder line/description
   string message = 14;     // DMR short-data / SMS text (free text)
