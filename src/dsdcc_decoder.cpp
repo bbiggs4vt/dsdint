@@ -278,22 +278,34 @@ bool DsdccDecoder::write_audio(const int16_t* pcm, std::size_t n) {
         // dsdccx's main loop does. getAudio1/2 return the MBE decoder's
         // accumulated 8 kHz PCM for TDMA slot #1/#2 respectively (a
         // 20 ms voice frame lands ~160 samples at a time); resetAudio
-        // clears the buffer once consumed. Both slots are forwarded on
-        // the single audio callback — concurrent voice on both slots of
-        // one channel is possible in DMR, but the wire protocol has one
-        // audio stream, so they interleave (dsdccx mixes them instead;
-        // if that matters for your client, mix here the same way).
+        // clears the buffer once consumed.
+        //
+        // Follow one slot's voice so two concurrent DMR calls don't
+        // interleave into a single garbled mono stream. Release the follow
+        // when the followed slot's voice stops; (re)latch it to whichever
+        // slot has voice. getVoiceNOn() is DMR-specific and stays false for
+        // the single-stream protocols, so following_slot_ never leaves 0
+        // there and neither slot is ever suppressed.
+        const bool v1 = decoder_->getVoice1On();
+        const bool v2 = decoder_->getVoice2On();
+        if (following_slot_ == 1 && !v1) following_slot_ = 0;
+        else if (following_slot_ == 2 && !v2) following_slot_ = 0;
+        if (following_slot_ == 0) {
+            if (v1) following_slot_ = 1;        // both-on ties go to slot 1
+            else if (v2) following_slot_ = 2;
+        }
+
         int nb1 = 0;
         short* audio1 = decoder_->getAudio1(nb1);
         if (nb1 > 0) {
-            if (on_audio_) on_audio_(audio1, static_cast<std::size_t>(nb1));
+            if (on_audio_ && following_slot_ != 2) on_audio_(audio1, static_cast<std::size_t>(nb1));
             decoder_->resetAudio1();
         }
 
         int nb2 = 0;
         short* audio2 = decoder_->getAudio2(nb2);
         if (nb2 > 0) {
-            if (on_audio_) on_audio_(audio2, static_cast<std::size_t>(nb2));
+            if (on_audio_ && following_slot_ != 1) on_audio_(audio2, static_cast<std::size_t>(nb2));
             decoder_->resetAudio2();
         }
     }

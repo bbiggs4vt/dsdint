@@ -149,6 +149,15 @@ private:
     // same change-detection purpose as the paths above.
     std::string last_dstar_sig_;
     std::string last_ysf_sig_;
+
+    // Which TDMA slot's audio we're currently following, so concurrent
+    // voice on both DMR slots doesn't interleave into one garbled mono
+    // stream (matches the subprocess backend's mono_follow_slot). 0 = not
+    // following either; latched to the slot that has voice when a call
+    // starts and released when that slot's voice ends. Only ever suppresses
+    // the OTHER slot while one is actively followed, so single-slot and
+    // non-TDMA (D-STAR/YSF/dPMR/NXDN) audio is never withheld.
+    int following_slot_ = 0;
 };
 
 } // namespace dsdsrv

@@ -788,18 +788,25 @@ through as `unknown`, suppressed by default but carrying their fields.
 |---|---|
 | `0x01` | Decoded voice PCM, little-endian signed 16-bit. |
 
-The PCM format depends on the backend build:
+Both backend builds emit **8000 Hz mono** PCM, so a client handles audio
+the same way regardless of which one answered:
 
-- **`dsd-server` (dsd-fme subprocess)**: whatever dsd-fme's UDP output
-  produces, relayed verbatim. For the default DMR mode (`-fs`) on
-  lwvmobile/dsd-fme that is **8000 Hz stereo interleaved** — TDMA slot 1
-  on the left channel, slot 2 on the right — arriving as one WebSocket
-  frame per UDP packet (typically 641 bytes: tag + 640 bytes = 20 ms).
-- **`dsd-server-dsdcc`**: **8000 Hz mono**, one frame per decoded voice
-  burst (typically tag + 320 bytes = 20 ms). When both TDMA slots carry
-  voice simultaneously, each slot's audio arrives as its own frames,
-  interleaved in time — there is no channel tag distinguishing them
-  (correlate with `event` frames if you need attribution).
+- **`dsd-server` (dsd-fme subprocess)**: dsd-fme's DMR mode (`-fs`) emits
+  8000 Hz **stereo** (TDMA slot 1 on the left channel, slot 2 on the
+  right); the server collapses it to mono before it reaches the wire,
+  auto-following the active slot — it streams the channel for whichever
+  slot the decoder currently reports voice/call activity on, and falls
+  back to an (L+R) downmix while no slot is known yet (nothing decoded, or
+  concurrent voice on both slots). One WebSocket frame per UDP packet
+  (typically tag + 320 bytes = 20 ms after the downmix).
+- **`dsd-server-dsdcc`**: **8000 Hz mono** natively, one frame per decoded
+  voice burst (typically tag + 320 bytes = 20 ms). It likewise follows one
+  slot's voice, so two concurrent DMR calls don't interleave into one
+  garbled stream; single-slot and non-TDMA audio is never withheld.
+
+In both cases, when both TDMA slots carry voice at once only the followed
+slot is streamed — correlate with `event` frames (their `slot` field) if
+you need to know which slot the audio belongs to.
 
 There is no end-of-audio marker; audio frames simply stop when the
 transmission ends or the pipeline is stopped.

@@ -9,7 +9,9 @@
 
 #include "../src/dsd_process.hpp"
 #include <cstdio>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 using namespace dsdsrv;
 
@@ -387,6 +389,46 @@ int main() {
         check(e.talkgroup == "19535", "DMR line unaffected by EDACS block (talkgroup)");
         check(e.source_id == "2222223", "DMR line unaffected by EDACS block (source)");
         check(e.extra.empty(), "DMR line gets no EDACS extra tokens");
+    }
+
+    // ---- stereo -> mono slot-follow (mono_follow_slot deinterleave) ----
+    {
+        // Interleaved L,R pairs: L = 100,101,102 ; R = -100,-101,-102.
+        const int16_t stereo[6] = {100, -100, 101, -101, 102, -102};
+        std::vector<int16_t> out;
+
+        std::size_t n1 = stereo_to_mono_for_slot(stereo, 6, 1, out); // slot 1 -> left
+        check(n1 == 3 && out.size() == 3, "slot 1: three mono samples from six stereo");
+        check(out[0] == 100 && out[1] == 101 && out[2] == 102, "slot 1: picks the left channel");
+
+        std::size_t n2 = stereo_to_mono_for_slot(stereo, 6, 2, out); // slot 2 -> right
+        check(n2 == 3, "slot 2: three mono samples");
+        check(out[0] == -100 && out[1] == -101 && out[2] == -102, "slot 2: picks the right channel");
+
+        // Unknown slot (0) -> (L+R) downmix. Here L+R cancels to ~0.
+        stereo_to_mono_for_slot(stereo, 6, 0, out);
+        check(out[0] == 0 && out[1] == 0 && out[2] == 0, "slot 0: (L+R) downmix");
+    }
+    {
+        // Downmix rounds toward zero and stays in range at the extremes.
+        const int16_t stereo[4] = {32767, 32767, -32768, -32768};
+        std::vector<int16_t> out;
+        stereo_to_mono_for_slot(stereo, 4, 0, out);
+        check(out[0] == 32767, "downmix: full-scale positive pair stays full scale");
+        check(out[1] == -32768, "downmix: full-scale negative pair stays full scale");
+        // Mixed pair: (100 + (-40)) / 2 = 30.
+        const int16_t mix[2] = {100, -40};
+        stereo_to_mono_for_slot(mix, 2, 0, out);
+        check(out.size() == 1 && out[0] == 30, "downmix: averages a mixed L/R pair");
+    }
+    {
+        // Odd sample count: the stray trailing sample is dropped so L/R
+        // phase can't slip.
+        const int16_t odd[5] = {10, 20, 30, 40, 50};
+        std::vector<int16_t> out;
+        std::size_t n = stereo_to_mono_for_slot(odd, 5, 1, out);
+        check(n == 2 && out.size() == 2, "odd length: trailing sample dropped (2 pairs)");
+        check(out[0] == 10 && out[1] == 30, "odd length: left channel of the two full pairs");
     }
 
     if (g_failures == 0) {

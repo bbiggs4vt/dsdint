@@ -64,8 +64,18 @@ struct DsdProcessConfig {
     // Payload is raw PCM, no header. With mode_flag "s" (DMR stereo
     // mode) real dsd-fme sends 8000 Hz STEREO interleaved int16 -- TDMA
     // slot 1 on the left channel, slot 2 on the right (640-byte packets
-    // = 20 ms). This is relayed to the client as-is.
+    // = 20 ms).
     uint16_t udp_audio_port = 0;
+
+    // Collapse that stereo stream to a single 8 kHz MONO stream before it
+    // reaches on_audio (so the subprocess backend matches the in-process
+    // DSDcc backend's mono output). The mono channel auto-follows the
+    // active TDMA slot -- picked from the slot the decoder is currently
+    // reporting voice/call activity on (slot 1 -> left, slot 2 -> right).
+    // While no slot is known (nothing decoded yet, or concurrent voice on
+    // both slots) it falls back to an (L+R) downmix. Default true; set
+    // false to relay dsd-fme's raw stereo interleave unchanged.
+    bool mono_follow_slot = true;
 
     // Forward dsd-fme's unrecognized (kind:"unknown") log lines as events.
     // Default false: suppress them. dsd-fme prints a large startup block —
@@ -85,6 +95,16 @@ struct DsdProcessConfig {
 // line the classifier didn't match) are forwarded only when forward_unknown
 // is set. Free function so it is unit-testable alongside classify.
 bool dsd_fme_forward_event(const DsdEvent& ev, bool forward_unknown);
+
+// Collapse one interleaved 8 kHz stereo buffer (L,R,L,R,...) to a single
+// mono channel for the given active TDMA slot: slot 1 -> left, slot 2 ->
+// right, anything else (0 = unknown / both) -> an (L+R) downmix. Writes
+// nsamp/2 samples into `out` (resized to fit) and returns that count; a
+// stray trailing sample from an odd nsamp is dropped so L/R phase can't
+// slip. Free function so the deinterleave is unit-tested without a live
+// dsd-fme (see tests/test_dsd_fme_parse.cpp).
+std::size_t stereo_to_mono_for_slot(const int16_t* pcm, std::size_t nsamp,
+                                    int slot, std::vector<int16_t>& out);
 
 class DsdProcess {
 public:
@@ -115,6 +135,7 @@ public:
 private:
     void stdout_reader_loop();
     void udp_reader_loop();
+    void publish_active_slot(const DsdEvent& ev);
     std::vector<std::string> build_argv() const;
     DsdEvent classify_line(const std::string& line) const { return classify_dsd_fme_line(line); }
 
@@ -131,6 +152,12 @@ private:
     std::thread udp_thread_;
     std::atomic<bool> running_{false};
     std::mutex write_mutex_;
+
+    // Active TDMA slot for mono_follow_slot, published by the stdout
+    // reader (which classifies dsd-fme's slot-bearing lines) and read by
+    // the UDP reader (which picks the matching stereo channel). 0 = not
+    // yet known -> downmix. Atomic because the two reader threads touch it.
+    std::atomic<int> active_slot_{0};
 };
 
 } // namespace dsdsrv

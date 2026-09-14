@@ -183,15 +183,16 @@ int main(int argc, char** argv) {
             audio_samples += (r.size() - 1) / sizeof(int16_t);
         }
     }
-    std::printf("  received %zu audio int16s (%.1f s if 8 kHz stereo)\n",
-                audio_samples, audio_samples / 16000.0);
+    std::printf("  received %zu mono audio int16s (%.1f s at 8 kHz)\n",
+                audio_samples, audio_samples / 8000.0);
 
     // Ground truth from test_dsd_process on the same capture: ~315k
     // int16s of 8 kHz stereo and events carrying TGT 19535 / SRC
     // 2222223 on slot 2. The demod round trip is sample-exact (verified
-    // for the DSDcc variant), so the same numbers apply here.
-    check(audio_samples > 200000,
-          "received a substantial amount of decoded voice (>200k int16s)");
+    // for the DSDcc variant); the subprocess backend's mono_follow_slot
+    // then halves the stereo to ~157k mono samples over the wire.
+    check(audio_samples > 100000,
+          "received a substantial amount of decoded voice (>100k mono samples)");
     check(talkgroups.count("19535") == 1,
           "an event carries the talkgroup real dsd-fme reports (19535)");
     check(sources.count("2222223") == 1,

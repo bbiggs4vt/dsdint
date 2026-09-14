@@ -16,10 +16,14 @@
 //   - UDP audio: dsd-fme's "-o udp:127.0.0.1:<port>" stream, raw 8 kHz
 //     stereo PCM for the DMR mode -- a substantial sample count proves
 //     the -o wiring and the udp_reader_loop work against the real thing.
+//     The default mono_follow_slot collapses that stereo to mono (one
+//     sample per L/R pair), so the count here is ~half the raw stereo
+//     int16 count.
 //
 // Ground truth was established by running the same dsd-fme build on the
 // same file directly: ~660 sync lines, "SLOT 2 TGT=19535 SRC=2222223
-// Group Call" call lines, and ~315k int16s of UDP audio.
+// Group Call" call lines, and ~315k int16s of raw stereo UDP audio
+// (~157k after the mono downmix this backend applies by default).
 //
 // Usage: test_dsd_process <path-to-dsd-fme-binary> <path-to-dmr_it_8.dis>
 // Prints SKIPPED and exits 0 when either is missing, so ctest doesn't
@@ -124,9 +128,9 @@ int main(int argc, char** argv) {
     check(!proc.running(), "reports stopped after stop()");
 
     std::lock_guard<std::mutex> lock(m);
-    std::printf("  %d events; %zu UDP audio samples (%.1f s if 8 kHz stereo)\n",
+    std::printf("  %d events; %zu mono audio samples (%.1f s at 8 kHz)\n",
                 event_count, audio_samples.load(),
-                audio_samples.load() / 16000.0);
+                audio_samples.load() / 8000.0);
 
     // Events, against what this capture genuinely contains. Note the
     // talkgroup: dsd-fme reports TGT=19535 for this capture's voice LC
@@ -180,12 +184,13 @@ int main(int argc, char** argv) {
     }
 
     // Audio through the real -o udp path. Ground truth from dsd-fme run
-    // directly on this file: ~315k int16s (8 kHz stereo, ~19 s of
-    // voice). Same generous banding as the DSDcc tests.
-    check(audio_samples.load() > 200000,
-          "received a substantial amount of UDP audio (>200k int16s)");
-    check(audio_samples.load() < 500000,
-          "UDP audio volume is plausible (<500k int16s)");
+    // directly on this file: ~315k int16s of raw stereo (~19 s of voice),
+    // which mono_follow_slot halves to ~157k mono samples. Same generous
+    // banding as the DSDcc tests.
+    check(audio_samples.load() > 100000,
+          "received a substantial amount of mono audio (>100k samples)");
+    check(audio_samples.load() < 300000,
+          "mono audio volume is plausible (<300k samples)");
 
     if (g_failures == 0) {
         std::printf("\nALL DSD-FME PROCESS TESTS PASSED\n");

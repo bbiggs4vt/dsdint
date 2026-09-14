@@ -257,11 +257,15 @@ components:
       contentType: application/octet-stream
       description: |
         Byte 0 is the tag `0x01` (the only tag defined); the rest is decoded
-        voice PCM, little-endian signed 16-bit, 8 kHz. **dsd-fme backend**:
-        stereo interleaved (TDMA slot 1 = left, slot 2 = right), one frame per
-        UDP packet (~641 bytes = 20 ms). **DSDcc backend**: mono, one frame per
-        decoded voice burst (~321 bytes = 20 ms). No end-of-audio marker —
-        frames simply stop.
+        voice PCM, little-endian signed 16-bit, 8 kHz **mono** from both
+        backends (~321 bytes = 20 ms per frame). The **dsd-fme backend**
+        decodes DMR as stereo (TDMA slot 1 = left, slot 2 = right) and
+        collapses it to mono, following the active slot (downmix while no
+        slot is known yet); the **DSDcc backend** is mono per decoded voice
+        burst and likewise follows one slot. When both TDMA slots carry
+        voice, only the followed slot is streamed — use the `event` frames'
+        `slot` field for attribution. No end-of-audio marker — frames simply
+        stop.
       payload:
         type: string
         format: binary

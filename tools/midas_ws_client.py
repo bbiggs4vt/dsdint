@@ -29,11 +29,11 @@ BLUE file support:
     (rate = 1/xdelta); --sample-rate overrides it.
 
 WAV output:
-  - Audio from the server is 8000 Hz int16 PCM (see PROTOCOL.md).
-    Channel count is inferred from the backend: the dsd-fme subprocess
-    backend (started.udp_audio_port != 0) sends stereo interleaved
-    (slot 1 left / slot 2 right); the DSDcc backend (udp_audio_port ==
-    0) sends mono. --channels overrides the inference.
+  - Audio from the server is 8000 Hz mono int16 PCM (see PROTOCOL.md).
+    Both backends stream mono now: the dsd-fme subprocess backend
+    collapses its stereo to a single channel that follows the active
+    TDMA slot, and the DSDcc backend is mono natively. --channels
+    overrides (e.g. 2 for a server run with the mono downmix disabled).
 """
 
 import argparse
@@ -276,7 +276,7 @@ def main():
                     help="streaming speed as a multiple of realtime; 0 = unpaced (default 4)")
     ap.add_argument("--block", type=int, default=4096, help="complex samples per frame (default 4096)")
     ap.add_argument("--channels", type=int, choices=(1, 2), default=None,
-                    help="WAV channels; default: inferred from backend (dsd-fme=2, DSDcc=1)")
+                    help="WAV channels; default 1 (both backends stream mono)")
     ap.add_argument("--linger", type=float, default=3.0,
                     help="seconds to keep listening after the last IQ frame (default 3)")
     ap.add_argument("--info", action="store_true", help="print the BLUE header summary and exit")
@@ -317,20 +317,24 @@ def main():
                     text = payload.decode("utf-8", "replace")
                     print(text, flush=True)
                     stats["text"] += 1
-                    # Infer WAV channel count from the backend on "started"
+                    # Set up the WAV on "started". Both backends now stream
+                    # 8 kHz mono (the dsd-fme backend collapses its stereo to
+                    # a single slot-following channel), so default to 1
+                    # channel; --channels overrides for a server run with the
+                    # mono downmix disabled.
                     if wav_channels[0] is None:
                         try:
                             obj = json.loads(text)
                             if obj.get("type") == "started":
-                                wav_channels[0] = 2 if obj.get("udp_audio_port", 0) else 1
+                                wav_channels[0] = 1
                                 finish_wav_setup(wav_channels[0])
                         except (ValueError, KeyError):
                             pass
                 elif opcode == 0x2 and payload[:1] == b"\x01":
                     pcm = payload[1:]
                     if not wav_ready.is_set():
-                        # started never told us (shouldn't happen); default stereo
-                        wav_channels[0] = wav_channels[0] or 2
+                        # started never told us (shouldn't happen); default mono
+                        wav_channels[0] = wav_channels[0] or 1
                         finish_wav_setup(wav_channels[0])
                     wav.writeframes(pcm)
                     stats["audio_frames"] += 1

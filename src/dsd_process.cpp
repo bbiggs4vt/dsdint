@@ -333,6 +333,7 @@ void DsdProcess::stdout_reader_loop() {
             // strip_ansi reduces to empty).
             if (!line.empty() && on_event_) {
                 DsdEvent ev = classify_line(line);
+                publish_active_slot(ev);
                 if (dsd_fme_forward_event(ev, cfg_.forward_unknown)) on_event_(ev);
             }
         }
@@ -341,27 +342,68 @@ void DsdProcess::stdout_reader_loop() {
     std::string tail = strip_ansi(buf);
     if (!tail.empty() && on_event_) {
         DsdEvent ev = classify_line(tail);
+        publish_active_slot(ev);
         if (dsd_fme_forward_event(ev, cfg_.forward_unknown)) on_event_(ev);
     }
 }
 
+// Track which TDMA slot is currently carrying traffic, for mono_follow_slot.
+// Only slot-attributed voice/sync/call lines move it; burst/unknown/data
+// lines (and lines with no slot) leave the last value in place so the mono
+// channel stays put through the brief gaps between a call's bursts.
+void DsdProcess::publish_active_slot(const DsdEvent& ev) {
+    if (!cfg_.mono_follow_slot) return;
+    if (ev.kind != "voice" && ev.kind != "sync" && ev.kind != "call") return;
+    if (ev.slot == "1") active_slot_.store(1, std::memory_order_relaxed);
+    else if (ev.slot == "2") active_slot_.store(2, std::memory_order_relaxed);
+}
+
+std::size_t stereo_to_mono_for_slot(const int16_t* pcm, std::size_t nsamp,
+                                    int slot, std::vector<int16_t>& out) {
+    // Interleaved L,R pairs -> one mono sample per pair. A stray trailing
+    // sample (odd count -- shouldn't happen for stereo) is dropped rather
+    // than misaligning the L/R phase.
+    const std::size_t npairs = nsamp / 2;
+    out.resize(npairs);
+    for (std::size_t i = 0; i < npairs; ++i) {
+        const int16_t l = pcm[2 * i];
+        const int16_t r = pcm[2 * i + 1];
+        if (slot == 1)      out[i] = l;
+        else if (slot == 2) out[i] = r;
+        else                out[i] = static_cast<int16_t>((static_cast<int>(l) + r) / 2);
+    }
+    return npairs;
+}
+
 void DsdProcess::udp_reader_loop() {
-    // dsd-fme's decoded voice PCM is typically 8000 Hz, 16-bit signed,
-    // mono. Verify against your build/version; adjust downstream handling
-    // in session.cpp if it differs (e.g. some builds use 8000 Hz for AMBE
-    // voice frames specifically, distinct from the 48000 Hz discriminator
-    // input rate).
+    // dsd-fme's decoded voice PCM here is 8000 Hz, 16-bit signed, and (in
+    // the DMR "-f s" mode this backend uses) STEREO interleaved -- TDMA
+    // slot 1 on the left channel, slot 2 on the right (verified against
+    // real dsd-fme; see DsdProcessConfig::udp_audio_port).
+    //
+    // With mono_follow_slot (the default) we collapse that to one mono
+    // stream so on_audio matches the DSDcc backend: pick the channel for
+    // whichever slot is currently active (published by the stdout reader),
+    // or an (L+R) downmix while the active slot isn't known yet. Otherwise
+    // the raw stereo interleave is relayed unchanged.
     std::vector<char> buf(8192);
+    std::vector<int16_t> mono; // reused scratch for the deinterleaved output
     while (running_.load() && udp_fd_ >= 0) {
         ssize_t n = ::recv(udp_fd_, buf.data(), buf.size(), 0);
         if (n <= 0) {
             if (n < 0 && errno == EINTR) continue;
             break;
         }
-        if (on_audio_) {
-            on_audio_(reinterpret_cast<const int16_t*>(buf.data()),
-                       static_cast<std::size_t>(n) / sizeof(int16_t));
+        if (!on_audio_) continue;
+        const int16_t* pcm = reinterpret_cast<const int16_t*>(buf.data());
+        std::size_t nsamp = static_cast<std::size_t>(n) / sizeof(int16_t);
+        if (!cfg_.mono_follow_slot) {
+            on_audio_(pcm, nsamp);
+            continue;
         }
+        std::size_t npairs = stereo_to_mono_for_slot(
+            pcm, nsamp, active_slot_.load(std::memory_order_relaxed), mono);
+        on_audio_(mono.data(), npairs);
     }
 }
 
