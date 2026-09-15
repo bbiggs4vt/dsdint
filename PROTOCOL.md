@@ -285,31 +285,33 @@ table — which protocols this server build decodes, the event kinds it
 emits, and the `extra` token keys it can produce. All values are `"; "`-
 joined strings (keeping the flat-JSON, no-arrays invariant).
 
-The set of `extra` keys depends on both the compiled backend (dsd-fme
-subprocess vs in-process DSDcc) and the protocol. At connect time the
-client hasn't chosen a protocol yet, so the keys are grouped into
-per-protocol-family fields (`extra_keys_dmr`, `extra_keys_p25`, …),
-each pre-filtered to the keys **this backend** can actually emit; a
-family this build can never emit a key for is omitted entirely. The
-client reads the field for whichever protocol it's about to request.
+The set of `extra` keys depends on both the build (which decoder backend
+was compiled in) and the protocol. At connect time the client hasn't
+chosen a protocol yet, so the keys are grouped into per-protocol-family
+fields (`extra_keys_dmr`, `extra_keys_p25`, …), each pre-filtered to the
+keys **this build** can actually emit; a family this build can never emit
+a key for is omitted entirely. The client reads the field for whichever
+protocol it's about to request.
 
 ```json
-{"type":"capabilities","backend":"dsd-fme","protocols":"dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; auto","audio":"pcm_s16le_8000_mono","event_kinds":"voice; sync; call; message; burst; unknown","extra_keys_dmr":"network_type; network_id; site_id; rest_channel; lcn","extra_keys_p25":"rfss; site_id; system_id; wacn; alg_id; key_id","extra_keys_nxdn":"site_code; system_code; location_id; category","extra_keys_dstar":"rpt1; rpt2; radio_text","extra_keys_ysf":"uplink; downlink; call_mode; data_type; src_rid; dst_rid","extra_keys_edacs":"lcn; afs; lid; system_id","extra_keys_tetra":"mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr"}
+{"type":"capabilities","protocols":"dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; auto","audio":"pcm_s16le_8000_mono","event_kinds":"voice; sync; call; message; burst; unknown","extra_keys_dmr":"network_type; network_id; site_id; rest_channel; lcn","extra_keys_p25":"rfss; site_id; system_id; wacn; alg_id; key_id","extra_keys_nxdn":"site_code; system_code; location_id; category","extra_keys_dstar":"rpt1; rpt2; radio_text","extra_keys_ysf":"uplink; downlink; call_mode; data_type; src_rid; dst_rid","extra_keys_edacs":"lcn; afs; lid; system_id","extra_keys_tetra":"mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr"}
 ```
 
 | field | type | meaning |
 |---|---|---|
 | `type` | string | `"capabilities"` |
-| `backend` | string | The compiled DSD backend: `"dsd-fme"` (subprocess) or `"dsdcc"` (in-process). |
-| `protocols` | string | `"; "`-joined `protocol` hint values this build actually decodes. The DSDcc build omits the dsd-fme-only ones (`p25`/`p25p2`/`provoice`/`edacs*`/`x2tdma`). |
+| `protocols` | string | `"; "`-joined `protocol` hint values this build actually decodes. |
 | `audio` | string | Decoded-audio wire shape, currently always `"pcm_s16le_8000_mono"` (see the audio section below). |
 | `event_kinds` | string | `"; "`-joined `event` `kind` values (`voice; sync; call; message; burst; unknown`). |
 | `extra_keys_<family>` | string | `"; "`-joined `extra` token keys this build can emit for that protocol family (`dmr`, `p25`, `nxdn`, `dstar`, `ysf`, `edacs`, `tetra`). Present only when non-empty. See the `extra` token vocabulary above for each token's meaning. |
 
-The DSDcc build's frame is the same shape but narrower: `protocols` drops
-the dsd-fme-only entries, `extra_keys_p25`/`extra_keys_edacs` are absent,
-`extra_keys_dmr` is `"unit_target; burst; sync_type"`, and
-`extra_keys_dstar` additionally carries `gps`.
+The example above is from the dsd-fme build. The DSDcc build's frame is the
+same shape but narrower: `protocols` drops the dsd-fme-only entries
+(`p25`/`p25p2`/`provoice`/`edacs*`/`x2tdma`), `extra_keys_p25` /
+`extra_keys_edacs` are absent, `extra_keys_dmr` is
+`"unit_target; burst; sync_type"`, and `extra_keys_dstar` additionally
+carries `gps`. A client keys off the advertised fields themselves rather
+than needing to know which backend produced them.
 
 A client that reads the first frame expecting `started` should first
 consume (or skip past) this `capabilities` greeting — it is self-

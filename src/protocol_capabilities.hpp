@@ -34,10 +34,8 @@ enum class KeyBackend { Fme, Dsdcc, Both, Tetra };
 
 #if defined(DSD_USE_DSDCC_BACKEND)
 inline constexpr KeyBackend kActiveDsdBackend = KeyBackend::Dsdcc;
-inline constexpr const char* kDsdBackendName = "dsdcc";
 #else
 inline constexpr KeyBackend kActiveDsdBackend = KeyBackend::Fme;
-inline constexpr const char* kDsdBackendName = "dsd-fme";
 #endif
 
 inline bool cap_key_active(KeyBackend b) {
@@ -166,7 +164,6 @@ inline std::string cap_join_family(const CapFamily& fam) {
 inline std::string build_capabilities_json() {
     json::Writer w;
     w.field("type", std::string("capabilities"));
-    w.field("backend", std::string(kDsdBackendName));
     // Protocol hints this build actually decodes ("; "-joined).
     std::string protos;
     for (const auto& p : cap_protocols()) {

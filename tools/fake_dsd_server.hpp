@@ -470,11 +470,11 @@ private:
             client_connected_ = true;
             { std::lock_guard<std::mutex> lk(state_mutex_); state_cv_.notify_all(); }
             // Greet with a capabilities frame before reading, like the real
-            // server. A fixed representative frame (dsd-fme flavor) -- the
-            // mock advertises protocol shape, not this run's exact backend.
+            // server. A fixed representative frame (the dsd-fme superset of
+            // protocols/keys) -- the mock advertises protocol shape only.
             if (opts_.send_capabilities) {
                 send_text(
-                    "{\"type\":\"capabilities\",\"backend\":\"dsd-fme\","
+                    "{\"type\":\"capabilities\","
                     "\"protocols\":\"dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; "
                     "provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; auto\","
                     "\"audio\":\"pcm_s16le_8000_mono\","

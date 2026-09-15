@@ -182,16 +182,18 @@ components:
         build decodes, the event kinds it emits, and the `extra` token keys
         it can produce. Every value is a "; "-joined string (flat JSON, no
         arrays). The extra-key lists are grouped per protocol family and
-        pre-filtered to this backend; a family this build can't emit a key
-        for is omitted. A client that reads the first frame for `started`
-        should skip this greeting (it's self-identifying by `type`).
+        pre-filtered to what this build can emit; a family this build can't
+        emit a key for is omitted. A client that reads the first frame for
+        `started` should skip this greeting (it's self-identifying by
+        `type`). The two examples are the same build's frame for its two
+        decoder backends; a client keys off the advertised fields, not any
+        backend label.
       payload:
         $ref: "#/components/schemas/Capabilities"
       examples:
-        - name: dsd-fme-backend
+        - name: dsd-fme-build
           payload:
             type: capabilities
-            backend: dsd-fme
             protocols: "dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; auto"
             audio: pcm_s16le_8000_mono
             event_kinds: "voice; sync; call; message; burst; unknown"
@@ -202,10 +204,9 @@ components:
             extra_keys_ysf: "uplink; downlink; call_mode; data_type; src_rid; dst_rid"
             extra_keys_edacs: "lcn; afs; lid; system_id"
             extra_keys_tetra: "mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr"
-        - name: dsdcc-backend
+        - name: dsdcc-build
           payload:
             type: capabilities
-            backend: dsdcc
             protocols: "dmr; nxdn48; nxdn96; dpmr; dstar; ysf; tetra; tetrakit; auto"
             audio: pcm_s16le_8000_mono
             event_kinds: "voice; sync; call; message; burst; unknown"
@@ -388,7 +389,7 @@ components:
     # ================================================= server -> client ====
     Capabilities:
       type: object
-      required: [type, backend, protocols, audio, event_kinds]
+      required: [type, protocols, audio, event_kinds]
       additionalProperties: false
       description: |
         Connect-time greeting. All values are "; "-joined strings. The
@@ -396,10 +397,6 @@ components:
         this build can emit a key for that family, so they are optional.
       properties:
         type: { const: capabilities }
-        backend:
-          type: string
-          enum: [dsd-fme, dsdcc]
-          description: The compiled DSD backend.
         protocols:
           type: string
           description: '"; "-joined protocol hint values this build actually decodes.'
