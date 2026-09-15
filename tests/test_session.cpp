@@ -88,6 +88,21 @@ void test_start_produces_started_response() {
     TestClient client;
     check(client.connect(kTestPort), "connects to server");
 
+    // The connect() greeting: a capabilities frame advertising what this
+    // build can emit, sent before any start.
+    {
+        auto cap = json::parse_flat_object(client.capabilities());
+        check(json::get_string(cap, "type") == "capabilities",
+              "connect greeting is a capabilities frame");
+        check(!json::get_string(cap, "protocols").empty(),
+              "capabilities lists the protocols this build decodes");
+        check(!json::get_string(cap, "event_kinds").empty(),
+              "capabilities lists the event kinds");
+        check(json::get_string(cap, "extra_keys_dmr").find("burst") != std::string::npos ||
+              json::get_string(cap, "extra_keys_dmr").find("network_type") != std::string::npos,
+              "capabilities lists DMR extra keys for this backend");
+    }
+
     check(client.send_text(json::Writer()
         .field("type", std::string("start"))
         .field("sample_rate", 2'000'000.0)

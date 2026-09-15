@@ -294,6 +294,11 @@ public:
         // "start" control frame. Turn off to drive the started/error reply
         // by hand from on_control (e.g. to test the error path).
         bool auto_started = true;
+        // If true, send a {"type":"capabilities",...} greeting frame
+        // immediately on connect (before any control frame), mirroring the
+        // real server. Turn off to test a client against a server that
+        // doesn't advertise capabilities.
+        bool send_capabilities = true;
     };
 
     FakeDsdServer() = default; // default Options
@@ -464,6 +469,25 @@ private:
             }
             client_connected_ = true;
             { std::lock_guard<std::mutex> lk(state_mutex_); state_cv_.notify_all(); }
+            // Greet with a capabilities frame before reading, like the real
+            // server. A fixed representative frame (dsd-fme flavor) -- the
+            // mock advertises protocol shape, not this run's exact backend.
+            if (opts_.send_capabilities) {
+                send_text(
+                    "{\"type\":\"capabilities\",\"backend\":\"dsd-fme\","
+                    "\"protocols\":\"dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; "
+                    "provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; auto\","
+                    "\"audio\":\"pcm_s16le_8000_mono\","
+                    "\"event_kinds\":\"voice; sync; call; message; burst; unknown\","
+                    "\"extra_keys_dmr\":\"network_type; network_id; site_id; rest_channel; lcn\","
+                    "\"extra_keys_p25\":\"rfss; site_id; system_id; wacn; alg_id; key_id\","
+                    "\"extra_keys_nxdn\":\"site_code; system_code; location_id; category\","
+                    "\"extra_keys_dstar\":\"rpt1; rpt2; radio_text\","
+                    "\"extra_keys_ysf\":\"uplink; downlink; call_mode; data_type; src_rid; dst_rid\","
+                    "\"extra_keys_edacs\":\"lcn; afs; lid; system_id\","
+                    "\"extra_keys_tetra\":\"mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; "
+                    "service; pdu; usage_marker; dl_usage_marker; encr\"}");
+            }
             read_loop(fd);
             close_client_fd();
         }

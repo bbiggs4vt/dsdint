@@ -593,6 +593,7 @@ the binary audio formats. The tables below are the quick summary.
 
 | Frame | Payload | Purpose |
 |---|---|---|
+| text | `{"type":"capabilities","backend":"dsd-fme","protocols":"...","event_kinds":"...","extra_keys_dmr":"...", ...}` | Sent once on connect, before anything else. Advertises which protocols this build decodes, the event kinds it emits, and the `extra` token keys it can produce (grouped per protocol family, filtered to this backend) so a client can discover them programmatically. Skip it if you read the first frame expecting `started`. See PROTOCOL.md. |
 | text | `{"type":"started","udp_audio_port":47213}` | Pipeline is up. |
 | text | `{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","extra":"","raw":"..."}` | Decoder activity, parsed from a dsd-fme log line (or synthesized from DSDcc state). `kind` is `voice`/`sync`/`call`/`message`/`unknown` (plus `burst` on DSDcc); `message` carries decoded DMR short-data/SMS text in the `message` field. All fields always present, `""` when unknown. See PROTOCOL.md for per-backend semantics and real examples. |
 | text | `{"type":"error","message":"..."}` | Something was rejected (bad control message, invalid key, DSD/TETRA backend failed to start, malformed binary frame). Connection stays open. PROTOCOL.md lists all six message texts. |

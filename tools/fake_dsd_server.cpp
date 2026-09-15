@@ -7,8 +7,10 @@
 // in-process — that gives direct access to the recorded control messages
 // for assertions (see the header's usage note and test_fake_dsd_server).
 //
-// Behavior mirrors the real server's timing: on "start" it does the
-// minimum — just the "started" reply, no events yet. Output only begins
+// Behavior mirrors the real server's timing: it greets every connection
+// with a {"type":"capabilities",...} frame (before any control frame),
+// then on "start" it does the minimum — just the "started" reply, no
+// events yet. Output only begins
 // once the client streams IQ: the FIRST binary IQ frame triggers a sync
 // event and a DMR call event (TG 150607, SRC 2222223, slot 2); every
 // SUBSEQUENT IQ frame yields one 20 ms voice-audio frame. Every control

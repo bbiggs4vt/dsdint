@@ -69,11 +69,14 @@ channels:
       operationId: receiveFromServer
       summary: Server → client (the client receives these).
       description: |
-        `started` acks a successful `start` (before any event/audio from that
-        pipeline); `error` reports a rejected message (connection stays open);
-        `event` reports decoder activity; binary frames carry decoded PCM audio.
+        `capabilities` is sent once on connect (before the client sends
+        anything) advertising what this build can emit; `started` acks a
+        successful `start` (before any event/audio from that pipeline);
+        `error` reports a rejected message (connection stays open); `event`
+        reports decoder activity; binary frames carry decoded PCM audio.
       message:
         oneOf:
+          - $ref: "#/components/messages/Capabilities"
           - $ref: "#/components/messages/Started"
           - $ref: "#/components/messages/ErrorMessage"
           - $ref: "#/components/messages/Event"
@@ -168,6 +171,50 @@ components:
         description: Raw little-endian float32 IQ bytes (not JSON).
 
     # --------------------------------------------- server -> client (text)
+    Capabilities:
+      name: capabilities
+      title: capabilities (greeting)
+      summary: Advertises what this build can emit; sent once on connect.
+      contentType: application/json
+      description: |
+        Sent once immediately on connect, before the client sends anything,
+        so a client can discover programmatically which protocols this
+        build decodes, the event kinds it emits, and the `extra` token keys
+        it can produce. Every value is a "; "-joined string (flat JSON, no
+        arrays). The extra-key lists are grouped per protocol family and
+        pre-filtered to this backend; a family this build can't emit a key
+        for is omitted. A client that reads the first frame for `started`
+        should skip this greeting (it's self-identifying by `type`).
+      payload:
+        $ref: "#/components/schemas/Capabilities"
+      examples:
+        - name: dsd-fme-backend
+          payload:
+            type: capabilities
+            backend: dsd-fme
+            protocols: "dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; auto"
+            audio: pcm_s16le_8000_mono
+            event_kinds: "voice; sync; call; message; burst; unknown"
+            extra_keys_dmr: "network_type; network_id; site_id; rest_channel; lcn"
+            extra_keys_p25: "rfss; site_id; system_id; wacn; alg_id; key_id"
+            extra_keys_nxdn: "site_code; system_code; location_id; category"
+            extra_keys_dstar: "rpt1; rpt2; radio_text"
+            extra_keys_ysf: "uplink; downlink; call_mode; data_type; src_rid; dst_rid"
+            extra_keys_edacs: "lcn; afs; lid; system_id"
+            extra_keys_tetra: "mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr"
+        - name: dsdcc-backend
+          payload:
+            type: capabilities
+            backend: dsdcc
+            protocols: "dmr; nxdn48; nxdn96; dpmr; dstar; ysf; tetra; tetrakit; auto"
+            audio: pcm_s16le_8000_mono
+            event_kinds: "voice; sync; call; message; burst; unknown"
+            extra_keys_dmr: "unit_target; burst; sync_type"
+            extra_keys_nxdn: "site_code; system_code; location_id"
+            extra_keys_dstar: "rpt1; rpt2; radio_text; gps"
+            extra_keys_ysf: "uplink; downlink; call_mode; data_type; src_rid; dst_rid"
+            extra_keys_tetra: "mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr"
+
     Started:
       name: started
       title: started (status)
@@ -339,6 +386,37 @@ components:
         type: { const: stop }
 
     # ================================================= server -> client ====
+    Capabilities:
+      type: object
+      required: [type, backend, protocols, audio, event_kinds]
+      additionalProperties: false
+      description: |
+        Connect-time greeting. All values are "; "-joined strings. The
+        extra_keys_* fields are per-protocol-family and appear only when
+        this build can emit a key for that family, so they are optional.
+      properties:
+        type: { const: capabilities }
+        backend:
+          type: string
+          enum: [dsd-fme, dsdcc]
+          description: The compiled DSD backend.
+        protocols:
+          type: string
+          description: '"; "-joined protocol hint values this build actually decodes.'
+        audio:
+          type: string
+          description: Decoded-audio wire shape, e.g. "pcm_s16le_8000_mono".
+        event_kinds:
+          type: string
+          description: '"; "-joined Event.kind values this build emits.'
+        extra_keys_dmr:   { type: string, description: '"; "-joined DMR extra keys for this backend.' }
+        extra_keys_p25:   { type: string, description: '"; "-joined P25 extra keys (dsd-fme build only).' }
+        extra_keys_nxdn:  { type: string, description: '"; "-joined NXDN extra keys.' }
+        extra_keys_dstar: { type: string, description: '"; "-joined D-STAR extra keys.' }
+        extra_keys_ysf:   { type: string, description: '"; "-joined YSF extra keys.' }
+        extra_keys_edacs: { type: string, description: '"; "-joined EDACS/ProVoice extra keys (dsd-fme build only).' }
+        extra_keys_tetra: { type: string, description: '"; "-joined TETRA extra keys.' }
+
     Started:
       type: object
       required: [type, udp_audio_port]

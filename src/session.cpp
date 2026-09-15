@@ -1,5 +1,6 @@
 #include "session.hpp"
 #include "json_util.hpp"
+#include "protocol_capabilities.hpp"
 
 #include <iostream>
 #include <cstring>
@@ -81,6 +82,10 @@ void Session::on_accept(beast::error_code ec) {
         std::cerr << "accept error: " << ec.message() << "\n";
         return;
     }
+    // Advertise what this build can emit before the client sends anything,
+    // so it can prepare to parse the event kinds and `extra` token keys
+    // without hard-coding them from PROTOCOL.md.
+    send_text(build_capabilities_json());
     do_read();
 }
 

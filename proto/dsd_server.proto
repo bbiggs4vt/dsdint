@@ -48,7 +48,7 @@ package dsdserver;
 // then parse the full frame into the matching message below.
 message Envelope {
   string type = 1; // "start" | "set_gain" | "set_freq_offset" | "stop"
-                   // | "started" | "error" | "event"
+                   // | "capabilities" | "started" | "error" | "event"
 }
 
 // ---------------------------------------------------- client -> server
@@ -94,6 +94,37 @@ message StopRequest {
 }
 
 // ---------------------------------------------------- server -> client
+
+// {"type":"capabilities", ...}. Sent once immediately on connect, before
+// the client sends anything, so a client can discover what this server
+// build can emit instead of hard-coding it. Every value is a "; "-joined
+// string (the flat-JSON, no-arrays invariant). `backend` is "dsd-fme" or
+// "dsdcc"; `protocols` lists the `protocol` hint values this build
+// actually decodes; `audio` is the decoded-audio wire shape (currently
+// "pcm_s16le_8000_mono"); `event_kinds` lists the Event.kind values.
+//
+// The `extra` token keys depend on backend AND protocol; since the
+// protocol isn't chosen yet at connect, they're grouped into per-family
+// fields (extra_keys_<family>), each pre-filtered to what this backend can
+// emit. A family this build can't emit any key for is OMITTED (proto3 JSON
+// parses a present-or-absent string field identically, so an absent field
+// reads back as ""). See PROTOCOL.md and Event.extra for the token meanings.
+message Capabilities {
+  string type = 1;         // = "capabilities"
+  string backend = 2;      // "dsd-fme" | "dsdcc"
+  string protocols = 3;    // "; "-joined protocol hints this build decodes
+  string audio = 4;        // decoded-audio wire shape, e.g. "pcm_s16le_8000_mono"
+  string event_kinds = 5 [json_name = "event_kinds"]; // "; "-joined Event.kind values
+  // Per-protocol-family extra-key lists ("; "-joined), each filtered to
+  // this backend; absent when this build emits no key for that family.
+  string extra_keys_dmr = 6 [json_name = "extra_keys_dmr"];
+  string extra_keys_p25 = 7 [json_name = "extra_keys_p25"];
+  string extra_keys_nxdn = 8 [json_name = "extra_keys_nxdn"];
+  string extra_keys_dstar = 9 [json_name = "extra_keys_dstar"];
+  string extra_keys_ysf = 10 [json_name = "extra_keys_ysf"];
+  string extra_keys_edacs = 11 [json_name = "extra_keys_edacs"];
+  string extra_keys_tetra = 12 [json_name = "extra_keys_tetra"];
+}
 
 // {"type":"started","udp_audio_port":N}. Pipeline is up. udp_audio_port is
 // the subprocess (dsd-fme) backend's local UDP audio port, or 0 for the

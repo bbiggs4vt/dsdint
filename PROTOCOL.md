@@ -273,9 +273,47 @@ control plane in the clear (`Air encryption: 0`).
 
 ## Server → Client
 
-Four frame shapes total: three JSON text frames (`started`, `error`,
-`event`) and one tagged binary frame (decoded audio). Nothing else is
-ever sent.
+Five frame shapes total: four JSON text frames (`capabilities`,
+`started`, `error`, `event`) and one tagged binary frame (decoded
+audio). Nothing else is ever sent.
+
+### `capabilities` — what this build can emit
+
+Sent **once, immediately on connect**, before the client sends anything.
+It lets a client discover programmatically — without hard-coding this
+table — which protocols this server build decodes, the event kinds it
+emits, and the `extra` token keys it can produce. All values are `"; "`-
+joined strings (keeping the flat-JSON, no-arrays invariant).
+
+The set of `extra` keys depends on both the compiled backend (dsd-fme
+subprocess vs in-process DSDcc) and the protocol. At connect time the
+client hasn't chosen a protocol yet, so the keys are grouped into
+per-protocol-family fields (`extra_keys_dmr`, `extra_keys_p25`, …),
+each pre-filtered to the keys **this backend** can actually emit; a
+family this build can never emit a key for is omitted entirely. The
+client reads the field for whichever protocol it's about to request.
+
+```json
+{"type":"capabilities","backend":"dsd-fme","protocols":"dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; auto","audio":"pcm_s16le_8000_mono","event_kinds":"voice; sync; call; message; burst; unknown","extra_keys_dmr":"network_type; network_id; site_id; rest_channel; lcn","extra_keys_p25":"rfss; site_id; system_id; wacn; alg_id; key_id","extra_keys_nxdn":"site_code; system_code; location_id; category","extra_keys_dstar":"rpt1; rpt2; radio_text","extra_keys_ysf":"uplink; downlink; call_mode; data_type; src_rid; dst_rid","extra_keys_edacs":"lcn; afs; lid; system_id","extra_keys_tetra":"mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr"}
+```
+
+| field | type | meaning |
+|---|---|---|
+| `type` | string | `"capabilities"` |
+| `backend` | string | The compiled DSD backend: `"dsd-fme"` (subprocess) or `"dsdcc"` (in-process). |
+| `protocols` | string | `"; "`-joined `protocol` hint values this build actually decodes. The DSDcc build omits the dsd-fme-only ones (`p25`/`p25p2`/`provoice`/`edacs*`/`x2tdma`). |
+| `audio` | string | Decoded-audio wire shape, currently always `"pcm_s16le_8000_mono"` (see the audio section below). |
+| `event_kinds` | string | `"; "`-joined `event` `kind` values (`voice; sync; call; message; burst; unknown`). |
+| `extra_keys_<family>` | string | `"; "`-joined `extra` token keys this build can emit for that protocol family (`dmr`, `p25`, `nxdn`, `dstar`, `ysf`, `edacs`, `tetra`). Present only when non-empty. See the `extra` token vocabulary above for each token's meaning. |
+
+The DSDcc build's frame is the same shape but narrower: `protocols` drops
+the dsd-fme-only entries, `extra_keys_p25`/`extra_keys_edacs` are absent,
+`extra_keys_dmr` is `"unit_target; burst; sync_type"`, and
+`extra_keys_dstar` additionally carries `gps`.
+
+A client that reads the first frame expecting `started` should first
+consume (or skip past) this `capabilities` greeting — it is self-
+identifying by its `type`.
 
 ### `started` — pipeline is up
 
@@ -816,7 +854,8 @@ transmission ends or the pipeline is stopped.
 ## Lifecycle summary
 
 ```
-connect ──▶ (optional binary IQ: silently ignored)
+connect                     ◀── {"type":"capabilities",...}  (greeting, once)
+        ──▶ (optional binary IQ: silently ignored)
         ──▶ {"type":"start",...} ──▶ {"type":"started",...}
         ──▶ binary IQ frames    ──▶ {"type":"event",...}   (interleaved,
                                 ──▶ 0x01 + PCM frames       any order)
@@ -824,6 +863,8 @@ connect ──▶ (optional binary IQ: silently ignored)
         ──▶ {"type":"start",...}    (new pipeline on same socket is fine)
 ```
 
+- `capabilities` is the first frame sent, before the client transmits
+  anything; a client reading the first frame for `started` should skip it.
 - `started` always precedes that pipeline's events/audio; after that,
   event and audio frames interleave in whatever order decoding produces
   them — assume no ordering between the two streams.
@@ -847,6 +888,11 @@ test target and:
 - **assert on the client → server direction** — every control frame the
   client sends is recorded (`control_messages()`, `last_start()`), and
   streamed IQ is counted (`iq_bytes_received()` / `iq_frames_received()`).
+
+Like the real server, the fake greets each connection with a
+`capabilities` frame (a fixed representative one) before any control frame;
+set `Options::send_capabilities = false` to test a client against a server
+that doesn't advertise capabilities.
 
 Scripting can be hung off two hooks so the fake mirrors the real server's
 timing — which emits nothing until IQ is flowing: `on_control` fires per
@@ -886,9 +932,9 @@ Three things about the mapping are worth knowing:
 - **Dispatch on `type` yourself.** Protobuf JSON can't pick a message from a
   discriminator field, so on receive parse each frame into `Envelope` first,
   switch on `type`, then parse the frame into the matching message
-  (`Started` / `ErrorMessage` / `Event`). Parse a frame only into its own
-  message — an `Event` frame parsed as `Started` would hit unknown fields
-  unless your parser ignores them.
+  (`Capabilities` / `Started` / `ErrorMessage` / `Event`). Parse a frame
+  only into its own message — an `Event` frame parsed as `Started` would hit
+  unknown fields unless your parser ignores them.
 
 - **Numbers and default omission.** The numeric control fields are `double`,
   so a proto printer emits `2400000.0`; the server's parser reads that fine.

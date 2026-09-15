@@ -47,8 +47,15 @@ public:
         beast::get_lowest_layer(ws_).connect(res, ec);
         if (ec) return false;
         ws_.handshake("127.0.0.1", "/", ec);
-        return !ec;
+        if (ec) return false;
+        // Consume the capabilities greeting the server sends on connect
+        // (Options::send_capabilities, on by default), so callers read the
+        // replies to their own frames. Stashed for optional inspection.
+        bool is_text = false;
+        if (!read(capabilities_, is_text)) return false;
+        return true;
     }
+    const std::string& capabilities() const { return capabilities_; }
     bool send_text(const std::string& s) {
         ws_.text(true); beast::error_code ec; ws_.write(net::buffer(s), ec); return !ec;
     }
@@ -73,6 +80,7 @@ public:
 private:
     net::io_context ioc_;
     websocket::stream<beast::tcp_stream> ws_{ioc_};
+    std::string capabilities_; // greeting consumed in connect()
 };
 
 bool has(const std::string& hay, const std::string& needle) {

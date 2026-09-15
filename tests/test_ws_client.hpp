@@ -80,8 +80,21 @@ public:
 
         ws_.handshake("127.0.0.1", "/", ec);
         if (ec) { std::printf("  handshake failed: %s\n", ec.message().c_str()); return false; }
+
+        // The server sends a {"type":"capabilities",...} greeting frame
+        // immediately on connect, before any "start". Consume it here (as
+        // a real client would) so callers read the responses to their own
+        // messages; it's stashed in capabilities() for optional inspection.
+        bool is_text = false;
+        if (!read(capabilities_, is_text) || !is_text) {
+            std::printf("  did not receive capabilities greeting\n");
+            return false;
+        }
         return true;
     }
+
+    // The capabilities greeting frame consumed during connect().
+    const std::string& capabilities() const { return capabilities_; }
 
     bool send_text(const std::string& msg) {
         ws_.text(true);
@@ -176,6 +189,7 @@ private:
 
     net::io_context ioc_;
     websocket::stream<beast::tcp_stream> ws_;
+    std::string capabilities_; // greeting frame consumed in connect()
 };
 
 // Synthetic FM-modulated IQ block, same construction as
