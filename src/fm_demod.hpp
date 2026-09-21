@@ -67,7 +67,32 @@ struct FmDemodConfig {
     bool afc_enabled = false;
     double afc_time_constant_s = 0.25;   // loop time constant; lock in ~4x this
     double afc_max_correction_hz = 5000.0; // hard clamp on |correction|
+
+    // --- Matched filter (opt-in, experimental) ---
+    // A root-raised-cosine FIR applied to the discriminator output, matched
+    // to the digital-voice symbol pulse shape, narrowing the post-detection
+    // noise bandwidth to roughly the symbol band. FM discriminator noise
+    // has a parabolic (rising-with-frequency) spectrum, so most of it sits
+    // ABOVE the symbol bandwidth; cutting it can recover a dB or two of SNR
+    // into DSD's slicer near threshold. Symbol timing is deliberately left
+    // to the downstream decoder (dsd-fme/DSDcc do their own), so this only
+    // conditions the stream -- the output rate is unchanged.
+    //
+    // Defaults OFF: it must be A/B tested on real captures before being
+    // trusted (it can double-filter against a decoder's own internal symbol
+    // filter and then HURT), and the defaults target DMR 4FSK (4800 Bd).
+    bool matched_filter_enabled = false;
+    double mf_symbol_rate_hz = 4800.0;   // 4FSK symbol rate (DMR/NXDN48)
+    double mf_rolloff = 0.2;             // RRC excess bandwidth (0..1)
+    int mf_span_symbols = 8;             // FIR length in symbol periods
 };
+
+// Design a root-raised-cosine FIR of `num_taps` (forced odd) taps for a
+// symbol_rate_hz signal sampled at fs_hz, normalized to unity DC gain.
+// Exposed (not file-local) so the matched filter can be unit-tested
+// directly -- see tests/test_matched_filter.cpp.
+std::vector<float> design_rrc_fir(double fs_hz, double symbol_rate_hz,
+                                  double rolloff, int num_taps);
 
 // Streaming FM demodulator. Feed it IQ blocks via process(); it appends
 // ready 16-bit PCM samples (mono, output_sample_rate_hz) to `out`.
@@ -100,10 +125,12 @@ public:
 
 private:
     void design_lowpass();
+    void design_matched_filter();
     void apply_nco_frequency();
     void afc_update();
     void mix_and_filter_decimate(const cf32* in, std::size_t n);
     void demod_block();
+    void apply_matched_filter();
     void resample_to_output();
 
     FmDemodConfig cfg_;
@@ -125,6 +152,10 @@ private:
     // Discriminator state
     cf32 last_sample_{1.0f, 0.0f};
     std::vector<float> disc_out_;  // demodulated audio at decimated rate
+
+    // Matched-filter state (real FIR on disc_out_, streamed with history).
+    std::vector<float> mf_taps_;
+    std::vector<float> mf_history_; // size = mf_taps_.size() - 1
 
     // Fractional resampler state (decimated rate -> exactly output rate)
     double resample_pos_ = 0.0;

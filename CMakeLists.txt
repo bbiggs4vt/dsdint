@@ -78,6 +78,16 @@ target_compile_options(dsd-server PRIVATE -Wall -Wextra)
 add_executable(test_fm_demod EXCLUDE_FROM_ALL src/fm_demod.cpp tests/test_fm_demod.cpp)
 target_include_directories(test_fm_demod PRIVATE src)
 
+# Root-raised-cosine symbol matched filter (opt-in FM-path stage). Pure
+# DSP: checks design_rrc_fir's shape/normalization/low-pass response and
+# the streaming FmDemodulator matched-filter stage. No external inputs.
+add_executable(test_matched_filter EXCLUDE_FROM_ALL src/fm_demod.cpp tests/test_matched_filter.cpp)
+target_include_directories(test_matched_filter PRIVATE src)
+target_link_libraries(test_matched_filter PRIVATE m)
+target_compile_options(test_matched_filter PRIVATE -Wall -Wextra)
+add_test(NAME matched_filter_test COMMAND test_matched_filter)
+set_tests_properties(matched_filter_test PROPERTIES TIMEOUT 60)
+
 # π/4-DQPSK demodulator (TETRA physical layer). Pure DSP with a matching
 # modulator carried in the test as ground truth — no external deps, no
 # capture files, so it always runs.

@@ -39,6 +39,45 @@ std::vector<float> design_lowpass_fir(double sample_rate, double cutoff_hz, int 
 }
 } // namespace
 
+std::vector<float> design_rrc_fir(double fs_hz, double symbol_rate_hz,
+                                  double rolloff, int num_taps) {
+    if (num_taps % 2 == 0) num_taps += 1; // odd length -> symmetric about center
+    std::vector<float> h(num_taps);
+    const double beta = rolloff;
+    const double sps = fs_hz / symbol_rate_hz; // samples per symbol (may be fractional)
+    const int M = (num_taps - 1) / 2;
+    const double eps = 1e-8;
+
+    // Standard root-raised-cosine impulse response, evaluated at t/Ts = n/sps.
+    // The common 1/Ts scale factor is dropped (identical on every tap) since
+    // the taps are DC-normalized below; that keeps the discriminator's level
+    // -> PCM mapping intact so the decoder's 4-level slicer is undisturbed.
+    double sum = 0.0;
+    for (int i = 0; i < num_taps; ++i) {
+        const double x = (i - M) / sps; // time in symbol periods
+        double v;
+        if (std::abs(x) < eps) {
+            v = 1.0 + beta * (4.0 / kPi - 1.0);
+        } else if (beta > 0.0 && std::abs(std::abs(x) - 1.0 / (4.0 * beta)) < eps) {
+            const double a = kPi / (4.0 * beta);
+            v = (beta / std::sqrt(2.0)) *
+                ((1.0 + 2.0 / kPi) * std::sin(a) + (1.0 - 2.0 / kPi) * std::cos(a));
+        } else {
+            const double px = kPi * x;
+            const double fourbx = 4.0 * beta * x;
+            const double num = std::sin(px * (1.0 - beta)) +
+                               fourbx * std::cos(px * (1.0 + beta));
+            const double den = px * (1.0 - fourbx * fourbx);
+            v = num / den;
+        }
+        h[i] = static_cast<float>(v);
+        sum += v;
+    }
+    if (sum != 0.0) for (auto& c : h) c = static_cast<float>(c / sum); // unity DC gain
+    return h;
+}
+
+
 FmDemodulator::FmDemodulator(const FmDemodConfig& cfg) : cfg_(cfg) {
     // Pick an integer decimation factor that brings us close to, but not
     // below, the target output rate multiplied by a small oversample
@@ -50,6 +89,8 @@ FmDemodulator::FmDemodulator(const FmDemodConfig& cfg) : cfg_(cfg) {
     design_lowpass();
 
     fir_history_.assign(taps_.size() - 1, cf32{0.0f, 0.0f});
+
+    if (cfg_.matched_filter_enabled) design_matched_filter();
 }
 
 void FmDemodulator::set_freq_offset(double hz) {
@@ -95,10 +136,54 @@ void FmDemodulator::design_lowpass() {
     taps_ = design_lowpass_fir(cfg_.input_sample_rate_hz, cutoff, cfg_.fir_taps);
 }
 
+void FmDemodulator::design_matched_filter() {
+    // Design the RRC at the DECIMATED rate (where disc_out_ lives). A
+    // non-integer samples/symbol is fine -- the FIR is evaluated in
+    // continuous time. Span the filter over mf_span_symbols symbol periods.
+    const double fs = decimated_rate_hz();
+    const int sps = std::max(2, static_cast<int>(std::lround(fs / cfg_.mf_symbol_rate_hz)));
+    int taps = std::max(3, cfg_.mf_span_symbols) * sps;
+    if (taps % 2 == 0) taps += 1;
+    mf_taps_ = design_rrc_fir(fs, cfg_.mf_symbol_rate_hz, cfg_.mf_rolloff, taps);
+    mf_history_.assign(mf_taps_.size() - 1, 0.0f);
+}
+
+void FmDemodulator::apply_matched_filter() {
+    if (mf_taps_.empty() || disc_out_.empty()) return;
+    const std::size_t taps = mf_taps_.size();
+    const std::size_t hist = mf_history_.size(); // taps - 1
+
+    // History (carried across calls) followed by this block, so the
+    // convolution runs without per-sample edge handling -- same overlap
+    // scheme as the complex channel FIR above.
+    std::vector<float> buf;
+    buf.reserve(hist + disc_out_.size());
+    buf.insert(buf.end(), mf_history_.begin(), mf_history_.end());
+    buf.insert(buf.end(), disc_out_.begin(), disc_out_.end());
+
+    std::vector<float> filtered;
+    filtered.reserve(disc_out_.size());
+    for (std::size_t i = hist; i < buf.size(); ++i) {
+        float acc = 0.0f;
+        for (std::size_t t = 0; t < taps; ++t) {
+            acc += buf[i - taps + 1 + t] * mf_taps_[t];
+        }
+        filtered.push_back(acc);
+    }
+    if (buf.size() >= hist) {
+        std::copy(buf.end() - static_cast<long>(hist), buf.end(), mf_history_.begin());
+    }
+    disc_out_.swap(filtered);
+}
+
 void FmDemodulator::process(const cf32* in, std::size_t n, std::vector<int16_t>& out) {
     mix_and_filter_decimate(in, n);
     demod_block();
     if (cfg_.afc_enabled) afc_update(); // reads disc_out_ at the decimated rate
+    // Applied AFTER afc_update so AFC still measures the raw discriminator
+    // statistics its variance gate was tuned against; the matched filter
+    // narrows the post-detection noise before resampling.
+    if (cfg_.matched_filter_enabled) apply_matched_filter();
     resample_to_output();
 
     out.reserve(out.size() + disc_out_.size());

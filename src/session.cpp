@@ -129,6 +129,10 @@ void Session::handle_text_message(const std::string& msg) {
             double offset = json::get_number(obj, "freq_offset", 0.0);
             float gain = static_cast<float>(json::get_number(obj, "gain", 26000.0));
             bool afc = json::get_bool(obj, "afc", false);
+            // Experimental: apply the RRC symbol matched filter in the FM
+            // path (opt-in, default off; see FmDemodConfig). Only the FM/DSD
+            // chain uses it -- the TETRA chain ignores it.
+            bool matched_filter = json::get_bool(obj, "matched_filter", false);
             // Advisory protocol hint: the client tells us what it thinks
             // the signal is so the decoder can be told which mode to run
             // instead of guessing. Absent/"" keeps the historical DMR
@@ -139,7 +143,7 @@ void Session::handle_text_message(const std::string& msg) {
             // means no key (unchanged behavior). See start_pipeline.
             std::string key_type = json::get_string(obj, "key_type");
             std::string key = json::get_string(obj, "key");
-            start_pipeline(sample_rate, bw, offset, gain, afc, protocol, key_type, key);
+            start_pipeline(sample_rate, bw, offset, gain, afc, protocol, key_type, key, matched_filter);
         } else if (type == "set_gain") {
             // Only the FM discriminator has a gain knob; the TETRA (π/4) modem
             // doesn't -- accept the message (no error) and ignore it there.
@@ -295,7 +299,8 @@ bool key_value_is_valid(const std::string& v) {
 
 void Session::start_pipeline(double sample_rate, double channel_bw, double freq_offset,
                              float gain, bool afc, const std::string& protocol,
-                             const std::string& key_type, const std::string& key) {
+                             const std::string& key_type, const std::string& key,
+                             bool matched_filter) {
     stop_pipeline(); // clean slate if already running
 
     const ProtocolHint hint = parse_protocol_hint(protocol);
@@ -416,6 +421,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         cfg.freq_offset_hz = freq_offset;
         cfg.disc_gain = gain;
         cfg.afc_enabled = afc;
+        cfg.matched_filter_enabled = matched_filter;
         {
             std::lock_guard<std::mutex> lock(demod_mutex_);
             demod_ = std::make_unique<ActiveFmDemodulator>(cfg);
