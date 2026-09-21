@@ -16,6 +16,7 @@
 #include <cmath>
 #include <vector>
 #include <complex>
+#include <random>
 
 using namespace dsdsrv;
 
@@ -132,6 +133,64 @@ int main() {
         const double expected = (2.0 * M_PI * f_off / fs_dec) * cfg.disc_gain;
         check(std::fabs(mean - expected) < std::fabs(expected) * 0.05 + 5.0,
               "steady tone level preserved through the matched filter (unity DC)");
+    }
+
+    // ---- quantitative: noise reduction on a constant tone + complex AWGN ----
+    // A constant-frequency tone demodulates to a DC level (passed at unity
+    // gain by both filters, matched-filter or not), so with AWGN added the
+    // output = DC + noise. Measuring the output variance MF-off vs MF-on
+    // isolates the noise: the matched filter narrows the post-detection
+    // noise bandwidth to the symbol band and should cut it substantially
+    // while leaving the DC level unchanged. Deterministic (fixed seed).
+    //
+    // NB: this measures the noise-bandwidth reduction in the *raw
+    // discriminator output* -- an upper bound on the benefit. The real
+    // decode gain is smaller, because the downstream decoder already
+    // filters some of this out-of-band noise itself; that end-to-end dB
+    // still needs a real-capture A/B and is NOT claimed here.
+    {
+        const double fs_iq = 192000.0, f_off = 2000.0;
+        const std::size_t Nn = 160000;
+        auto run = [&](bool mf, double& out_mean, double& out_var) {
+            std::mt19937 rng(4242);
+            std::normal_distribution<double> gg(0.0, 1.0);
+            const double snr_db = 12.0;
+            const double sigma = std::sqrt((1.0 / std::pow(10.0, snr_db / 10.0)) / 2.0);
+            std::vector<cf32> iq(Nn);
+            double ph = 0.0;
+            for (std::size_t i = 0; i < Nn; ++i) {
+                ph += 2.0 * M_PI * f_off / fs_iq;
+                iq[i] = cf32(static_cast<float>(std::cos(ph) + sigma * gg(rng)),
+                             static_cast<float>(std::sin(ph) + sigma * gg(rng)));
+            }
+            FmDemodConfig cfg;
+            cfg.input_sample_rate_hz = fs_iq;
+            cfg.output_sample_rate_hz = 48000.0;
+            cfg.channel_bandwidth_hz = 12500.0;
+            cfg.disc_gain = 4000.0f;
+            cfg.matched_filter_enabled = mf;
+            FmDemodulator demod(cfg);
+            std::vector<int16_t> out;
+            demod.process(iq.data(), Nn, out);
+            const std::size_t s = out.size() / 10; // drop the filter transient
+            double m = 0; std::size_t c = 0;
+            for (std::size_t i = s; i < out.size(); ++i) { m += out[i]; ++c; }
+            m /= (c ? c : 1);
+            double v = 0;
+            for (std::size_t i = s; i < out.size(); ++i) { double e = out[i] - m; v += e * e; }
+            v /= (c ? c : 1);
+            out_mean = m; out_var = v;
+        };
+        double mean_off, var_off, mean_on, var_on;
+        run(false, mean_off, var_off);
+        run(true,  mean_on,  var_on);
+        const double reduction_db = 10.0 * std::log10(var_off / var_on);
+        std::printf("    [measured] DC level off=%.1f on=%.1f; noise reduction = %.1f dB\n",
+                    mean_off, mean_on, reduction_db);
+        check(std::fabs(mean_on - mean_off) < std::fabs(mean_off) * 0.02 + 1.0,
+              "AWGN: DC signal level unchanged by the matched filter");
+        check(var_on < var_off * 0.5,
+              "AWGN: matched filter cuts post-detection noise variance (>3 dB)");
     }
 
     if (g_failures == 0) {
