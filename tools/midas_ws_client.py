@@ -268,6 +268,8 @@ def main():
                     help="channel offset in Hz (positive = channel above 0 Hz)")
     ap.add_argument("--gain", type=float, default=26000.0)
     ap.add_argument("--afc", action="store_true", help="enable server-side AFC")
+    ap.add_argument("--matched-filter", action="store_true",
+                    help="enable the experimental RRC symbol matched filter in the FM path")
     ap.add_argument("--protocol", default=None,
                     help="advisory protocol hint for the server "
                          "(dmr, nxdn48, nxdn96, auto/unknown); omit to use the "
@@ -358,6 +360,8 @@ def main():
     }
     if args.protocol is not None:
         start_msg["protocol"] = args.protocol
+    if args.matched_filter:
+        start_msg["matched_filter"] = True
     ws.send_text(json.dumps(start_msg))
 
     block_seconds = args.block / sample_rate
