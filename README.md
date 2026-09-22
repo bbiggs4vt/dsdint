@@ -731,9 +731,3 @@ async def main():
 asyncio.run(main())
 ```
 
-## Extending
-
-- **JSON event richness**: `dsd-fme`'s newer builds may expose structured
-  (JSON) event output directly — if yours does, swap `classify_line()`'s
-  regex parsing for that instead; it'll be far more reliable than
-  scraping human-readable log lines.
