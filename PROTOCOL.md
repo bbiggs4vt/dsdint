@@ -882,6 +882,13 @@ connect                     ◀── {"type":"capabilities",...}  (greeting, on
   the connection.
 - Disconnecting (cleanly or abruptly) tears down the session's pipeline
   server-side; there is no shutdown handshake in the protocol itself.
+- The server does **not** drop an idle connection for inactivity: a client
+  may open the socket and send nothing (e.g. a health check that just
+  verifies the server is up), or run a decode session that goes quiet for
+  minutes on an idle channel, and the connection stays open. TCP keep-alive
+  is enabled so a genuinely dead peer is still reaped by the OS. (Only the
+  initial HTTP request, before the WebSocket upgrade, has a 30 s read
+  deadline.)
 
 ## HTTP status endpoint (out of band)
 

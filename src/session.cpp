@@ -100,7 +100,21 @@ void Session::on_http_read(beast::error_code ec) {
     if (websocket::is_upgrade(http_req_)) {
         // A WebSocket client. Hand the already-parsed request to the
         // WebSocket accept so the handshake completes normally.
-        ws_.set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
+        //
+        // Timeout policy for the live connection: bound the handshake, but
+        // set idle_timeout = none() so an idle client is NEVER dropped for
+        // inactivity. That matters here for two reasons: a client may just
+        // hold the socket open to verify the server is up (a health check
+        // that sends nothing), and a real decode session legitimately goes
+        // quiet for minutes on an idle RF channel -- neither should be
+        // disconnected. (The 30s deadline armed in run() was only ever meant
+        // to bound the *initial HTTP read*; on_accept clears it below so it
+        // can't fire mid-session.)
+        websocket::stream_base::timeout opt{};
+        opt.handshake_timeout = std::chrono::seconds(30);
+        opt.idle_timeout = websocket::stream_base::none();
+        opt.keep_alive_pings = false;
+        ws_.set_option(opt);
         ws_.set_option(websocket::stream_base::decorator(
             [](websocket::response_type& res) {
                 res.set(http::field::server, "dsd-server/1.0");
@@ -156,6 +170,15 @@ void Session::on_accept(beast::error_code ec) {
         std::cerr << "accept error: " << ec.message() << "\n";
         return;
     }
+    // Handshake done: drop the initial-HTTP-read deadline armed in run() so
+    // it can't fire mid-session and tear down an otherwise-healthy idle
+    // connection. The websocket idle policy (none, set above) now governs
+    // inactivity. Turn on TCP keep-alive so the OS still eventually reaps a
+    // genuinely dead peer without us ever dropping a live idle client.
+    beast::get_lowest_layer(ws_).expires_never();
+    beast::error_code ka;
+    beast::get_lowest_layer(ws_).socket().set_option(net::socket_base::keep_alive(true), ka);
+
     // A WebSocket client is now connected: register it so the status page
     // can count it and show its protocol once a pipeline starts.
     if (stats_) stats_id_ = stats_->add_session(remote_);
