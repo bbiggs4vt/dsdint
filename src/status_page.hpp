@@ -292,11 +292,11 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
 
     // Live-session panel.
     o << "<div class=\"panel\" id=\"tab-sessions\">\n<table>\n<thead><tr>"
-      << "<th>#</th><th>Client</th><th>Protocol</th><th>Chain</th>"
+      << "<th>#</th><th>Client</th><th>Protocol</th>"
       << "<th>State</th><th>Connected (UTC)</th><th class=\"num\">Duration</th>"
       << "</tr></thead>\n<tbody id=\"rows\">\n";
     if (s.rows.empty()) {
-        o << "<tr><td colspan=\"7\" class=\"empty\">no clients connected</td></tr>\n";
+        o << "<tr><td colspan=\"6\" class=\"empty\">no clients connected</td></tr>\n";
     } else {
         for (const auto& r : s.rows) {
             double dur = std::chrono::duration<double>(
@@ -305,7 +305,6 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
               << "<td class=\"num\">" << r.id << "</td>"
               << "<td class=\"mono\">" << html_escape(r.remote.empty() ? "-" : r.remote) << "</td>"
               << "<td>" << html_escape(r.protocol) << "</td>"
-              << "<td>" << html_escape(r.chain.empty() ? "-" : r.chain) << "</td>"
               << "<td class=\"" << (r.active ? "state-on" : "state-off") << "\">"
               << "<span class=\"dot " << (r.active ? "on" : "off") << "\"></span>"
               << (r.active ? "decoding" : "idle") << "</td>"
@@ -318,18 +317,17 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
 
     // Session-history panel (finished sessions, newest first).
     o << "<div class=\"panel\" id=\"tab-history\">\n<table>\n<thead><tr>"
-      << "<th>#</th><th>Client</th><th>Protocol</th><th>Chain</th>"
+      << "<th>#</th><th>Client</th><th>Protocol</th>"
       << "<th>Connected (UTC)</th><th>Ended (UTC)</th><th class=\"num\">Duration</th>"
       << "</tr></thead>\n<tbody id=\"hrows\">\n";
     if (s.history.empty()) {
-        o << "<tr><td colspan=\"7\" class=\"empty\">no finished sessions yet</td></tr>\n";
+        o << "<tr><td colspan=\"6\" class=\"empty\">no finished sessions yet</td></tr>\n";
     } else {
         for (const auto& r : s.history) {
             o << "<tr>"
               << "<td class=\"num\">" << r.id << "</td>"
               << "<td class=\"mono\">" << html_escape(r.remote.empty() ? "-" : r.remote) << "</td>"
               << "<td>" << html_escape(r.protocol) << "</td>"
-              << "<td>" << html_escape(r.chain.empty() ? "-" : r.chain) << "</td>"
               << "<td class=\"mono\">" << html_escape(format_utc(r.connected)) << "</td>"
               << "<td class=\"mono\">" << html_escape(format_utc(r.ended)) << "</td>"
               << "<td class=\"num\">" << html_escape(human_duration(r.duration_s)) << "</td>"
@@ -347,7 +345,7 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
     o << R"JS(function dur(s){s=Math.max(0,Math.floor(s));var h=(s/3600)|0;s-=h*3600;var m=(s/60)|0;s-=m*60;var o='';if(h)o+=h+'h ';if(h||m)o+=m+'m ';return o+s+'s';}
 function setText(id,v){var e=document.getElementById(id);if(e&&e.textContent!==v)e.textContent=v;}
 function cell(cls,text){var td=document.createElement('td');if(cls)td.className=cls;td.textContent=text;return td;}
-function emptyRow(tb,msg){var tr=document.createElement('tr');var td=cell('empty',msg);td.colSpan=7;tr.appendChild(td);tb.appendChild(tr);}
+function emptyRow(tb,msg){var tr=document.createElement('tr');var td=cell('empty',msg);td.colSpan=6;tr.appendChild(td);tb.appendChild(tr);}
 function stateCell(active){var st=document.createElement('td');st.className=active?'state-on':'state-off';var dot=document.createElement('span');dot.className='dot '+(active?'on':'off');st.appendChild(dot);st.appendChild(document.createTextNode(active?'decoding':'idle'));return st;}
 function render(d){
   setText('cur',''+d.current_sessions);
@@ -372,7 +370,6 @@ function render(d){
     tr.appendChild(cell('num',''+r.id));
     tr.appendChild(cell('mono',r.remote||'-'));
     tr.appendChild(cell('',r.protocol));
-    tr.appendChild(cell('',r.chain||'-'));
     tr.appendChild(stateCell(r.active));
     tr.appendChild(cell('mono',r.connected));
     tr.appendChild(cell('num',dur(r.duration_seconds)));
@@ -386,7 +383,6 @@ function render(d){
     tr.appendChild(cell('num',''+r.id));
     tr.appendChild(cell('mono',r.remote||'-'));
     tr.appendChild(cell('',r.protocol));
-    tr.appendChild(cell('',r.chain||'-'));
     tr.appendChild(cell('mono',r.connected));
     tr.appendChild(cell('mono',r.ended));
     tr.appendChild(cell('num',dur(r.duration_seconds)));

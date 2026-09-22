@@ -413,8 +413,8 @@ and a few hundred bytes) and flicker-free in the browser.
 Both show the number of **currently connected** sessions, the
 **cumulative total** since the server started, how many are **actively
 decoding**, a per-protocol breakdown of the active ones, and a table of
-each live client (id, peer address, decode protocol, signal chain, idle
-vs decoding, connect time and duration). A session's protocol appears
+each live client (id, peer address, decode protocol, idle vs decoding,
+connect time and duration). A session's protocol appears
 once it sends `start`; before that it shows `-`. HTTP status requests are
 **not** counted as sessions.
 
