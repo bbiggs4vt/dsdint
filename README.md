@@ -733,9 +733,6 @@ asyncio.run(main())
 
 ## Extending
 
-- **Trunked DMR**: add `-T` / `-C <freq>` (verify flag names) to
-  `DsdProcessConfig::extra_args` and expose them through the `start`
-  control message.
 - **Multiple simultaneous channels per client**: currently one
   `FmDemodulator` + one `dsd-fme` per WebSocket connection. If you want
   one client to monitor several channels at once, the natural extension
