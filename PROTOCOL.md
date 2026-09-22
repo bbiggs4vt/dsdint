@@ -911,6 +911,11 @@ over HTTP and the connection closed:
   "sessions": [
     { "id": 41, "remote": "10.0.0.5:52233", "protocol": "dmr", "chain": "fm",
       "active": true, "connected": "2026-09-22 18:10:41Z", "duration_seconds": 71 }
+  ],
+  "history": [
+    { "id": 40, "remote": "10.0.0.5:52190", "protocol": "nxdn48", "chain": "fm",
+      "connected": "2026-09-22 18:05:02Z", "ended": "2026-09-22 18:09:55Z",
+      "duration_seconds": 293 }
   ]
 }
 ```
@@ -921,6 +926,11 @@ over HTTP and the connection closed:
 - A session's `protocol`/`chain` are `-`/`""` until it sends `start`;
   `chain` is `fm` (FM + DSD) or `tetra`. `active` flips to `false` on
   `stop` while the row keeps its last protocol label.
+- `history` is the most recent finished sessions (newest first, bounded to
+  the server's history limit — 50 by default), each with the `ended`
+  wall-clock time and total connected `duration_seconds`. It is in-memory
+  only and resets on restart. The HTML page shows it under a **History**
+  tab next to **Sessions**.
 - Unlike the WebSocket frames, this JSON is **nested** (a `sessions`
   array, a `by_protocol` object) — it is a separate diagnostic surface,
   not a wire event.

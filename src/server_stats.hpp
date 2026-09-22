@@ -18,6 +18,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <mutex>
 #include <string>
@@ -36,10 +37,24 @@ struct SessionRow {
     std::chrono::steady_clock::time_point connected_mono;// for duration math
 };
 
+// One row in the session-history table: a client that has disconnected.
+struct FinishedRow {
+    std::uint64_t id = 0;
+    std::string remote;
+    std::string protocol = "-";
+    std::string chain;
+    std::chrono::system_clock::time_point connected;     // when it connected
+    std::chrono::system_clock::time_point ended;         // when it disconnected
+    double duration_s = 0.0;                             // total connected lifetime
+};
+
 class ServerStats {
 public:
-    ServerStats()
-        : started_wall_(std::chrono::system_clock::now()),
+    // history_limit: how many of the most-recent finished sessions to keep
+    // for the history tab (in memory only; reset on restart).
+    explicit ServerStats(std::size_t history_limit = 50)
+        : history_limit_(history_limit),
+          started_wall_(std::chrono::system_clock::now()),
           started_mono_(std::chrono::steady_clock::now()) {}
 
     // A WebSocket client connected. Returns its stable id; records it in the
@@ -77,10 +92,24 @@ public:
         it->second.active = active;
     }
 
-    // The WebSocket client disconnected.
+    // The WebSocket client disconnected. Archive it into the bounded
+    // history (most-recent kept) before dropping it from the live table.
     void remove_session(std::uint64_t id) {
         std::lock_guard<std::mutex> lk(mu_);
-        sessions_.erase(id);
+        auto it = sessions_.find(id);
+        if (it == sessions_.end()) return;
+        FinishedRow f;
+        f.id = it->second.id;
+        f.remote = it->second.remote;
+        f.protocol = it->second.protocol;
+        f.chain = it->second.chain;
+        f.connected = it->second.connected;
+        f.ended = std::chrono::system_clock::now();
+        f.duration_s = std::chrono::duration<double>(
+                           std::chrono::steady_clock::now() - it->second.connected_mono).count();
+        history_.push_back(std::move(f));
+        while (history_.size() > history_limit_) history_.pop_front();
+        sessions_.erase(it);
     }
 
     struct Snapshot {
@@ -91,6 +120,7 @@ public:
         std::chrono::system_clock::time_point started;
         std::vector<SessionRow> rows;                 // sorted by id
         std::map<std::string, std::size_t> by_protocol; // active-pipeline count per protocol
+        std::vector<FinishedRow> history;             // finished sessions, most recent first
     };
 
     Snapshot snapshot() const {
@@ -109,12 +139,17 @@ public:
                 ++s.by_protocol[kv.second.protocol.empty() ? "-" : kv.second.protocol];
             }
         }
+        // History newest-first (history_ keeps oldest at the front).
+        s.history.reserve(history_.size());
+        for (auto it = history_.rbegin(); it != history_.rend(); ++it) s.history.push_back(*it);
         return s; // sessions_ is a std::map, so rows come out ordered by id
     }
 
 private:
     mutable std::mutex mu_;
     std::map<std::uint64_t, SessionRow> sessions_;
+    std::deque<FinishedRow> history_;
+    std::size_t history_limit_;
     std::uint64_t last_id_ = 0;
     std::uint64_t total_sessions_ = 0;
     std::chrono::system_clock::time_point started_wall_;

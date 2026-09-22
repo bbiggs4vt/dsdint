@@ -69,18 +69,40 @@ int main() {
         check(s4.by_protocol.count("dmr") == 0 && s4.by_protocol.at("tetra") == 1,
               "by_protocol only counts still-active pipelines");
 
-        // disconnect: current drops, total stays
+        // disconnect: current drops, total stays, and it lands in history
         st.remove_session(a);
         auto s5 = st.snapshot();
         check(s5.current_sessions == 1 && s5.total_sessions == 2,
               "remove drops current, total is cumulative");
         check(s5.rows.size() == 1 && s5.rows[0].id == 2, "only the remaining row is listed");
+        check(s5.history.size() == 1 && s5.history[0].id == 1,
+              "removed session is archived to history");
+        check(s5.history[0].protocol == "dmr", "history keeps the session's last protocol");
+
+        // disconnect the second: history now has both, newest first
+        st.remove_session(b);
+        auto s6 = st.snapshot();
+        check(s6.current_sessions == 0, "both disconnected");
+        check(s6.history.size() == 2 && s6.history[0].id == 2 && s6.history[1].id == 1,
+              "history is newest-first");
 
         // ops on an unknown id are no-ops, never crash
         st.set_protocol(999, "dmr", "fm", true);
         st.set_pipeline_active(999, false);
         st.remove_session(999);
-        check(st.snapshot().current_sessions == 1, "unknown-id ops are harmless no-ops");
+        check(st.snapshot().current_sessions == 0, "unknown-id ops are harmless no-ops");
+    }
+
+    // ---- history is bounded to the configured limit ----
+    {
+        ServerStats st(3);   // keep only the last 3 finished sessions
+        for (int i = 0; i < 6; ++i) st.remove_session(st.add_session("h:" + std::to_string(i)));
+        auto s = st.snapshot();
+        check(s.history.size() == 3, "history caps at the configured limit (3)");
+        check(s.total_sessions == 6, "total still counts every session ever");
+        // newest-first: the last three added were ids 4,5,6 -> 6,5,4
+        check(s.history[0].id == 6 && s.history[2].id == 4,
+              "capped history keeps the most recent, newest-first");
     }
 
     // ---- JSON renderer: shape + escaping ----
@@ -98,6 +120,11 @@ int main() {
         check(contains(j, "\"chain\":\"fm\""), "json session carries chain");
         check(contains(j, "\"active\":true"), "json session active flag is a bare bool");
         check(contains(j, "\"remote\":\"1.2.3.4:5\""), "json session carries remote");
+        check(contains(j, "\"history\":[]"), "json has an (empty) history array");
+        st.remove_session(id);
+        std::string j2 = render_status_json(st.snapshot());
+        check(contains(j2, "\"history\":[{"), "json history carries the finished session");
+        check(contains(j2, "\"ended\":\""), "json history row has an ended timestamp");
     }
     {
         // A remote string with JSON-special characters must be escaped so the
@@ -120,6 +147,14 @@ int main() {
         check(contains(h, "Total sessions"), "html labels total sessions");
         check(contains(h, "&lt;script&gt;:80"), "html escapes the remote address");
         check(!contains(h, "<script>:80"), "raw markup does not leak into html");
+        check(contains(h, "data-tab=\"tab-sessions\"") && contains(h, "data-tab=\"tab-history\""),
+              "html has both Sessions and History tabs");
+        check(contains(h, "no finished sessions yet"), "empty history shows a placeholder row");
+        st.remove_session(id);
+        std::string h2 = render_status_html(st.snapshot());
+        check(contains(h2, "&lt;script&gt;:80") && !contains(h2, "<script>:80"),
+              "history table also escapes the remote address");
+        check(contains(h2, "Ended (UTC)"), "history table has an Ended column");
     }
 
     // ---- helpers ----

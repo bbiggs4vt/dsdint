@@ -132,6 +132,22 @@ inline std::string render_status_json(const ServerStats::Snapshot& s) {
         o << "}";
     }
     o << "]";
+
+    o << ",\"history\":[";
+    for (std::size_t i = 0; i < s.history.size(); ++i) {
+        const auto& r = s.history[i];
+        if (i) o << ",";
+        o << "{";
+        o << "\"id\":" << r.id;
+        o << ",\"remote\":\"" << json_escape(r.remote) << "\"";
+        o << ",\"protocol\":\"" << json_escape(r.protocol) << "\"";
+        o << ",\"chain\":\"" << json_escape(r.chain) << "\"";
+        o << ",\"connected\":\"" << json_escape(format_utc(r.connected)) << "\"";
+        o << ",\"ended\":\"" << json_escape(format_utc(r.ended)) << "\"";
+        o << ",\"duration_seconds\":" << static_cast<long>(r.duration_s);
+        o << "}";
+    }
+    o << "]";
     o << "}";
     return o.str();
 }
@@ -216,6 +232,21 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
       << "  .tag b { font-weight: 700; }\n"
       << "  .section-label { color: var(--muted); font-size: 0.72rem; text-transform: uppercase;\n"
       << "                   letter-spacing: 0.06em; margin: 0 0 0.6rem; }\n"
+      // Slate-style nav tabs: a row of pill/tab buttons over the panel.
+      << "  .tabs { display: flex; gap: 0.3rem; margin-bottom: 0.7rem;\n"
+      << "          border-bottom: 1px solid var(--table-bd); }\n"
+      << "  .tab { appearance: none; cursor: pointer; color: var(--muted);\n"
+      << "         background: transparent; border: 1px solid transparent; border-bottom: none;\n"
+      << "         border-radius: 4px 4px 0 0; padding: 0.4rem 0.9rem; font: inherit;\n"
+      << "         font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em;\n"
+      << "         margin-bottom: -1px; }\n"
+      << "  .tab:hover { color: var(--heading); }\n"
+      << "  .tab.active { color: var(--heading); border-color: var(--table-bd);\n"
+      << "                background-image: linear-gradient(#41474d, #3a3f44);\n"
+      << "                border-bottom: 1px solid var(--panel); }\n"
+      << "  .tab .count { color: var(--muted); font-weight: 400; }\n"
+      << "  .tab.active .count { color: var(--info); }\n"
+      << "  [hidden] { display: none !important; }\n"
       << "</style>\n</head>\n<body>\n";
 
     // Header bar.
@@ -250,9 +281,17 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
     }
     o << "</div>\n</div>\n";
 
-    // Session table.
-    o << "<div class=\"section-label\">Sessions</div>\n";
-    o << "<div class=\"panel\">\n<table>\n<thead><tr>"
+    // Tab bar: live Sessions vs. Session history. JS switches panels; with
+    // JS off, both panels stay visible (stacked) so nothing is lost.
+    o << "<div class=\"tabs\">\n"
+      << "  <button class=\"tab active\" data-tab=\"tab-sessions\">Sessions "
+      << "<span class=\"count\" id=\"cnt-sessions\">" << s.rows.size() << "</span></button>\n"
+      << "  <button class=\"tab\" data-tab=\"tab-history\">History "
+      << "<span class=\"count\" id=\"cnt-history\">" << s.history.size() << "</span></button>\n"
+      << "</div>\n";
+
+    // Live-session panel.
+    o << "<div class=\"panel\" id=\"tab-sessions\">\n<table>\n<thead><tr>"
       << "<th>#</th><th>Client</th><th>Protocol</th><th>Chain</th>"
       << "<th>State</th><th>Connected (UTC)</th><th class=\"num\">Duration</th>"
       << "</tr></thead>\n<tbody id=\"rows\">\n";
@@ -275,7 +314,29 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
               << "</tr>\n";
         }
     }
-    o << "</tbody>\n</table>\n</div>\n";      // .panel
+    o << "</tbody>\n</table>\n</div>\n";      // #tab-sessions
+
+    // Session-history panel (finished sessions, newest first).
+    o << "<div class=\"panel\" id=\"tab-history\">\n<table>\n<thead><tr>"
+      << "<th>#</th><th>Client</th><th>Protocol</th><th>Chain</th>"
+      << "<th>Connected (UTC)</th><th>Ended (UTC)</th><th class=\"num\">Duration</th>"
+      << "</tr></thead>\n<tbody id=\"hrows\">\n";
+    if (s.history.empty()) {
+        o << "<tr><td colspan=\"7\" class=\"empty\">no finished sessions yet</td></tr>\n";
+    } else {
+        for (const auto& r : s.history) {
+            o << "<tr>"
+              << "<td class=\"num\">" << r.id << "</td>"
+              << "<td class=\"mono\">" << html_escape(r.remote.empty() ? "-" : r.remote) << "</td>"
+              << "<td>" << html_escape(r.protocol) << "</td>"
+              << "<td>" << html_escape(r.chain.empty() ? "-" : r.chain) << "</td>"
+              << "<td class=\"mono\">" << html_escape(format_utc(r.connected)) << "</td>"
+              << "<td class=\"mono\">" << html_escape(format_utc(r.ended)) << "</td>"
+              << "<td class=\"num\">" << html_escape(human_duration(r.duration_s)) << "</td>"
+              << "</tr>\n";
+        }
+    }
+    o << "</tbody>\n</table>\n</div>\n";      // #tab-history
     o << "</div>\n";                          // .wrap
 
     // Live poller: fetch the JSON snapshot and patch the DOM in place, so
@@ -286,6 +347,8 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
     o << R"JS(function dur(s){s=Math.max(0,Math.floor(s));var h=(s/3600)|0;s-=h*3600;var m=(s/60)|0;s-=m*60;var o='';if(h)o+=h+'h ';if(h||m)o+=m+'m ';return o+s+'s';}
 function setText(id,v){var e=document.getElementById(id);if(e&&e.textContent!==v)e.textContent=v;}
 function cell(cls,text){var td=document.createElement('td');if(cls)td.className=cls;td.textContent=text;return td;}
+function emptyRow(tb,msg){var tr=document.createElement('tr');var td=cell('empty',msg);td.colSpan=7;tr.appendChild(td);tb.appendChild(tr);}
+function stateCell(active){var st=document.createElement('td');st.className=active?'state-on':'state-off';var dot=document.createElement('span');dot.className='dot '+(active?'on':'off');st.appendChild(dot);st.appendChild(document.createTextNode(active?'decoding':'idle'));return st;}
 function render(d){
   setText('cur',''+d.current_sessions);
   setText('tot',''+d.total_sessions);
@@ -300,22 +363,44 @@ function render(d){
     sp.appendChild(document.createTextNode(k+' '));
     var b=document.createElement('b');b.textContent=''+d.by_protocol[k];sp.appendChild(b);
     bp.appendChild(sp);});}
-  var tb=document.getElementById('rows');tb.textContent='';
   var rows=d.sessions||[];
-  if(!rows.length){var tr=document.createElement('tr');var td=cell('empty','no clients connected');td.colSpan=7;tr.appendChild(td);tb.appendChild(tr);return;}
-  rows.forEach(function(r){
+  setText('cnt-sessions',''+rows.length);
+  var tb=document.getElementById('rows');tb.textContent='';
+  if(!rows.length){emptyRow(tb,'no clients connected');}
+  else rows.forEach(function(r){
     var tr=document.createElement('tr');
     tr.appendChild(cell('num',''+r.id));
     tr.appendChild(cell('mono',r.remote||'-'));
     tr.appendChild(cell('',r.protocol));
     tr.appendChild(cell('',r.chain||'-'));
-    var st=document.createElement('td');st.className=r.active?'state-on':'state-off';
-    var dot=document.createElement('span');dot.className='dot '+(r.active?'on':'off');st.appendChild(dot);
-    st.appendChild(document.createTextNode(r.active?'decoding':'idle'));tr.appendChild(st);
+    tr.appendChild(stateCell(r.active));
     tr.appendChild(cell('mono',r.connected));
     tr.appendChild(cell('num',dur(r.duration_seconds)));
     tb.appendChild(tr);});
+  var hist=d.history||[];
+  setText('cnt-history',''+hist.length);
+  var htb=document.getElementById('hrows');htb.textContent='';
+  if(!hist.length){emptyRow(htb,'no finished sessions yet');}
+  else hist.forEach(function(r){
+    var tr=document.createElement('tr');
+    tr.appendChild(cell('num',''+r.id));
+    tr.appendChild(cell('mono',r.remote||'-'));
+    tr.appendChild(cell('',r.protocol));
+    tr.appendChild(cell('',r.chain||'-'));
+    tr.appendChild(cell('mono',r.connected));
+    tr.appendChild(cell('mono',r.ended));
+    tr.appendChild(cell('num',dur(r.duration_seconds)));
+    htb.appendChild(tr);});
 }
+function showTab(id){
+  var tabs=document.querySelectorAll('.tab');
+  for(var i=0;i<tabs.length;i++){var t=tabs[i],on=t.getAttribute('data-tab')===id;
+    if(on)t.classList.add('active');else t.classList.remove('active');
+    var p=document.getElementById(t.getAttribute('data-tab'));if(p)p.hidden=!on;}
+}
+(function(){var tabs=document.querySelectorAll('.tab');
+  for(var i=0;i<tabs.length;i++)tabs[i].addEventListener('click',function(){showTab(this.getAttribute('data-tab'));});
+  showTab('tab-sessions');})();
 function tick(){
   fetch('/status.json',{cache:'no-store'}).then(function(r){return r.json();})
     .then(render).catch(function(){})

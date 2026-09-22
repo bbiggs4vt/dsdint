@@ -418,6 +418,12 @@ vs decoding, connect time and duration). A session's protocol appears
 once it sends `start`; before that it shows `-`. HTTP status requests are
 **not** counted as sessions.
 
+The HTML page has two tabs: **Sessions** (the live clients above) and
+**History** — the most recent finished sessions (newest first, last 50 by
+default) with their connect/end times and total duration. History is kept
+in memory only and resets on restart; the JSON exposes it as a `history`
+array.
+
 ```bash
 curl http://localhost:22600/status.json
 # open http://localhost:22600/ in a browser for the live view
