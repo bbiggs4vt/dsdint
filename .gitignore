@@ -35,3 +35,7 @@ dsd-fme
 .vscode/
 .idea/
 .DS_Store
+
+# Python bytecode cache (e.g. from tools/ scripts imported by test harnesses)
+__pycache__/
+*.pyc
