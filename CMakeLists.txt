@@ -96,6 +96,14 @@ target_compile_options(test_dmr_slot_aggregator PRIVATE -Wall -Wextra)
 add_test(NAME dmr_slot_aggregator_test COMMAND test_dmr_slot_aggregator)
 set_tests_properties(dmr_slot_aggregator_test PROPERTIES TIMEOUT 30)
 
+# Status-page backend: ServerStats registry + HTML/JSON renderers
+# (header-only, in src/). Pure in-process logic -- no sockets, always runs.
+add_executable(test_server_stats EXCLUDE_FROM_ALL tests/test_server_stats.cpp)
+target_include_directories(test_server_stats PRIVATE src)
+target_compile_options(test_server_stats PRIVATE -Wall -Wextra)
+add_test(NAME server_stats_test COMMAND test_server_stats)
+set_tests_properties(server_stats_test PROPERTIES TIMEOUT 30)
+
 # π/4-DQPSK demodulator (TETRA physical layer). Pure DSP with a matching
 # modulator carried in the test as ground truth — no external deps, no
 # capture files, so it always runs.

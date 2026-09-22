@@ -883,6 +883,48 @@ connect                     ◀── {"type":"capabilities",...}  (greeting, on
 - Disconnecting (cleanly or abruptly) tears down the session's pipeline
   server-side; there is no shutdown handshake in the protocol itself.
 
+## HTTP status endpoint (out of band)
+
+The listening port double-serves a read-only HTTP status surface for
+**non-WebSocket** GET requests, so it is not part of the WebSocket
+protocol above but shares the port. A request with the WebSocket
+`Upgrade` header becomes a session as normal; a plain GET is answered
+over HTTP and the connection closed:
+
+| Method + path | Response |
+|---|---|
+| `GET /`, `GET /status` | `text/html` dashboard, `<meta>`-refreshes every 5 s |
+| `GET /status.json` | `application/json` (see below) |
+| any other path | `404` |
+| non-GET | `405` |
+
+`GET /status.json` returns a single object:
+
+```json
+{
+  "total_sessions": 42,
+  "current_sessions": 2,
+  "active_pipelines": 1,
+  "uptime_seconds": 3600,
+  "started": "2026-09-22 17:12:57Z",
+  "by_protocol": { "dmr": 1 },
+  "sessions": [
+    { "id": 41, "remote": "10.0.0.5:52233", "protocol": "dmr", "chain": "fm",
+      "active": true, "connected": "2026-09-22 18:10:41Z", "duration_seconds": 71 }
+  ]
+}
+```
+
+- `total_sessions` is cumulative since start; `current_sessions` is live
+  WebSocket connections right now; `active_pipelines` is how many are
+  decoding. HTTP status requests are **not** counted as sessions.
+- A session's `protocol`/`chain` are `-`/`""` until it sends `start`;
+  `chain` is `fm` (FM + DSD) or `tetra`. `active` flips to `false` on
+  `stop` while the row keeps its last protocol label.
+- Unlike the WebSocket frames, this JSON is **nested** (a `sessions`
+  array, a `by_protocol` object) — it is a separate diagnostic surface,
+  not a wire event.
+
 ## Testing a client against a fake server
 
 A client project does **not** need the real server (Boost/DSDcc/dsd-fme/

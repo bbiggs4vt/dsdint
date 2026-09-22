@@ -53,9 +53,12 @@
 #include <boost/asio.hpp>
 #include <boost/asio/strand.hpp>
 #include <boost/beast/core.hpp>
+#include <boost/beast/http.hpp>
 #include <boost/beast/websocket.hpp>
 
+#include <cstdint>
 #include <memory>
+#include <string>
 #include <thread>
 #include <atomic>
 #include <deque>
@@ -76,22 +79,32 @@
 #include "dsd_backend_selector.hpp"
 #include "tetra_frontend.hpp"
 #include "tetra_backend_iface.hpp"
+#include "server_stats.hpp"
 
 namespace dsdsrv {
 
 namespace beast = boost::beast;
+namespace http = beast::http;
 namespace websocket = beast::websocket;
 namespace net = boost::asio;
 using tcp = net::ip::tcp;
 
 class Session : public std::enable_shared_from_this<Session> {
 public:
-    explicit Session(tcp::socket socket);
+    // stats is the process-wide session registry (owned by the Server). A
+    // Session only registers itself once it turns out to be a WebSocket
+    // client -- a plain HTTP GET to the status page is served and dropped
+    // without ever counting as a session.
+    Session(tcp::socket socket, std::shared_ptr<ServerStats> stats);
     ~Session();
 
     void run();
 
 private:
+    // The connection begins with one HTTP request read. A WebSocket upgrade
+    // proceeds as a client session; any other GET is served the status page.
+    void on_http_read(beast::error_code ec);
+    void serve_http();
     void on_accept(beast::error_code ec);
     void do_read();
     void on_read(beast::error_code ec, std::size_t bytes_transferred);
@@ -118,6 +131,14 @@ private:
     void demod_worker_loop();
 
     websocket::stream<beast::tcp_stream> ws_;
+    // The first HTTP request on the connection, parsed before we know
+    // whether this is a WebSocket upgrade or a browser hitting /status.
+    http::request<http::string_body> http_req_;
+    // Shared session registry + this session's row id in it (0 until the
+    // WebSocket upgrade succeeds, so HTTP status requests never register).
+    std::shared_ptr<ServerStats> stats_;
+    std::uint64_t stats_id_ = 0;
+    std::string remote_; // peer "ip:port", captured at accept for the status table
     // NOTE: ws_'s executor is a per-connection strand, bound at accept
     // time in Server::do_accept() via net::make_strand(). That's what
     // makes it safe to call net::post(ws_.get_executor(), ...) from other
@@ -186,6 +207,8 @@ private:
 
     net::io_context& ioc_;
     tcp::acceptor acceptor_;
+    // One registry shared with every Session, feeding the status page.
+    std::shared_ptr<ServerStats> stats_ = std::make_shared<ServerStats>();
 };
 
 } // namespace dsdsrv

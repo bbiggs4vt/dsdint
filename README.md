@@ -394,6 +394,31 @@ the stdout-parsing regexes in `classify_line()` are both marked with
 comments pointing at exactly what to check against `dsd-fme -h` and your
 own captured log output.
 
+## Status page
+
+The same listening port serves a small HTTP status page for a plain
+(non-WebSocket) GET, so the server is both the WebSocket endpoint and its
+own dashboard — no extra port. A browser upgrade request becomes a client
+session exactly as before; anything else is answered over HTTP:
+
+| Path | Response |
+|---|---|
+| `/`, `/status` | HTML dashboard (auto-refreshes every 5 s) |
+| `/status.json` | the same data as JSON, for health checks / scraping |
+
+Both show the number of **currently connected** sessions, the
+**cumulative total** since the server started, how many are **actively
+decoding**, a per-protocol breakdown of the active ones, and a table of
+each live client (id, peer address, decode protocol, signal chain, idle
+vs decoding, connect time and duration). A session's protocol appears
+once it sends `start`; before that it shows `-`. HTTP status requests are
+**not** counted as sessions.
+
+```bash
+curl http://localhost:22600/status.json
+# open http://localhost:22600/ in a browser for the live view
+```
+
 ## Test client: MIDAS BLUE files
 
 `tools/midas_ws_client.py` is a ready-made client for feeding the server

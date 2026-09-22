@@ -1,6 +1,7 @@
 #include "session.hpp"
 #include "json_util.hpp"
 #include "protocol_capabilities.hpp"
+#include "status_page.hpp"
 
 #include <iostream>
 #include <cstring>
@@ -60,21 +61,94 @@ void release_udp_port(uint16_t port) {
 #endif // !DSD_USE_DSDCC_BACKEND
 } // namespace
 
-Session::Session(tcp::socket socket) : ws_(std::move(socket)) {}
+Session::Session(tcp::socket socket, std::shared_ptr<ServerStats> stats)
+    : ws_(std::move(socket)), stats_(std::move(stats)) {}
 
 Session::~Session() {
     stop_pipeline();
+    // Drop this connection from the live-session table (no-op if it never
+    // registered, e.g. an HTTP status request).
+    if (stats_ && stats_id_) stats_->remove_session(stats_id_);
 }
 
 void Session::run() {
-    ws_.set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
-    ws_.set_option(websocket::stream_base::decorator(
-        [](websocket::response_type& res) {
-            res.set(beast::http::field::server, "dsd-server/1.0");
-        }));
+    // Note the peer for the status table before we do anything else (the
+    // socket is still connected here).
+    beast::error_code rec;
+    auto ep = beast::get_lowest_layer(ws_).socket().remote_endpoint(rec);
+    if (!rec) remote_ = ep.address().to_string() + ":" + std::to_string(ep.port());
+
+    // Read one HTTP request first. This connection is either a WebSocket
+    // upgrade (a client session) or a plain GET for the status page; we
+    // can't tell until we've seen the request line and headers. Bound the
+    // read with a timeout so a silent client can't tie up the socket.
+    beast::get_lowest_layer(ws_).expires_after(std::chrono::seconds(30));
+    auto self = shared_from_this();
+    http::async_read(ws_.next_layer(), read_buffer_, http_req_,
+        [self](beast::error_code ec, std::size_t) { self->on_http_read(ec); });
+}
+
+void Session::on_http_read(beast::error_code ec) {
+    if (ec) {
+        // EOF/connection-closed before a full request is routine (health
+        // probes, port scans); don't log it noisily.
+        if (ec != http::error::end_of_stream && ec != net::error::operation_aborted)
+            std::cerr << "http read error: " << ec.message() << "\n";
+        return;
+    }
+
+    if (websocket::is_upgrade(http_req_)) {
+        // A WebSocket client. Hand the already-parsed request to the
+        // WebSocket accept so the handshake completes normally.
+        ws_.set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
+        ws_.set_option(websocket::stream_base::decorator(
+            [](websocket::response_type& res) {
+                res.set(http::field::server, "dsd-server/1.0");
+            }));
+        auto self = shared_from_this();
+        ws_.async_accept(http_req_, [self](beast::error_code aec) { self->on_accept(aec); });
+        return;
+    }
+
+    // Not an upgrade: serve the status page (or a 404) and close.
+    serve_http();
+}
+
+void Session::serve_http() {
+    auto res = std::make_shared<http::response<http::string_body>>();
+    res->version(http_req_.version());
+    res->keep_alive(false);
+    res->set(http::field::server, "dsd-server/1.0");
+
+    std::string target(http_req_.target());
+    if (auto q = target.find('?'); q != std::string::npos) target = target.substr(0, q);
+
+    if (http_req_.method() != http::verb::get) {
+        res->result(http::status::method_not_allowed);
+        res->set(http::field::content_type, "text/plain; charset=utf-8");
+        res->body() = "405 method not allowed\n";
+    } else if (target == "/" || target == "/status" || target == "/status.html") {
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "text/html; charset=utf-8");
+        res->body() = stats_ ? render_status_html(stats_->snapshot()) : std::string("no stats\n");
+    } else if (target == "/status.json") {
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "application/json");
+        res->body() = stats_ ? render_status_json(stats_->snapshot()) : std::string("{}");
+    } else {
+        res->result(http::status::not_found);
+        res->set(http::field::content_type, "text/plain; charset=utf-8");
+        res->body() = "404 not found\n";
+    }
+    res->prepare_payload();
 
     auto self = shared_from_this();
-    ws_.async_accept([self](beast::error_code ec) { self->on_accept(ec); });
+    http::async_write(ws_.next_layer(), *res,
+        [self, res](beast::error_code, std::size_t) {
+            // One request, one response: close the connection cleanly.
+            beast::error_code ig;
+            beast::get_lowest_layer(self->ws_).socket().shutdown(tcp::socket::shutdown_send, ig);
+        });
 }
 
 void Session::on_accept(beast::error_code ec) {
@@ -82,6 +156,9 @@ void Session::on_accept(beast::error_code ec) {
         std::cerr << "accept error: " << ec.message() << "\n";
         return;
     }
+    // A WebSocket client is now connected: register it so the status page
+    // can count it and show its protocol once a pipeline starts.
+    if (stats_) stats_id_ = stats_->add_session(remote_);
     // Advertise what this build can emit before the client sends anything,
     // so it can prepare to parse the event kinds and `extra` token keys
     // without hard-coding them from PROTOCOL.md.
@@ -249,6 +326,33 @@ ProtocolHint parse_protocol_hint(std::string s) {
 
 bool hint_is_tetra(ProtocolHint h) {
     return h == ProtocolHint::Tetra || h == ProtocolHint::Tetrakit;
+}
+
+// Canonical, human-readable label for the status page's "Protocol" column.
+// This reflects what the session is actually decoding (the resolved hint),
+// not the client's raw free-form string.
+const char* protocol_hint_label(ProtocolHint h) {
+    switch (h) {
+        case ProtocolHint::Dmr:        return "dmr";
+        case ProtocolHint::Nxdn48:     return "nxdn48";
+        case ProtocolHint::Nxdn96:     return "nxdn96";
+        case ProtocolHint::P25p1:      return "p25p1";
+        case ProtocolHint::P25p2:      return "p25p2";
+        case ProtocolHint::Dpmr:       return "dpmr";
+        case ProtocolHint::Dstar:      return "dstar";
+        case ProtocolHint::Ysf:        return "ysf";
+        case ProtocolHint::Tetra:      return "tetra";
+        case ProtocolHint::Tetrakit:   return "tetrakit";
+        case ProtocolHint::ProVoice:   return "provoice";
+        case ProtocolHint::Edacs:      return "edacs";
+        case ProtocolHint::EdacsEsk:   return "edacs_esk";
+        case ProtocolHint::EdacsEa:    return "edacs_ea";
+        case ProtocolHint::EdacsEaEsk: return "edacs_ea_esk";
+        case ProtocolHint::X2tdma:     return "x2tdma";
+        case ProtocolHint::Auto:       return "auto";
+        case ProtocolHint::Default:    return "dmr"; // historical default
+    }
+    return "dmr";
 }
 
 // Key handling is DSD-only (a TETRA session decrypts nothing here -- TETRA's
@@ -546,12 +650,23 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
     worker_running_ = true;
     worker_thread_ = std::thread(&Session::demod_worker_loop, this);
 
+    // Publish the decode protocol/chain to the status page now that the
+    // pipeline is up.
+    if (stats_ && stats_id_) {
+        stats_->set_protocol(stats_id_, protocol_hint_label(hint),
+                             want_tetra ? "tetra" : "fm", /*active=*/true);
+    }
+
     send_text(json::Writer().field("type", std::string("started"))
                   .field("udp_audio_port", static_cast<double>(udp_audio_port_)).str());
 }
 
 void Session::stop_pipeline() {
     if (!pipeline_active_.exchange(false)) return;
+
+    // Mark this session idle on the status page (it keeps its last protocol
+    // label; the "State" column flips to idle).
+    if (stats_ && stats_id_) stats_->set_pipeline_active(stats_id_, false);
 
     worker_running_ = false;
     iq_cv_.notify_all();
@@ -715,7 +830,7 @@ void Server::do_accept() {
     acceptor_.async_accept(net::make_strand(ioc_),
         [this](beast::error_code ec, tcp::socket socket) {
             if (!ec) {
-                std::make_shared<Session>(std::move(socket))->run();
+                std::make_shared<Session>(std::move(socket), stats_)->run();
             } else {
                 std::cerr << "accept error: " << ec.message() << "\n";
             }
