@@ -46,9 +46,7 @@ struct FmDemodConfig {
     double channel_bandwidth_hz = 12'500.0;    // DMR channel width
     // Where the channel of interest sits in the incoming IQ, in Hz:
     // positive means the channel is ABOVE 0 Hz and the NCO mixes it down
-    // to baseband. (This sign convention is shared with
-    // FmDemodulatorLiquid and pinned by test_afc.cpp -- the two
-    // implementations historically disagreed, see that test.)
+    // to baseband. (Sign convention pinned by test_afc.cpp.)
     double freq_offset_hz = 0.0;
     float disc_gain = 26000.0f;                // discriminator -> PCM scale, tune empirically
     int fir_taps = 63;                         // channel filter length (odd)

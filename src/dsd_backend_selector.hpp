@@ -3,10 +3,9 @@
 // Lets session.{hpp,cpp} stay backend-agnostic between the subprocess
 // model (DsdProcess, driving dsd-fme or classic DSD) and the in-process
 // DSDcc model (DsdccDecoder). Build with -DDSD_USE_DSDCC_BACKEND to get
-// the latter. Mirrors fm_demod_selector.hpp's approach for the demod
-// backend -- same reasoning applies: this is what keeps the A/B
-// comparison apples-to-apples, since everything except this one type
-// alias stays identical between builds.
+// the latter -- a pure compile-time type-alias swap that keeps everything
+// except this one alias identical between builds, so a DSD-fme-vs-DSDcc
+// A/B on target hardware stays apples-to-apples.
 //
 // NOTE: unlike the demod backends (which share the exact same
 // FmDemodConfig type), the two DSD backends have meaningfully different

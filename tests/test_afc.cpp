@@ -4,26 +4,19 @@
 // the freq_offset sign convention it depends on.
 //
 // The sign convention part exists because adding AFC exposed a real
-// pre-existing bug: FmDemodulator and FmDemodulatorLiquid implemented
-// OPPOSITE freq_offset conventions (a channel at +2 kHz needed
-// freq_offset=-2000 on one and +2000 on the other), so the same start
-// message behaved differently between dsd-server and dsd-server-liquid.
-// The convention is now unified as the documented one -- positive
-// freq_offset means the channel sits ABOVE 0 Hz -- and the first test
-// case pins it for whichever implementations this binary was built with.
+// pre-existing bug: an earlier demod used the OPPOSITE freq_offset
+// convention (a channel at +2 kHz needed freq_offset=-2000), so the same
+// start message could behave differently across builds. The convention is
+// now unified as the documented one -- positive freq_offset means the
+// channel sits ABOVE 0 Hz -- and the first test case pins it.
 //
-// Core cases run on synthetic FM tones (no external deps). When built
-// with DSD_AFC_TEST_HAVE_LIQUID the same template cases also run against
-// FmDemodulatorLiquid. When built with DSD_AFC_TEST_HAVE_DSDCC and given
-// the real DMR capture as argv[1], a final case proves the point of the
-// feature: a capture mis-tuned by 3 kHz -- which decodes only partially
-// without AFC (measured 88.6% on DSDcc, 0% on dsd-fme) -- decodes
-// essentially in full with AFC on.
+// Core cases run on synthetic FM tones (no external deps). When built with
+// DSD_AFC_TEST_HAVE_DSDCC and given the real DMR capture as argv[1], a
+// final case proves the point of the feature: a capture mis-tuned by 3 kHz
+// -- which decodes only partially without AFC (measured 88.6% on DSDcc, 0%
+// on dsd-fme) -- decodes essentially in full with AFC on.
 
 #include "fm_demod.hpp"
-#if defined(DSD_AFC_TEST_HAVE_LIQUID)
-#include "fm_demod_liquid.hpp"
-#endif
 #if defined(DSD_AFC_TEST_HAVE_DSDCC)
 #include "dsdcc_decoder.hpp"
 #include <set>
@@ -280,9 +273,6 @@ void test_afc_rescues_mistuned_dmr(const char* capture_path) {
 
 int main(int argc, char** argv) {
     run_all<FmDemodulator>("hand-rolled");
-#if defined(DSD_AFC_TEST_HAVE_LIQUID)
-    run_all<FmDemodulatorLiquid>("liquid");
-#endif
 #if defined(DSD_AFC_TEST_HAVE_DSDCC)
     if (argc > 1) test_afc_rescues_mistuned_dmr(argv[1]);
     else std::printf("(real-capture case skipped: no capture path argument)\n");

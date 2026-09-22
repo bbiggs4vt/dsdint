@@ -41,10 +41,8 @@ back to the defaults shown (see `handle_text_message` in `session.cpp`).
 
 `freq_offset` / `hz` sign convention: **positive means the channel of
 interest sits above 0 Hz in your IQ**, and the server mixes it down to
-baseband. (Before AFC was added, the two demod implementations disagreed
-on this sign — the hand-rolled demod had it inverted relative to the
-liquid variant; it is now unified as stated and pinned by
-`tests/test_afc.cpp`.)
+baseband. (An earlier revision had this sign inverted; it is now unified
+as stated and pinned by `tests/test_afc.cpp`.)
 
 `protocol`: an **advisory hint** telling the server which digital voice
 protocol the client believes the signal is. For the FM/DSD modes it selects
@@ -152,8 +150,7 @@ before the decoder, narrowing the post-detection noise bandwidth to the
 symbol band. It's a no-op in normal conditions and buys a few dB of
 weak-signal margin near the decode threshold; leave it off unless you're
 chasing marginal signals. Applies only to the FM/DSD chain (ignored by
-TETRA), and only the hand-rolled demod implements it (the liquid variant
-ignores it). See the README's matched-filter section for the measured
+TETRA). See the README's matched-filter section for the measured
 A/B results and caveats.
 
 Anything else — an unknown `type`, or a text frame that doesn't parse as
@@ -176,7 +173,7 @@ TETRA is π/4-DQPSK, not an FM mode, so it needs its own front end. It is
 same `dsd-server` that decodes DMR/NXDN/… also decodes TETRA when a session
 starts with `protocol":"tetra"` or `protocol":"tetrakit"`, switching that
 session's whole signal chain to the π/4 modem + a TETRA subprocess backend.
-(The FM/DSD *backend* choice — dsd-fme vs DSDcc vs liquid — is still build
+(The FM/DSD *backend* choice — dsd-fme vs DSDcc — is still build
 time; the TETRA *decoder* choice is this runtime hint.) The two TETRA hints
 share the identical π/4 front end and wire protocol, differing only in the
 external decoder they drive:

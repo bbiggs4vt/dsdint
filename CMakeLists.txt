@@ -212,84 +212,20 @@ add_test(NAME tetra_voice_test COMMAND test_tetra_voice)
 set_tests_properties(tetra_voice_test PROPERTIES TIMEOUT 60)
 
 # AFC + freq_offset sign-convention tests (tests/test_afc.cpp). Core
-# cases are synthetic-tone only, no external deps. The liquid and DSDcc
-# variant blocks below add their sections to this target when those
-# libraries are found; the ctest case itself is registered at the END of
-# this file so those blocks can hand it the real DMR capture path.
+# cases are synthetic-tone only, no external deps. The DSDcc variant block
+# below adds its section to this target when DSDcc is found; the ctest case
+# itself is registered at the END of this file so that block can hand it
+# the real DMR capture path.
 add_executable(test_afc EXCLUDE_FROM_ALL tests/test_afc.cpp src/fm_demod.cpp)
 target_include_directories(test_afc PRIVATE src)
 target_link_libraries(test_afc PRIVATE m)
 target_compile_options(test_afc PRIVATE -Wall -Wextra)
 
-# Head-to-head performance comparison of the demod backends. Always
-# buildable against the hand-rolled implementation alone; liquid-dsp
-# support is layered on below (once we know whether liquid was found)
-# rather than gating the whole target on it, so this stays available the
-# same way test_fm_demod always is.
-add_executable(demod_benchmark EXCLUDE_FROM_ALL src/fm_demod.cpp src/demod_benchmark.cpp)
-target_include_directories(demod_benchmark PRIVATE src)
-target_link_libraries(demod_benchmark PRIVATE Threads::Threads)
-target_compile_options(demod_benchmark PRIVATE -Wall -Wextra)
-
-# --- liquid-dsp variant, for A/B performance testing against the above ---
-# Built alongside dsd-server whenever liquid-dsp is found; skipped (with a
-# message, not an error) otherwise, so this doesn't break the default
-# build for anyone who hasn't installed it. See README.md for what's
-# been verified vs. only code-reviewed in this variant.
-option(DSD_BUILD_LIQUID_VARIANT "Also build dsd-server-liquid for A/B testing against the hand-rolled demod" ON)
-
-if(DSD_BUILD_LIQUID_VARIANT)
-  find_path(LIQUID_INCLUDE_DIR liquid/liquid.h)
-  find_library(LIQUID_LIBRARY NAMES liquid)
-
-  if(LIQUID_INCLUDE_DIR AND LIQUID_LIBRARY)
-    message(STATUS "liquid-dsp found (${LIQUID_LIBRARY}) - building dsd-server-liquid")
-
-    add_executable(dsd-server-liquid
-      src/main.cpp
-      src/session.cpp
-      src/dsd_process.cpp
-      src/fm_demod_liquid.cpp
-      ${TETRA_RUNTIME_SOURCES}
-    )
-    target_include_directories(dsd-server-liquid PRIVATE src ${Boost_INCLUDE_DIRS} ${LIQUID_INCLUDE_DIR})
-    target_link_libraries(dsd-server-liquid PRIVATE Boost::system Threads::Threads ${LIQUID_LIBRARY} ZLIB::ZLIB m)
-    target_compile_definitions(dsd-server-liquid PRIVATE DSD_USE_LIQUID_DEMOD)
-    target_compile_options(dsd-server-liquid PRIVATE -Wall -Wextra)
-
-    add_executable(test_fm_demod_liquid EXCLUDE_FROM_ALL
-      src/fm_demod_liquid.cpp
-      tests/test_fm_demod_liquid.cpp
-    )
-    target_include_directories(test_fm_demod_liquid PRIVATE src ${LIQUID_INCLUDE_DIR})
-    target_link_libraries(test_fm_demod_liquid PRIVATE ${LIQUID_LIBRARY} m)
-
-    # Run the AFC test cases against the liquid demod too.
-    target_sources(test_afc PRIVATE src/fm_demod_liquid.cpp)
-    target_include_directories(test_afc PRIVATE ${LIQUID_INCLUDE_DIR})
-    target_link_libraries(test_afc PRIVATE ${LIQUID_LIBRARY})
-    target_compile_definitions(test_afc PRIVATE DSD_AFC_TEST_HAVE_LIQUID)
-
-    # Layer liquid-dsp support onto the always-built demod_benchmark
-    # target (defined earlier, alongside test_fm_demod) now that we know
-    # liquid was found -- rather than a separate target, so there's one
-    # binary that does the full comparison when liquid is available and
-    # gracefully falls back to hand-rolled-only otherwise.
-    target_sources(demod_benchmark PRIVATE src/fm_demod_liquid.cpp)
-    target_include_directories(demod_benchmark PRIVATE ${LIQUID_INCLUDE_DIR})
-    target_link_libraries(demod_benchmark PRIVATE ${LIQUID_LIBRARY} m)
-    target_compile_definitions(demod_benchmark PRIVATE DSD_HAVE_LIQUID_BENCHMARK)
-  else()
-    message(STATUS "liquid-dsp not found - skipping dsd-server-liquid. "
-                    "Install libliquid-dev (or build from "
-                    "https://github.com/jgaeddert/liquid-dsp) to enable it, "
-                    "then re-run cmake.")
-  endif()
-endif()
 
 # --- DSDcc variant, for A/B testing the in-process decoder backend ---
-# against the subprocess (dsd-fme/classic DSD) backend. Same
-# skip-with-a-message-if-not-found approach as the liquid variant above.
+# against the subprocess (dsd-fme/classic DSD) backend. Skipped with a
+# message (not an error) if DSDcc isn't found, so the default build still
+# works without it.
 #
 # STATUS: verified against DSDcc 1.9.0 built from source with mbelib.
 # dsdcc_decoder.cpp's API calls were checked against the real headers
@@ -312,12 +248,10 @@ if(DSD_BUILD_DSDCC_VARIANT)
     add_executable(dsd-server-dsdcc
       src/main.cpp
       src/session.cpp
-      src/fm_demod.cpp       # DSDcc variant still uses the original hand-rolled
-      src/dsdcc_decoder.cpp  # demod by default -- this isolates the DSD
-      ${TETRA_RUNTIME_SOURCES} # backend as the one variable changed from
-    )                        # baseline. Add -DDSD_USE_LIQUID_DEMOD plus
-                              # fm_demod_liquid.cpp instead if you want to
-                              # combine both swaps in one binary.
+      src/fm_demod.cpp       # DSDcc variant uses the same hand-rolled demod;
+      src/dsdcc_decoder.cpp  # this isolates the DSD backend as the one
+      ${TETRA_RUNTIME_SOURCES} # variable changed from the dsd-fme baseline.
+    )
     target_include_directories(dsd-server-dsdcc PRIVATE src ${Boost_INCLUDE_DIRS} ${DSDCC_INCLUDE_DIR})
     target_link_libraries(dsd-server-dsdcc PRIVATE Boost::system Threads::Threads ${DSDCC_LIBRARY} ZLIB::ZLIB m)
     if(MBE_LIBRARY)
@@ -477,32 +411,6 @@ if(DSD_BUILD_DSDCC_VARIANT)
     target_compile_definitions(test_afc PRIVATE DSD_AFC_TEST_HAVE_DSDCC)
     if(DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
       set(AFC_TEST_CAPTURE "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
-    endif()
-
-    # Real-signal verification of the liquid demod: modulates the same
-    # DMR capture into IQ, demodulates with FmDemodulatorLiquid, and
-    # decodes with DsdccDecoder -- needs BOTH DSDcc (this block) and
-    # liquid-dsp (whose block above already ran, so its find results are
-    # available here). See test_fm_demod_liquid_real.cpp; the round trip
-    # is sample-exact against decoding the capture directly.
-    if(LIQUID_INCLUDE_DIR AND LIQUID_LIBRARY)
-      add_executable(test_fm_demod_liquid_real EXCLUDE_FROM_ALL
-        src/fm_demod_liquid.cpp
-        src/dsdcc_decoder.cpp
-        tests/test_fm_demod_liquid_real.cpp
-      )
-      target_include_directories(test_fm_demod_liquid_real PRIVATE src ${LIQUID_INCLUDE_DIR} ${DSDCC_INCLUDE_DIR})
-      target_link_libraries(test_fm_demod_liquid_real PRIVATE ${LIQUID_LIBRARY} ${DSDCC_LIBRARY} m)
-      if(MBE_LIBRARY)
-        target_link_libraries(test_fm_demod_liquid_real PRIVATE ${MBE_LIBRARY})
-      endif()
-      target_compile_options(test_fm_demod_liquid_real PRIVATE -Wall -Wextra)
-
-      if(DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
-        add_test(NAME fm_demod_liquid_real_test
-                 COMMAND test_fm_demod_liquid_real "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
-        set_tests_properties(fm_demod_liquid_real_test PROPERTIES TIMEOUT 120)
-      endif()
     endif()
   else()
     message(STATUS "DSDcc not found - skipping dsd-server-dsdcc. Build "

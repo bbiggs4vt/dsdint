@@ -72,7 +72,7 @@
 //     for TETRA, which is not an FM mode.
 // Both are always compiled in; a given session instantiates only the one its
 // hint selects.
-#include "fm_demod_selector.hpp"
+#include "fm_demod.hpp"
 #include "dsd_backend_selector.hpp"
 #include "tetra_frontend.hpp"
 #include "tetra_backend_iface.hpp"
@@ -137,7 +137,7 @@ private:
     // session, keyed by chain_. FM path: demod_ + dsd_. TETRA path: tetra_demod_
     // (the π/4-DQPSK modem turning IQ into the bitstream) + tetra_backend_ (the
     // chosen subprocess backend). The idle path's members stay null/stopped.
-    std::unique_ptr<ActiveFmDemodulator> demod_;
+    std::unique_ptr<FmDemodulator> demod_;
     std::unique_ptr<TetraDemodFrontend> tetra_demod_;
     // Guards every use of the demod (FM or TETRA) -- both the pointer and
     // calls through it. The demodulators document their setters as only safe

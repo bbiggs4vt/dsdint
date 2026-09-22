@@ -33,10 +33,10 @@
 // What this does NOT verify:
 //   - Real DMR decoding (the fake dsd-fme produces synthetic events
 //     regardless of what audio it receives -- see test_fake_dsd_fme.cpp).
-//   - Behavior of the liquid-dsp or DSDcc backends (this always builds
-//     against the default FmDemodulator + DsdProcess backends; add
-//     -DDSD_USE_LIQUID_DEMOD / -DDSD_USE_DSDCC_BACKEND to a variant of
-//     this target if you want backend-specific coverage later).
+//   - Behavior of the DSDcc backend (this always builds against the
+//     default FmDemodulator + DsdProcess backends; add
+//     -DDSD_USE_DSDCC_BACKEND to a variant of this target if you want
+//     backend-specific coverage later).
 //   - Multiple concurrent sessions, reconnection behavior, or anything
 //     about the strand/threading fix described in session.cpp's
 //     comments -- this test is deliberately simple (one client, one

@@ -193,9 +193,9 @@ private:
 };
 
 // Synthetic FM-modulated IQ block, same construction as
-// test_fm_demod.cpp/test_fm_demod_liquid.cpp -- content doesn't matter
-// much here (the fake dsd-fme produces events regardless of what PCM it
-// receives), it just needs to be enough real-looking data to make it
+// test_fm_demod.cpp -- content doesn't matter much here (the fake dsd-fme
+// produces events regardless of what PCM it receives), it just needs to be
+// enough real-looking data to make it
 // through FmDemodulator and produce *some* PCM output for DsdProcess to
 // forward.
 inline std::vector<uint8_t> make_iq_frame(std::size_t n_samples, double fs, double tone_hz, double deviation_hz) {

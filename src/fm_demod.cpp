@@ -109,17 +109,15 @@ void FmDemodulator::set_freq_offset(double hz) {
 // specifically for AFC: its correction settles at some tiny nonzero
 // value on a well-centered signal, and without the deadband that alone
 // kept the NCO permanently on (52x -> 21x realtime for zero benefit).
-// Same constant in fm_demod_liquid.cpp.
 static constexpr double kNcoDeadbandHz = 10.0;
 
 void FmDemodulator::apply_nco_frequency() {
     // NEGATIVE increment: a channel at +f is brought to baseband by
     // multiplying with e^{-j2*pi*f*t}. The original code used a positive
     // increment, which silently meant the OPPOSITE sign convention from
-    // FmDemodulatorLiquid (whose nco mix-down matched the documented
-    // "channel sits at +freq_offset" meaning) -- the same start message
-    // with a nonzero offset behaved oppositely between dsd-server and
-    // dsd-server-liquid. Pinned by test_afc.cpp for both classes.
+    // the documented "channel sits at +freq_offset" meaning -- the same
+    // start message with a nonzero offset behaved oppositely. Pinned by
+    // test_afc.cpp.
     const double effective_hz = cfg_.freq_offset_hz + afc_correction_hz_;
     if (std::fabs(effective_hz) < kNcoDeadbandHz) {
         nco_incr_ = 0.0; // mix_and_filter_decimate skips the NCO entirely

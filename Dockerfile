@@ -20,11 +20,7 @@
 # osmo tetra-rx, and tetra-kit — are built from source, pinned to exact commits
 # (the DSD ones to the commits this project's backends were verified against —
 # see the notes in src/dsd_process.cpp and src/dsdcc_decoder.cpp; bump those
-# pins only in step with re-running the real-binary tests). liquid-dsp is
-# deliberately
-# not included: the hand-rolled demod outperformed it on x86 in this
-# project's own benchmark (see README's liquid section), so the variant
-# would only add image weight.
+# pins only in step with re-running the real-binary tests).
 #
 # Build:            docker build -t dsd-server .
 # Build + run the
@@ -157,7 +153,7 @@ RUN cmake --build /opt/dsd-server/build -j"$(nproc)" --target \
         test_tetmon_parse test_tetra_process tetra_fake_rx \
         test_tetra_kit_json test_tetra_kit_process tetra_kit_fake \
         test_tetra_voice \
-        test_fm_demod test_afc \
+        test_fm_demod test_matched_filter test_afc \
     && cd /opt/dsd-server/build \
     && DSD_TEST_PACE_MS=${DSD_TEST_PACE_MS} ctest --output-on-failure
 

@@ -424,7 +424,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         cfg.matched_filter_enabled = matched_filter;
         {
             std::lock_guard<std::mutex> lock(demod_mutex_);
-            demod_ = std::make_unique<ActiveFmDemodulator>(cfg);
+            demod_ = std::make_unique<FmDemodulator>(cfg);
         }
 
         ActiveDsdBackendConfig dcfg;

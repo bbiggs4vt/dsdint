@@ -31,18 +31,6 @@ so multiple clients can decode different channels concurrently.
   channel filter, integer decimation, quadrature demod (`atan2` of
   `x[n] * conj(x[n-1])`), linear resample to exactly 48000 Hz, gain
   scaling to 16-bit PCM.
-- `src/fm_demod_liquid.{hpp,cpp}` — a liquid-dsp-based alternative with
-  the *same* public interface, for A/B performance testing on your
-  target hardware. Uses `nco_crcf` for the optional frequency shift,
-  a single `msresamp_crcf` (polyphase arbitrary-rate resampler) that
-  does channel filtering *and* rate conversion in one step, and
-  `freqdem` for the discriminator. See "The liquid-dsp variant" below
-  before using this one.
-- `src/fm_demod_selector.hpp` — compile-time switch between the two
-  (`-DDSD_USE_LIQUID_DEMOD`), so `session.cpp` doesn't need to know or
-  care which backend it's linked against. This is what makes the A/B
-  comparison apples-to-apples: identical networking code, identical
-  dsd-fme plumbing, only the DSP core differs between the two binaries.
 - `src/dsd_process.{hpp,cpp}` — the original subprocess-based DSD
   backend: spawns and manages a `dsd-fme` (or classic `dsd`) child
   process via `fork`/`exec`/pipes, writes PCM to its stdin, reads its
@@ -54,12 +42,12 @@ so multiple clients can decode different channels concurrently.
   subprocess: samples are pushed directly into a `DSDDecoder` object and
   decoded audio is pulled back out via a getter, with no child process,
   pipes, or UDP socket involved. Structurally the most different of the
-  three backend swaps in this project so far — see "The DSDcc variant"
+  backend swaps in this project — see "The DSDcc variant"
   below. Now verified against DSDcc 1.9.0 with a real DMR capture (it
   was originally written blind, without access to DSDcc).
 - `src/dsd_backend_selector.hpp` — compile-time switch between the two
-  DSD backends (`-DDSD_USE_DSDCC_BACKEND`), mirroring
-  `fm_demod_selector.hpp`'s role for the demod backends.
+  DSD backends (`-DDSD_USE_DSDCC_BACKEND`), so `session.cpp` stays
+  agnostic to which one it's linked against.
 - `src/dsd_backend_types.hpp` — the `DsdEvent` type shared by both DSD
   backends, so `session.cpp` handles events identically regardless of
   which one produced them.
@@ -115,17 +103,6 @@ end-to-end. To still validate the pieces that matter most:
      `io_context` in `main.cpp`. Fixed by binding each accepted socket to
      its own strand at accept time (`net::make_strand`), following
      Boost.Beast's own multi-threaded server example pattern.
-  When `fm_demod_selector.hpp`/`ActiveFmDemodulator` were introduced to
-  support the liquid-dsp variant, the only changes to these two files
-  were mechanical (swap one `#include`, swap the demod type name in two
-  places) — the logic reviewed above is otherwise untouched.
-- **`fm_demod_liquid.cpp`** — now fully verified against real
-  liquid-dsp (1.6.0): every API call compiles as written, the synthetic
-  sanity test passes, and — the strong check — the liquid demod chain
-  was run on a real DMR transmission (FM-remodulated from DSDcc's
-  bundled capture) and its output decoded **sample-exactly** to the same
-  151680 voice samples and talkgroup as decoding the capture directly.
-  See `test_fm_demod_liquid_real` and "The liquid-dsp variant" below.
 - **`dsd_process.cpp`** and **`session.cpp`'s use of it** — these are the
   same files described above; no changes beyond what's already noted.
 - **`dsdcc_decoder.cpp`** — originally the least verified file in the
@@ -199,8 +176,7 @@ the Dockerfile.
 
 Dependencies: a C++17 compiler, CMake ≥ 3.16, Boost ≥ 1.74 (headers +
 `boost_system`), and `dsd-fme` built/installed separately
-(https://github.com/lwvmobile/dsd-fme). liquid-dsp
-(https://github.com/jgaeddert/liquid-dsp) is optional — see below.
+(https://github.com/lwvmobile/dsd-fme).
 
 ```bash
 # Debian/Ubuntu
@@ -212,81 +188,11 @@ make -j
 ./dsd-server            # listens on 0.0.0.0:22600 by default
 ```
 
-If CMake finds liquid-dsp on your system, it also builds
-`dsd-server-liquid` automatically (see below) — no separate flag needed.
-If it's not found, you'll see a `liquid-dsp not found` status message
-and only `dsd-server` gets built; that's expected, not an error.
-
 To run just the DSP sanity test (no Boost needed):
 ```bash
 make test_fm_demod
 ./test_fm_demod
 ```
-
-## The liquid-dsp variant
-
-`fm_demod_liquid.cpp` is a second implementation of the same
-`FmDemodulator` interface, built on liquid-dsp
-(https://github.com/jgaeddert/liquid-dsp) instead of hand-rolled DSP.
-The idea is to A/B test it against the original on your actual target
-hardware — the two binaries (`dsd-server` and `dsd-server-liquid`) run
-identical networking and `dsd-fme` plumbing, so any performance
-difference you measure comes from the demod backend alone.
-
-**Status: verified against real liquid-dsp 1.6.0** (this file was
-originally written without being able to compile it; that's history
-now). Every API call — `msresamp_crcf_create`/`_execute`,
-`nco_crcf_create`/`_mix_block_down`, `freqdem_create`, and
-`freqdem_demodulate_block`, the one originally flagged as least certain
-— compiles and runs as written. Beyond compiling: `test_fm_demod_liquid`
-(synthetic tone) passes, and `test_fm_demod_liquid_real` runs a real
-DMR transmission through the liquid chain and decodes it with DSDcc —
-**sample-exactly** the same 151680 voice samples and talkgroup as
-decoding the capture directly, i.e. on this signal the liquid demod's
-output is decode-equivalent to the hand-rolled demod's.
-
-**Measured A/B numbers** (x86, 4 cores, this container — run
-`demod_benchmark` on your own target before drawing conclusions): the
-hand-rolled demod is *faster* here — 2.2x faster single-threaded with no
-frequency offset, narrowing to 1.24x with a 1500 Hz offset active
-(liquid's `nco_crcf` does reduce the NCO cost, as hypothesized — just
-not enough to win overall on this machine), and roughly 2-4x higher
-channel throughput at every thread count in the concurrency sweep. The
-original motivation for this variant was NEON on ARM targets; on x86 the
-hand-rolled chain (a simple FIR-decimate the compiler vectorizes well)
-wins. Note if you benchmarked before this was written: an earlier
-version of `demod_benchmark` constructed the demod instances inside
-Phase 2's timed region, which unfairly charged liquid's expensive
-polyphase filter design (~a whole workload's worth) as if it were
-throughput; that's fixed, and liquid's Phase 2 numbers now agree with
-its Phase 1 throughput.
-
-**Before you A/B test with this:**
-
-1. Install liquid-dsp (`libliquid-dev` if your distro packages it, or
-   build from source — it's MIT licensed).
-2. Build `test_fm_demod_liquid` first and run it — it's a standalone
-   sanity check (synthetic FM tone in, check the output magnitude is
-   plausible) that doesn't touch Boost, dsd-fme, or the network:
-   ```bash
-   make test_fm_demod_liquid
-   ./test_fm_demod_liquid
-   ```
-   (If you see a handful of clipped samples right at the start of the
-   run, that's an `msresamp_crcf` settling transient, not a bug — the
-   test only warns if clipping is sustained across more than 5% of the
-   output.)
-3. Once that passes, build and run `dsd-server-liquid` the same way as
-   `dsd-server`, against the same `dsd-fme` setup, and compare.
-
-**Architectural note**: the liquid version demodulates FM *after*
-resampling straight to 48000 Hz (a single `msresamp_crcf` does channel
-filtering and rate conversion together), rather than demodulating at a
-higher intermediate rate and resampling afterward like the hand-rolled
-version does. That's a valid simplification specifically because DMR's
-peak deviation (~2 kHz) is well under 48kHz's Nyquist frequency
-(24kHz) — see the comments in `fm_demod_liquid.hpp` if you ever repurpose
-this for a wider-deviation mode.
 
 ## The DSDcc variant
 
@@ -295,10 +201,10 @@ instead of spawning a `dsd-fme`/classic-`dsd` subprocess and talking to
 it over pipes and a UDP socket, it links DSDcc
 (https://github.com/f4exb/dsdcc) directly and pushes samples into a
 `DSDDecoder` object in-process. This is a structurally bigger change
-than either of the other two variants: no child process, no pipes, no
+than the subprocess backend: no child process, no pipes, no
 UDP audio port. If it works out, it's also a more direct answer to
-running many concurrent sessions on constrained hardware than the
-liquid-dsp swap is — 16 sessions means 16 decoder *objects* in your
+running many concurrent sessions on constrained hardware — 16 sessions
+means 16 decoder *objects* in your
 existing threads instead of 16 forked OS processes competing for cores.
 
 **Status: verified against DSDcc 1.9.0, end to end, with a real DMR
@@ -340,9 +246,8 @@ callbacks firing synchronously on the demod worker thread.
 
 1. Build and install mbelib (github.com/szechyjs/mbelib), then DSDcc
    (github.com/f4exb/dsdcc) — both are plain CMake builds.
-2. `cmake .. && make dsd-server-dsdcc` — CMake finds DSDcc/mbelib the
-   same way it finds liquid-dsp for the other variant (skipped with a
-   message if not found, not an error).
+2. `cmake .. && make dsd-server-dsdcc` — CMake skips this variant with a
+   message (not an error) if DSDcc/mbelib aren't found.
 
 **Testing it** (this is no longer the untested backend — it's the most
 thoroughly tested one):
@@ -368,7 +273,7 @@ TETRA is π/4-DQPSK, not an FM mode, so it needs its own front end
 decoder. It is **not a separate executable**: the one `dsd-server` binary
 carries this chain alongside the FM/DSD chain and picks it per session from
 the client's `protocol` hint (see the Protocol table above). The FM/DSD
-backend choice (dsd-fme vs DSDcc vs liquid) is still build-time; the TETRA
+backend choice (dsd-fme vs DSDcc) is still build-time; the TETRA
 *decoder* choice is runtime:
 
 - **`protocol":"tetra"`** — spawns osmo-tetra's `tetra-rx` (sq5bpf fork);
@@ -377,8 +282,8 @@ backend choice (dsd-fme vs DSDcc vs liquid) is still build-time; the TETRA
 - **`protocol":"tetrakit"`** — spawns tetra-kit's `decoder`; JSON reports.
   Surfaces the traffic channel (`TCH_S` → `voice`).
 
-Both are selectable from any of the server variants (`dsd-server`,
-`dsd-server-dsdcc`, `dsd-server-liquid`) since the TETRA stack compiles into
+Both are selectable from either server variant (`dsd-server`,
+`dsd-server-dsdcc`) since the TETRA stack compiles into
 each. Both are **validated end to end on a real off-air capture**: our demod
 locks the burst grid, and the bits, fed to the real decoders, decode
 coherently (UK network, MCC/MNC 234/78). Voice speech frames are extracted
@@ -406,56 +311,6 @@ the right parity, locked the same 18-burst grid, and — through the real
 `tetra-rx` — decoded the same network (MCC/MNC 234/78, ColorCode 0x17) while
 recovering ~5% more CRC-protected control-plane messages than differential
 (see PROTOCOL.md).
-
-## Comparing the two demod backends: demod_benchmark
-
-`demod_benchmark.cpp` is a head-to-head performance comparison, not a
-correctness test — it runs `FmDemodulator` and `FmDemodulatorLiquid`
-against identical synthetic input in the same process so the numbers are
-directly comparable, no Boost/dsd-fme/network involved.
-
-**Phase 1** measures single-threaded throughput with and without a
-frequency offset active. This directly targets the NCO cost difference
-discussed earlier in this project's development: the hand-rolled version
-calls `std::cos`/`std::sin` per sample at full input rate whenever a
-frequency offset is set, while liquid's `nco_crcf` avoids that. If that
-reasoning was right, the gap between the two implementations should
-shrink a lot with `freq_offset=0` compared to a nonzero offset — worth
-checking whether your real numbers bear that out.
-
-**Phase 2** measures concurrency scaling: N independent demod instances
-(private data each, no shared state) running simultaneously, sweeping a
-fixed `{1,2,4,8,16}` thread count regardless of how many cores the
-machine actually has — deliberately covering the oversubscribed case
-directly rather than stopping at `hardware_concurrency()`, since that's
-the scenario this project has actually been discussing (16 sessions on
-an 8-core ARM64 target).
-
-**What this does and doesn't tell you:** it only measures the demod
-stage. The DSD decode itself (`dsd-fme`/DSDcc) is a separate, plausibly
-larger cost per session at high concurrency — this benchmark answers
-"does liquid-dsp help the piece it can help," not "will N sessions fit
-on this machine." The benchmark prints that same reminder in its output.
-
-Build and run:
-```bash
-make demod_benchmark   # builds against liquid too, if CMake found it earlier
-./demod_benchmark              # defaults to 2,000,000 Hz input rate
-./demod_benchmark 1000000      # or pass your actual IQ rate as argv[1]
-```
-
-I compiled and ran this myself in the hand-rolled-only mode (no liquid
-available in my sandbox) and it produced exactly the result the NCO
-reasoning predicts: with `freq_offset=1500`, the hand-rolled
-implementation ran about **2.4x slower** than with `freq_offset=0` on the
-same input. I also syntax-checked the liquid-enabled code path against a
-stub header matching liquid's real function signatures — same caveat as
-everywhere else in this project: that confirms my code is internally
-consistent, not that it's correct against the real library. The
-concurrency phase ran correctly too, though the sandbox I built this in
-only reports one CPU core, so its numbers there aren't informative about
-real scaling — that part specifically needs your actual multi-core
-target to mean anything.
 
 ## Testing session.cpp
 
@@ -485,7 +340,7 @@ synthetic events and audio.
   individual pieces compile.
 
 **What it doesn't check:** real DMR decoding (the fake `dsd-fme` doesn't
-care what audio it receives), the liquid-dsp or DSDcc backends
+care what audio it receives), the DSDcc backend
 specifically (this always builds against the default `FmDemodulator` +
 `DsdProcess`), or concurrency — it's a single client, single session,
 sequential test cases, deliberately kept simple. A stress test with many
@@ -612,8 +467,7 @@ the 48 kHz output rate is unchanged.
 
 Enable it per session with `"matched_filter": true` on the `start` message
 (or `--matched-filter` in `tools/midas_ws_client.py`). Default **off**: the
-pipeline is byte-identical when unused. It's implemented in the hand-rolled
-`FmDemodulator` only (not the liquid variant).
+pipeline is byte-identical when unused.
 
 > **Status: experimental, opt-in — not enabled by default.** Lives on the
 > `claude/iq-matched-filter` branch. Pure-DSP unit tests
