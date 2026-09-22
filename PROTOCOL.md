@@ -893,7 +893,7 @@ over HTTP and the connection closed:
 
 | Method + path | Response |
 |---|---|
-| `GET /`, `GET /status` | `text/html` dashboard, `<meta>`-refreshes every 5 s |
+| `GET /`, `GET /status` | `text/html` dashboard; live-polls `/status.json` (~1 s) and patches the DOM in place, with a 5 s `<noscript>` meta-refresh fallback |
 | `GET /status.json` | `application/json` (see below) |
 | any other path | `404` |
 | non-GET | `405` |

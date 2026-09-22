@@ -403,8 +403,12 @@ session exactly as before; anything else is answered over HTTP:
 
 | Path | Response |
 |---|---|
-| `/`, `/status` | HTML dashboard (auto-refreshes every 5 s) |
+| `/`, `/status` | HTML dashboard (live-updates ~1 s by polling the JSON in place; falls back to a 5 s full-page `<meta>`-refresh if JavaScript is off) |
 | `/status.json` | the same data as JSON, for health checks / scraping |
+
+The live update is a tiny `/status.json` poll that patches the page in
+place — cheap on the server (no decode work, just a mutex-guarded snapshot
+and a few hundred bytes) and flicker-free in the browser.
 
 Both show the number of **currently connected** sessions, the
 **cumulative total** since the server started, how many are **actively

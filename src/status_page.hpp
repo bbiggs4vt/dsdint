@@ -19,7 +19,11 @@
 
 namespace dsdsrv {
 
-// How often the HTML page tells the browser to reload itself.
+// With JavaScript on, the page live-polls /status.json this often and
+// patches the DOM in place (no flicker, tiny payload). With JS off, a
+// <noscript> <meta refresh> falls back to a full reload at the slower
+// kStatusRefreshSeconds cadence.
+inline constexpr int kStatusPollMs = 1000;
 inline constexpr int kStatusRefreshSeconds = 5;
 
 namespace status_detail {
@@ -138,7 +142,9 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
     o << "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
       << "<meta charset=\"utf-8\">\n"
       << "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-      << "<meta http-equiv=\"refresh\" content=\"" << kStatusRefreshSeconds << "\">\n"
+      // JS-off fallback only: browsers with JS run the in-place poller below.
+      << "<noscript><meta http-equiv=\"refresh\" content=\"" << kStatusRefreshSeconds
+      << "\"></noscript>\n"
       << "<title>dsd-server status</title>\n"
       << "<style>\n"
       // Bootswatch Slate palette (self-contained -- no CDN, so the page
@@ -215,40 +221,41 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
     // Header bar.
     o << "<header><div class=\"wrap\">\n";
     o << "<h1><span class=\"accent\">dsd-server</span> status</h1>\n";
-    o << "<div class=\"sub\">up " << html_escape(human_duration(s.uptime_s))
-      << " &middot; since " << html_escape(format_utc(s.started))
-      << " &middot; refreshes every " << kStatusRefreshSeconds << "s</div>\n";
+    o << "<div class=\"sub\">up <span id=\"uptime\">" << html_escape(human_duration(s.uptime_s))
+      << "</span> &middot; since " << html_escape(format_utc(s.started))
+      << " &middot; <span id=\"live\">live</span></div>\n";
     o << "</div></header>\n";
 
     o << "<div class=\"wrap\">\n";
 
     // Summary cards.
     o << "<div class=\"cards\">\n";
-    auto card = [&](const std::string& label, const std::string& value) {
-        o << "  <div class=\"card\"><div class=\"n\">" << html_escape(value)
+    auto card = [&](const std::string& id, const std::string& label, const std::string& value) {
+        o << "  <div class=\"card\"><div class=\"n\" id=\"" << id << "\">" << html_escape(value)
           << "</div><div class=\"l\">" << html_escape(label) << "</div></div>\n";
     };
-    card("Current sessions", std::to_string(s.current_sessions));
-    card("Total sessions", std::to_string(s.total_sessions));
-    card("Active decodes", std::to_string(s.active_pipelines));
+    card("cur", "Current sessions", std::to_string(s.current_sessions));
+    card("tot", "Total sessions", std::to_string(s.total_sessions));
+    card("act", "Active decodes", std::to_string(s.active_pipelines));
     o << "</div>\n";
 
-    // Active-pipeline breakdown by protocol.
-    if (!s.by_protocol.empty()) {
-        o << "<div class=\"section-label\">Active by protocol</div>\n<div style=\"margin-bottom:1.5rem\">";
-        for (const auto& kv : s.by_protocol) {
-            o << "<span class=\"tag\">" << html_escape(kv.first) << " <b>"
-              << kv.second << "</b></span>";
-        }
-        o << "</div>\n";
+    // Active-pipeline breakdown by protocol. The wrapper is always emitted
+    // (hidden when empty) so the live poller has a stable node to fill.
+    o << "<div id=\"byproto-sec\"" << (s.by_protocol.empty() ? " hidden" : "") << ">\n"
+      << "<div class=\"section-label\">Active by protocol</div>\n"
+      << "<div id=\"byproto\" style=\"margin-bottom:1.5rem\">";
+    for (const auto& kv : s.by_protocol) {
+        o << "<span class=\"tag\">" << html_escape(kv.first) << " <b>"
+          << kv.second << "</b></span>";
     }
+    o << "</div>\n</div>\n";
 
     // Session table.
     o << "<div class=\"section-label\">Sessions</div>\n";
     o << "<div class=\"panel\">\n<table>\n<thead><tr>"
       << "<th>#</th><th>Client</th><th>Protocol</th><th>Chain</th>"
       << "<th>State</th><th>Connected (UTC)</th><th class=\"num\">Duration</th>"
-      << "</tr></thead>\n<tbody>\n";
+      << "</tr></thead>\n<tbody id=\"rows\">\n";
     if (s.rows.empty()) {
         o << "<tr><td colspan=\"7\" class=\"empty\">no clients connected</td></tr>\n";
     } else {
@@ -269,7 +276,57 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
         }
     }
     o << "</tbody>\n</table>\n</div>\n";      // .panel
-    o << "</div>\n</body>\n</html>\n";        // .wrap
+    o << "</div>\n";                          // .wrap
+
+    // Live poller: fetch the JSON snapshot and patch the DOM in place, so
+    // the page stays current without a flickering full-page reload. Nodes
+    // are built with textContent, which escapes their values. If JS is off,
+    // the <noscript> meta-refresh above reloads the whole page instead.
+    o << "<script>\n(function(){\nvar POLL=" << kStatusPollMs << ";\n";
+    o << R"JS(function dur(s){s=Math.max(0,Math.floor(s));var h=(s/3600)|0;s-=h*3600;var m=(s/60)|0;s-=m*60;var o='';if(h)o+=h+'h ';if(h||m)o+=m+'m ';return o+s+'s';}
+function setText(id,v){var e=document.getElementById(id);if(e&&e.textContent!==v)e.textContent=v;}
+function cell(cls,text){var td=document.createElement('td');if(cls)td.className=cls;td.textContent=text;return td;}
+function render(d){
+  setText('cur',''+d.current_sessions);
+  setText('tot',''+d.total_sessions);
+  setText('act',''+d.active_pipelines);
+  setText('uptime',dur(d.uptime_seconds));
+  var sec=document.getElementById('byproto-sec'),bp=document.getElementById('byproto');
+  var keys=Object.keys(d.by_protocol||{}).sort();
+  bp.textContent='';
+  if(!keys.length){sec.hidden=true;}
+  else{sec.hidden=false;keys.forEach(function(k){
+    var sp=document.createElement('span');sp.className='tag';
+    sp.appendChild(document.createTextNode(k+' '));
+    var b=document.createElement('b');b.textContent=''+d.by_protocol[k];sp.appendChild(b);
+    bp.appendChild(sp);});}
+  var tb=document.getElementById('rows');tb.textContent='';
+  var rows=d.sessions||[];
+  if(!rows.length){var tr=document.createElement('tr');var td=cell('empty','no clients connected');td.colSpan=7;tr.appendChild(td);tb.appendChild(tr);return;}
+  rows.forEach(function(r){
+    var tr=document.createElement('tr');
+    tr.appendChild(cell('num',''+r.id));
+    tr.appendChild(cell('mono',r.remote||'-'));
+    tr.appendChild(cell('',r.protocol));
+    tr.appendChild(cell('',r.chain||'-'));
+    var st=document.createElement('td');st.className=r.active?'state-on':'state-off';
+    var dot=document.createElement('span');dot.className='dot '+(r.active?'on':'off');st.appendChild(dot);
+    st.appendChild(document.createTextNode(r.active?'decoding':'idle'));tr.appendChild(st);
+    tr.appendChild(cell('mono',r.connected));
+    tr.appendChild(cell('num',dur(r.duration_seconds)));
+    tb.appendChild(tr);});
+}
+function tick(){
+  fetch('/status.json',{cache:'no-store'}).then(function(r){return r.json();})
+    .then(render).catch(function(){})
+    .then(function(){setTimeout(tick,POLL);});
+}
+setTimeout(tick,POLL);
+})();
+)JS";
+    o << "</script>\n";
+
+    o << "</body>\n</html>\n";
     return o.str();
 }
 
