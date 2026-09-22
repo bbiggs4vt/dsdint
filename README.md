@@ -733,11 +733,6 @@ asyncio.run(main())
 
 ## Extending
 
-- **Multiple simultaneous channels per client**: currently one
-  `FmDemodulator` + one `dsd-fme` per WebSocket connection. If you want
-  one client to monitor several channels at once, the natural extension
-  is multiple named "channel" sub-pipelines per `Session`, each tagging
-  its outgoing frames with a channel ID.
 - **JSON event richness**: `dsd-fme`'s newer builds may expose structured
   (JSON) event output directly — if yours does, swap `classify_line()`'s
   regex parsing for that instead; it'll be far more reliable than
