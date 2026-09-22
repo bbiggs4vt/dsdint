@@ -599,6 +599,67 @@ the binary audio formats. The tables below are the quick summary.
 | text | `{"type":"error","message":"..."}` | Something was rejected (bad control message, invalid key, DSD/TETRA backend failed to start, malformed binary frame). Connection stays open. PROTOCOL.md lists all six message texts. |
 | binary | `0x01` + `int16` LE PCM | Decoded voice audio. **8000 Hz mono** from both backends: the dsd-fme backend collapses its stereo (slot1 left / slot2 right) to mono, auto-following the active TDMA slot (downmix when the slot isn't yet known); the DSDcc backend is mono per burst and likewise follows one slot — see PROTOCOL.md. |
 
+## Experimental: RRC symbol matched filter (`matched_filter`)
+
+An **opt-in** root-raised-cosine matched filter can be applied to the
+discriminator output before the decoder, matched to the digital-voice
+symbol pulse (default DMR: 4800 Bd, 0.2 rolloff). FM discriminator noise
+has a rising (parabolic) spectrum, so most of it sits *above* the symbol
+band; narrowing the post-detection bandwidth to the symbol band recovers
+SNR into the decoder's slicer near threshold. Symbol timing is left to the
+decoder (dsd-fme/DSDcc do their own), so this only conditions the stream —
+the 48 kHz output rate is unchanged.
+
+Enable it per session with `"matched_filter": true` on the `start` message
+(or `--matched-filter` in `tools/midas_ws_client.py`). Default **off**: the
+pipeline is byte-identical when unused. It's implemented in the hand-rolled
+`FmDemodulator` only (not the liquid variant).
+
+> **Status: experimental, opt-in — not enabled by default.** Lives on the
+> `claude/iq-matched-filter` branch. Pure-DSP unit tests
+> (`tests/test_matched_filter.cpp`) verify the filter is a correct RRC
+> (symmetric, unity DC gain, −3 dB at Rs/2, ISI-free cascade) and that on a
+> constant tone + AWGN it preserves the signal level exactly while cutting
+> raw-discriminator noise variance by ~14 dB — an *upper bound* on the
+> benefit, since the decoder already filters some of that out-of-band noise.
+
+### Measured effect (one real DMR capture + synthetic AWGN)
+
+A real off-air DMR capture (unencrypted voice, TG 1 / SRC 123, complex
+float32 @ 20.3 kHz, ~3 s) was decoded with the filter off vs on. With no
+added noise it made **no difference on dsd-fme** (it decodes cleanly either
+way; dsd-fme already filters internally) and recovered ~13% more voice on
+the weaker-front-end DSDcc backend.
+
+Adding AWGN to probe the near-threshold regime — **lock rate = fraction of
+5 independent noise seeds that recovered the talkgroup**:
+
+| Added SNR | dsd-fme off | dsd-fme on | DSDcc off | DSDcc on |
+|---|---|---|---|---|
+| 10 dB | 5/5 | 5/5 | **2/5** | **5/5** |
+|  8 dB | 5/5 | 5/5 | **1/5** | **4/5** |
+|  6 dB | 5/5 | 5/5 | **1/5** | **2/5** |
+|  4 dB | 5/5 | 5/5 | 0/5 | 0/5 |
+|  3 dB | **2/5** | **5/5** | — | — |
+|  2 dB | **1/5** | **5/5** | — | — |
+
+Takeaways, matching theory (no gain above threshold, a few dB near it):
+
+- **dsd-fme** is the more sensitive decoder (threshold ~2–3 dB here). The
+  filter is a no-op in normal conditions but takes near-threshold lock from
+  1–2/5 → 5/5 — roughly **1–2 dB of extra margin**, even though it's
+  redundant with dsd-fme's internal filtering above threshold.
+- **DSDcc** has a weaker front end (threshold ~8–10 dB), and the filter buys
+  it a wider **~2–4 dB** of margin.
+
+**Caveats:** one 3-second capture; synthetic AWGN referenced to the
+capture's mean power (not a calibrated Eb/N0); low IQ rate (~4.2
+samples/symbol, so the RRC is coarse); binary lock as a proxy for BER. Real
+weak-signal impairments (multipath, adjacent-channel) aren't modeled.
+Reproduce with `tools/midas_ws_client.py … --matched-filter` against a
+noise-injected capture; before defaulting it on, validate on more real weak
+captures (ideally with a per-frame BER metric instead of lock rate).
+
 ## Tuning notes
 
 - **`gain` / `disc_gain`**: maps discriminator output (radians/sample) to
