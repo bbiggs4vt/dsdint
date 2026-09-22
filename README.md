@@ -427,6 +427,15 @@ overhead included): ~35 CPU-ms per stream-second voice-active / ~21
 idle on the DSDcc backend, ~53 voice-active / ~21 idle on the dsd-fme
 backend; ~1.5 MB RSS per DSDcc session vs ~6 MB per dsd-fme session.
 
+`tools/dmr_slot_aggregator.hpp` is a **reference** (not used by the
+server): a header-only, std-only C++17 helper a client can use to group
+DMR events into per-slot call sessions. DMR is the only 2-slot TDMA
+protocol here, so gate it with `is_timeslotted_protocol()`. You feed it
+the flat event fields you already parse (no networking/JSON inside); it
+handles the concurrent slots, attributes slot-less alias/SMS lines by
+source, and closes calls on a terminator or a hang-time timeout. See
+`tests/test_dmr_slot_aggregator.cpp` for a worked scenario.
+
 ## Protocol
 
 **Full reference: [PROTOCOL.md](PROTOCOL.md)** — every JSON frame the

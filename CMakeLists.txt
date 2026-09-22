@@ -88,6 +88,14 @@ target_compile_options(test_matched_filter PRIVATE -Wall -Wextra)
 add_test(NAME matched_filter_test COMMAND test_matched_filter)
 set_tests_properties(matched_filter_test PROPERTIES TIMEOUT 60)
 
+# Reference client-side per-slot DMR call aggregator (header-only, in
+# tools/). Pure logic on synthetic events -- no networking, always runs.
+add_executable(test_dmr_slot_aggregator EXCLUDE_FROM_ALL tests/test_dmr_slot_aggregator.cpp)
+target_include_directories(test_dmr_slot_aggregator PRIVATE tools)
+target_compile_options(test_dmr_slot_aggregator PRIVATE -Wall -Wextra)
+add_test(NAME dmr_slot_aggregator_test COMMAND test_dmr_slot_aggregator)
+set_tests_properties(dmr_slot_aggregator_test PROPERTIES TIMEOUT 30)
+
 # π/4-DQPSK demodulator (TETRA physical layer). Pure DSP with a matching
 # modulator carried in the test as ground truth — no external deps, no
 # capture files, so it always runs.
