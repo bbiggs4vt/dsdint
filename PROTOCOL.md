@@ -34,7 +34,7 @@ back to the defaults shown (see `handle_text_message` in `session.cpp`).
 
 | type | fields | effect |
 |---|---|---|
-| `start` | `sample_rate` (default 2000000), `channel_bandwidth` (12500), `freq_offset` (0), `gain` (26000), `afc` (false), `protocol` (""), `key_type` (""), `key` ("") | Builds the demod + DSD pipeline. If a pipeline is already running it is stopped and rebuilt (clean restart). Replies with `started` on success, `error` on failure. |
+| `start` | `sample_rate` (default 2000000), `channel_bandwidth` (12500), `freq_offset` (0), `gain` (26000), `afc` (false), `matched_filter` (false), `protocol` (""), `key_type` (""), `key` ("") | Builds the demod + DSD pipeline. If a pipeline is already running it is stopped and rebuilt (clean restart). Replies with `started` on success, `error` on failure. |
 | `set_gain` | `gain` (26000) | Live-adjusts discriminator gain. No reply. Ignored (silently) if no pipeline is running. |
 | `set_freq_offset` | `hz` (0) | Live-adjusts the NCO shift. No reply. Ignored if no pipeline is running. Also resets any accumulated AFC correction (an explicit retune is a statement of new truth). |
 | `stop` | — | Tears down the pipeline (kills the dsd-fme child / destroys the decoder). No reply. The WebSocket stays open; a new `start` is accepted afterwards. |
@@ -145,6 +145,17 @@ clamped to ±5 kHz of correction. With AFC on, a signal mis-tuned by
 3 kHz — which decodes only partially or not at all otherwise — decodes
 in full.
 
+`matched_filter` (**experimental, default `false`**): when `true`, a
+root-raised-cosine filter matched to the digital-voice symbol pulse
+(4800 Bd, 0.2 rolloff — DMR 4FSK) is applied to the discriminator output
+before the decoder, narrowing the post-detection noise bandwidth to the
+symbol band. It's a no-op in normal conditions and buys a few dB of
+weak-signal margin near the decode threshold; leave it off unless you're
+chasing marginal signals. Applies only to the FM/DSD chain (ignored by
+TETRA), and only the hand-rolled demod implements it (the liquid variant
+ignores it). See the README's matched-filter section for the measured
+A/B results and caveats.
+
 Anything else — an unknown `type`, or a text frame that doesn't parse as
 a flat JSON object — gets an `error` reply (see below); the connection
 stays open either way.
@@ -195,10 +206,10 @@ The wire protocol is otherwise the same as the FM/DSD modes — `start` /
   `samples_per_symbol` from `sample_rate`. Tune near zero IF; the demod pulls
   in residual offset up to ±2250 Hz itself.
 - **Ignored `start` fields:** `channel_bandwidth`, `freq_offset`, `gain`,
-  `afc`, `key_type`, `key` don't apply to the TETRA chain and are
-  accepted-and-ignored (TETRA TEA encryption is not handled). `set_gain` /
-  `set_freq_offset` are likewise accepted no-ops. (`protocol` itself is what
-  selected this chain.)
+  `afc`, `matched_filter`, `key_type`, `key` don't apply to the TETRA chain
+  and are accepted-and-ignored (TETRA TEA encryption is not handled).
+  `set_gain` / `set_freq_offset` are likewise accepted no-ops. (`protocol`
+  itself is what selected this chain.)
 - **`started`:** `udp_audio_port` is always `0` (the backend binds its own
   internal control socket).
 - **`event` fields:** the osmo backend reports `source_id` = the party SSI,

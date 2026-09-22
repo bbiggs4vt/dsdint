@@ -74,6 +74,12 @@ message StartRequest {
   // scrambler ("" = none). key: decimal or hex digits (see PROTOCOL.md).
   string key_type = 8 [json_name = "key_type"];
   string key = 9;
+  // Experimental (default false): apply an RRC symbol matched filter
+  // (4800 Bd / 0.2 rolloff, DMR 4FSK) to the discriminator output before
+  // the decoder, for a few dB of weak-signal margin near threshold. No-op
+  // in normal conditions; FM/DSD chain only (ignored by TETRA), hand-rolled
+  // demod only. See README.md.
+  bool matched_filter = 10 [json_name = "matched_filter"];
 }
 
 // {"type":"set_gain","gain":N}. Live discriminator-gain adjust. No reply.

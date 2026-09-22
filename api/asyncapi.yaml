@@ -348,6 +348,14 @@ components:
           type: boolean
           default: false
           description: Automatic frequency control (variance-gated, clamped ±5 kHz).
+        matched_filter:
+          type: boolean
+          default: false
+          description: |
+            Experimental. Apply an RRC symbol matched filter (4800 Bd / 0.2
+            rolloff, DMR 4FSK) to the discriminator output for a few dB of
+            weak-signal margin near threshold. No-op in normal conditions;
+            FM/DSD chain only (ignored by TETRA), hand-rolled demod only.
         protocol:
           $ref: "#/components/schemas/ProtocolHint"
         key_type:
