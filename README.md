@@ -422,9 +422,10 @@ The HTML page has three tabs: **Sessions** (the live clients above),
 **History** — the most recent finished sessions (newest first, last 50 by
 default) with their connect/end times and total duration — and **Log**, a
 live view of the JSON frames the server has sent clients (last 300, newest
-first). Binary voice audio and the high-rate `kind:"voice"` events are
-excluded; everything else (`capabilities`/`started`/`error`/metadata
-events) is shown. History and Log are in-memory only and reset on restart;
+first), with a **Pause** button to freeze the view for inspection. Binary
+voice audio, the high-rate `kind:"voice"` events, and the once-per-connect
+`capabilities` greeting are excluded; everything else
+(`started`/`error`/metadata events) is shown. History and Log are in-memory only and reset on restart;
 the JSON exposes History as a `history` array and the Log via a separate
 `/log.json` endpoint.
 

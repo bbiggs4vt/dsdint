@@ -269,6 +269,19 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
       << "  .tab .count { color: var(--muted); font-weight: 400; }\n"
       << "  .tab.active .count { color: var(--info); }\n"
       << "  [hidden] { display: none !important; }\n"
+      // Log toolbar + a Slate-style button (pause/resume).
+      << "  .logbar { display: flex; align-items: center; gap: 0.7rem;\n"
+      << "            padding: 0.5rem 0.85rem; border-bottom: 1px solid var(--table-bd); }\n"
+      << "  .btn { appearance: none; cursor: pointer; color: var(--heading);\n"
+      << "         background-image: linear-gradient(rgba(255,255,255,.12), rgba(255,255,255,0)),\n"
+      << "                           linear-gradient(#7a8288, #7a8288);\n"
+      << "         border: 1px solid var(--comp-bd); border-radius: 4px; padding: 0.25rem 0.8rem;\n"
+      << "         font: inherit; font-size: 0.8rem; text-shadow: 0 -1px 0 rgba(0,0,0,.3); }\n"
+      << "  .btn:hover { background-image: linear-gradient(rgba(255,255,255,.18), rgba(255,255,255,.03)),\n"
+      << "                                 linear-gradient(#7a8288, #7a8288); }\n"
+      << "  .btn.paused { background-image: linear-gradient(rgba(255,255,255,.12), rgba(255,255,255,0)),\n"
+      << "                                  linear-gradient(#e0a33c, #d38f2a); }\n"
+      << "  #log-note { color: var(--muted); font-size: 0.8rem; }\n"
       << "</style>\n</head>\n<body>\n";
 
     // Header bar.
@@ -361,7 +374,11 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
     o << "</tbody>\n</table>\n</div>\n";      // #tab-history
 
     // Log panel (outbound JSON frames; filled by the poller from /log.json).
-    o << "<div class=\"panel\" id=\"tab-log\" hidden>\n<table>\n<thead><tr>"
+    o << "<div class=\"panel\" id=\"tab-log\" hidden>\n"
+      << "<div class=\"logbar\">"
+      << "<button id=\"log-pause\" class=\"btn\" type=\"button\">Pause</button>"
+      << "<span id=\"log-note\"></span></div>\n"
+      << "<table>\n<thead><tr>"
       << "<th>Time (UTC)</th><th>#</th><th>Message</th>"
       << "</tr></thead>\n<tbody id=\"lrows\">\n"
       << "<tr><td colspan=\"3\" class=\"empty\">no frames logged yet</td></tr>\n"
@@ -431,7 +448,9 @@ function renderLog(d){
     tr.appendChild(cell('logmsg',e.text));
     tb.appendChild(tr);});
 }
+var logPaused=false;
 function fetchLog(){
+  if(logPaused)return;   // frozen for inspection
   fetch('/log.json',{cache:'no-store'}).then(function(r){return r.json();})
     .then(renderLog).catch(function(){});
 }
@@ -446,6 +465,14 @@ function showTab(id){
 }
 (function(){var tabs=document.querySelectorAll('.tab');
   for(var i=0;i<tabs.length;i++)tabs[i].addEventListener('click',function(){showTab(this.getAttribute('data-tab'));});
+  var pb=document.getElementById('log-pause'),note=document.getElementById('log-note');
+  if(pb)pb.addEventListener('click',function(){
+    logPaused=!logPaused;
+    pb.textContent=logPaused?'Resume':'Pause';
+    pb.classList.toggle('paused',logPaused);
+    if(note)note.textContent=logPaused?'paused — log frozen for inspection':'';
+    if(!logPaused)fetchLog();   // catch up immediately on resume
+  });
   showTab('tab-sessions');})();
 function tick(){
   fetch('/status.json',{cache:'no-store'}).then(function(r){return r.json();})
