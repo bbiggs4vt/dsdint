@@ -464,7 +464,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
             .field("nac", ev.nac)
             .field("emergency", ev.emergency)
             .field("alias", ev.alias)
-            .field("crc_error", ev.crc_error)
+            .field("crc_error", crc_error_wire(ev.crc_error))
             .field("message", ev.message)
             .field("extra", ev.extra)
             .field("raw", ev.raw_line)

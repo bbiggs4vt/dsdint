@@ -480,6 +480,13 @@ int main() {
         check(c3.slot == "1", "subsequent unmarked call now inherits slot 1");
     }
 
+    // ---- crc_error wire form: definite 0/1, never blank ----
+    {
+        check(crc_error_wire("1") == "1", "crc wire: flagged -> \"1\"");
+        check(crc_error_wire("") == "0", "crc wire: unflagged -> \"0\"");
+        check(crc_error_wire("0") == "0", "crc wire: any non-\"1\" -> \"0\"");
+    }
+
     if (g_failures == 0) {
         std::printf("\nALL DSD-FME PARSE TESTS PASSED\n");
         return 0;

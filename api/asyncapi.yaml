@@ -260,7 +260,7 @@ components:
             nac: ""
             emergency: ""
             alias: ""
-            crc_error: ""
+            crc_error: "0"
             message: ""
             extra: ""
             raw: "20:37:20 Sync: +DMR   slot1  [SLOT2] | Color Code=04 | VC6 "
@@ -276,7 +276,7 @@ components:
             nac: ""
             emergency: ""
             alias: ""
-            crc_error: ""
+            crc_error: "0"
             message: ""
             extra: ""
             raw: " SLOT 2 TGT=19535 SRC=2222223 Group Call  "
@@ -292,7 +292,7 @@ components:
             nac: ""
             emergency: ""
             alias: ""
-            crc_error: ""
+            crc_error: "0"
             message: ""
             extra: "mcc=00ea; mnc=004e; la=6163; func=NETINFO1"
             raw: "TETMON_begin FUNC:NETINFO1 CCODE:17 MCC:00ea MNC:004e LA:6163 RX:1 TETMON_end"
@@ -490,8 +490,8 @@ components:
           description: DMR talker-alias text, else "". dsd-fme only.
         crc_error:
           type: string
-          enum: ["", "1"]
-          description: '"1" on FEC/CRC failure; then other fields are unreliable.'
+          enum: ["0", "1"]
+          description: '"1" on FEC/CRC failure (then other fields are unreliable), else "0". Always 0/1, never "" — "0" means "not flagged", not "verified pass".'
         message:
           type: string
           description: Decoded DMR short-data / SMS text (free text), or "". dsd-fme only.

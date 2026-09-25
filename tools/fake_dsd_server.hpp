@@ -239,8 +239,9 @@ inline std::map<std::string, std::string> parse_flat_object(const std::string& s
 
 // One server->client `event` frame. Every field defaults to "" (the
 // protocol's "unknown" value) and every key is always serialized, matching
-// the real server's flat 13-key event schema. Chainable setters keep test
-// call-sites terse: Event{}.k("call").tg("150607").src("2222223").sl("2").
+// the real server's flat 13-key event schema -- except crc_error, which the
+// real server reports as a definite 0/1, so this does too. Chainable setters
+// keep test call-sites terse: Event{}.k("call").tg("150607").src("2222223").sl("2").
 struct Event {
     std::string kind, talkgroup, source_id, slot, color_code, ran, nac,
                 emergency, alias, crc_error, extra, raw;
@@ -266,7 +267,11 @@ struct Event {
         f("kind", kind);           f("talkgroup", talkgroup);
         f("source_id", source_id); f("slot", slot);
         f("color_code", color_code); f("ran", ran); f("nac", nac);
-        f("emergency", emergency); f("alias", alias); f("crc_error", crc_error);
+        // crc_error is reported as a definite 0/1 on the wire (matching the
+        // real server): "1" only when explicitly flagged, else "0".
+        f("emergency", emergency);
+        f("alias", alias);
+        f("crc_error", crc_error == "1" ? std::string("1") : std::string("0"));
         f("extra", extra);         f("raw", raw);
         s += "}";
         return s;

@@ -168,7 +168,7 @@ message Event {
   string nac = 8;          // P25 Network Access Code (hex)
   string emergency = 9;    // "1" when flagged
   string alias = 10;       // DMR talker alias (free text)
-  string crc_error = 11 [json_name = "crc_error"];  // "1" on FEC/CRC failure
+  string crc_error = 11 [json_name = "crc_error"];  // "1" on FEC/CRC failure, else "0" (always 0/1, never "")
   // Zero or more "; "-joined key=value tokens carrying protocol/backend-
   // specific detail that has no dedicated field ("" when none). Tokens are
   // backend-specific -- a given token only appears on the backend(s) noted.
