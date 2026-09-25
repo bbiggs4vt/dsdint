@@ -779,10 +779,13 @@ void Session::demod_worker_loop() {
 
 namespace {
 // The status-page log captures the JSON frames the server sends clients, but
-// skips the high-rate voice events (the JSON side of "voice data") so they
-// don't flood the bounded buffer. Cheap substring test on the serialized
-// frame -- the field values here are server-controlled, not user text.
-bool is_voice_event_frame(const std::string& msg) {
+// skips two kinds that add noise without much value: the high-rate voice
+// events (the JSON side of "voice data") and the large, once-per-connect
+// capabilities greeting (identical every time). Cheap substring tests on the
+// serialized frame -- the field values here are server-controlled, not user
+// text.
+bool skip_from_log(const std::string& msg) {
+    if (msg.find("\"type\":\"capabilities\"") != std::string::npos) return true;
     return msg.find("\"type\":\"event\"") != std::string::npos &&
            msg.find("\"kind\":\"voice\"") != std::string::npos;
 }
@@ -790,8 +793,9 @@ bool is_voice_event_frame(const std::string& msg) {
 
 void Session::send_text(const std::string& msg) {
     // Mirror the outbound JSON into the shared log buffer for the status
-    // page's log tab (voice events excluded; binary voice never comes here).
-    if (stats_ && stats_id_ && !is_voice_event_frame(msg))
+    // page's log tab (voice events + the capabilities greeting excluded;
+    // binary voice never comes here).
+    if (stats_ && stats_id_ && !skip_from_log(msg))
         stats_->add_log(stats_id_, msg);
 
     std::vector<uint8_t> data(msg.begin(), msg.end());
