@@ -333,6 +333,7 @@ void DsdProcess::stdout_reader_loop() {
             // strip_ansi reduces to empty).
             if (!line.empty() && on_event_) {
                 DsdEvent ev = classify_line(line);
+                slot_carry_.apply(ev);   // stamp the burst's slot onto unmarked lines
                 publish_active_slot(ev);
                 if (dsd_fme_forward_event(ev, cfg_.forward_unknown)) on_event_(ev);
             }
@@ -342,6 +343,7 @@ void DsdProcess::stdout_reader_loop() {
     std::string tail = strip_ansi(buf);
     if (!tail.empty() && on_event_) {
         DsdEvent ev = classify_line(tail);
+        slot_carry_.apply(ev);
         publish_active_slot(ev);
         if (dsd_fme_forward_event(ev, cfg_.forward_unknown)) on_event_(ev);
     }

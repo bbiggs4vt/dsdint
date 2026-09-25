@@ -431,6 +431,55 @@ int main() {
         check(out[0] == 10 && out[1] == 30, "odd length: left channel of the two full pairs");
     }
 
+    // ---- DmrSlotCarry: carry the sync's slot onto the unmarked call lines
+    // that follow it (real lines from a Con+/trunked DMR capture) ----
+    {
+        DmrSlotCarry carry;
+
+        // Before any sync marker, an unmarked call line stays unslotted.
+        DsdEvent pre = classify_dsd_fme_line(
+            " Bank One F80 Private or Data Call(s) -  LSN 04: TGT 9404");
+        check(pre.kind == "call" && pre.talkgroup == "9404", "call line: kind call, TG 9404");
+        check(pre.slot.empty(), "call line carries no slot of its own");
+        carry.apply(pre);
+        check(pre.slot.empty(), "no slot stamped before any sync is seen");
+
+        // Sync marks slot 1 -> the following call line inherits slot 1.
+        DsdEvent s1 = classify_dsd_fme_line(
+            "15:55:39 Sync: +DMR  [slot1]  slot2  | Color Code=05 | CSBK");
+        carry.apply(s1);
+        check(s1.kind == "sync" && s1.slot == "1", "sync line sets slot 1");
+        DsdEvent c1 = classify_dsd_fme_line(
+            " Bank One F80 Private or Data Call(s) -  LSN 04: TGT 9404");
+        carry.apply(c1);
+        check(c1.slot == "1", "call after [slot1] inherits slot 1");
+
+        // Sync flips to slot 2 -> the next call line inherits slot 2.
+        DsdEvent s2 = classify_dsd_fme_line(
+            "15:55:39 Sync: +DMR   slot1 [slot2] | Color Code=05 | CSBK");
+        carry.apply(s2);
+        check(s2.slot == "2", "sync line sets slot 2");
+        DsdEvent c2 = classify_dsd_fme_line(
+            " Bank One F80 Private or Data Call(s) -  LSN 04: TGT 9404");
+        carry.apply(c2);
+        check(c2.slot == "2", "call after [slot2] inherits slot 2");
+
+        // A channel-wide / unknown line is NOT stamped, even with a slot in context.
+        DsdEvent unk = classify_dsd_fme_line("-- dsd-fme running --");
+        check(unk.kind == "unknown" && unk.slot.empty(), "banner line: unknown, no slot");
+        carry.apply(unk);
+        check(unk.slot.empty(), "unknown/channel-wide line is not stamped");
+
+        // An explicit marker on a later line still wins and updates context.
+        DsdEvent explicit1 = classify_dsd_fme_line(" SLOT 1 TGT=9404 Group Call ");
+        carry.apply(explicit1);
+        check(explicit1.slot == "1", "explicit slot on the line is kept and resets context");
+        DsdEvent c3 = classify_dsd_fme_line(
+            " Bank One F80 Private or Data Call(s) -  LSN 04: TGT 9404");
+        carry.apply(c3);
+        check(c3.slot == "1", "subsequent unmarked call now inherits slot 1");
+    }
+
     if (g_failures == 0) {
         std::printf("\nALL DSD-FME PARSE TESTS PASSED\n");
         return 0;

@@ -36,6 +36,32 @@ namespace dsdsrv {
 // formats.
 DsdEvent classify_dsd_fme_line(const std::string& line);
 
+// Carries dsd-fme's per-burst physical TDMA slot forward onto the lines that
+// follow it. dsd-fme decodes one burst at a time and prints the slot only on
+// that burst's "Sync:" line (as "[slot1]"/"[SLOT2]"); the CSBK / call /
+// trunking metadata lines it prints for the same burst carry no slot marker,
+// so classify_dsd_fme_line leaves their slot "". Because those lines belong to
+// the slot named by the most recent sync, this remembers it and stamps it onto
+// them -- giving clients a reliable per-event slot instead of each having to
+// re-derive it from event order. Fed events in stdout order; state is the last
+// explicit slot seen. It is self-gating: until a "[slotN]" marker appears (as
+// on single-slot protocols) nothing is stamped. Stateful and single-threaded
+// (the stdout reader), so no locking; unit-tested via tests/test_dsd_fme_parse.
+struct DmrSlotCarry {
+    std::string current;   // last explicit slot seen ("1"/"2"); "" until first
+
+    void apply(DsdEvent& ev) {
+        if (ev.slot == "1" || ev.slot == "2") { current = ev.slot; return; }
+        if (current.empty()) return;
+        // Only stamp slot-bearing traffic kinds; leave channel-wide/unknown
+        // lines unslotted.
+        if (ev.kind == "voice" || ev.kind == "call" ||
+            ev.kind == "message" || ev.kind == "burst") {
+            ev.slot = current;
+        }
+    }
+};
+
 struct DsdProcessConfig {
     std::string dsd_fme_path = "dsd-fme";
     // Discriminator audio format we'll write to dsd-fme's stdin.
@@ -158,6 +184,9 @@ private:
     // the UDP reader (which picks the matching stereo channel). 0 = not
     // yet known -> downmix. Atomic because the two reader threads touch it.
     std::atomic<int> active_slot_{0};
+    // Carries dsd-fme's per-burst slot onto its unmarked follow-on lines.
+    // Touched only by the stdout reader thread, so it needs no lock.
+    DmrSlotCarry slot_carry_;
 };
 
 } // namespace dsdsrv
