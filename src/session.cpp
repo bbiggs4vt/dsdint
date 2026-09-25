@@ -149,6 +149,10 @@ void Session::serve_http() {
         res->result(http::status::ok);
         res->set(http::field::content_type, "application/json");
         res->body() = stats_ ? render_status_json(stats_->snapshot()) : std::string("{}");
+    } else if (target == "/log.json") {
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "application/json");
+        res->body() = stats_ ? render_log_json(stats_->log_snapshot()) : std::string("{\"log\":[]}");
     } else {
         res->result(http::status::not_found);
         res->set(http::field::content_type, "text/plain; charset=utf-8");
@@ -773,7 +777,23 @@ void Session::demod_worker_loop() {
     }
 }
 
+namespace {
+// The status-page log captures the JSON frames the server sends clients, but
+// skips the high-rate voice events (the JSON side of "voice data") so they
+// don't flood the bounded buffer. Cheap substring test on the serialized
+// frame -- the field values here are server-controlled, not user text.
+bool is_voice_event_frame(const std::string& msg) {
+    return msg.find("\"type\":\"event\"") != std::string::npos &&
+           msg.find("\"kind\":\"voice\"") != std::string::npos;
+}
+} // namespace
+
 void Session::send_text(const std::string& msg) {
+    // Mirror the outbound JSON into the shared log buffer for the status
+    // page's log tab (voice events excluded; binary voice never comes here).
+    if (stats_ && stats_id_ && !is_voice_event_frame(msg))
+        stats_->add_log(stats_id_, msg);
+
     std::vector<uint8_t> data(msg.begin(), msg.end());
     queue_and_send(std::move(data), /*is_text=*/true);
 }

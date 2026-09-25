@@ -418,11 +418,15 @@ connect time and duration). A session's protocol appears
 once it sends `start`; before that it shows `-`. HTTP status requests are
 **not** counted as sessions.
 
-The HTML page has two tabs: **Sessions** (the live clients above) and
+The HTML page has three tabs: **Sessions** (the live clients above),
 **History** — the most recent finished sessions (newest first, last 50 by
-default) with their connect/end times and total duration. History is kept
-in memory only and resets on restart; the JSON exposes it as a `history`
-array.
+default) with their connect/end times and total duration — and **Log**, a
+live view of the JSON frames the server has sent clients (last 300, newest
+first). Binary voice audio and the high-rate `kind:"voice"` events are
+excluded; everything else (`capabilities`/`started`/`error`/metadata
+events) is shown. History and Log are in-memory only and reset on restart;
+the JSON exposes History as a `history` array and the Log via a separate
+`/log.json` endpoint.
 
 ```bash
 curl http://localhost:22600/status.json

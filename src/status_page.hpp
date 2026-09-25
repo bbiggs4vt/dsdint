@@ -104,6 +104,7 @@ inline std::string render_status_json(const ServerStats::Snapshot& s) {
     o << ",\"current_sessions\":" << s.current_sessions;
     o << ",\"active_pipelines\":" << s.active_pipelines;
     o << ",\"uptime_seconds\":" << static_cast<long>(s.uptime_s);
+    o << ",\"log_lines\":" << s.log_lines;
     o << ",\"started\":\"" << json_escape(format_utc(s.started)) << "\"";
 
     o << ",\"by_protocol\":{";
@@ -149,6 +150,23 @@ inline std::string render_status_json(const ServerStats::Snapshot& s) {
     }
     o << "]";
     o << "}";
+    return o.str();
+}
+
+// The buffered outbound-JSON log, as its own JSON document for /log.json.
+// `text` carries each frame verbatim as a (JSON-escaped) string.
+inline std::string render_log_json(const std::vector<LogEntry>& log) {
+    using namespace status_detail;
+    std::ostringstream o;
+    o << "{\"log\":[";
+    for (std::size_t i = 0; i < log.size(); ++i) {
+        const auto& e = log[i];
+        if (i) o << ",";
+        o << "{\"session\":" << e.session_id
+          << ",\"time\":\"" << json_escape(format_utc(e.ts)) << "\""
+          << ",\"text\":\"" << json_escape(e.text) << "\"}";
+    }
+    o << "]}";
     return o.str();
 }
 
@@ -215,6 +233,10 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
       << "  td.num { text-align: right; font-variant-numeric: tabular-nums; }\n"
       << "  td.mono { font-family: Menlo, Monaco, Consolas, 'Courier New', monospace;\n"
       << "            font-size: 0.85rem; color: var(--text); }\n"
+      << "  td.logmsg { font-family: Menlo, Monaco, Consolas, 'Courier New', monospace;\n"
+      << "              font-size: 0.8rem; color: var(--text); white-space: pre-wrap;\n"
+      << "              word-break: break-all; }\n"
+      << "  td.logtime { white-space: nowrap; color: var(--muted); }\n"
       << "  .dot { display: inline-block; width: 0.55rem; height: 0.55rem; border-radius: 50%;\n"
       << "         margin-right: 0.4rem; vertical-align: baseline; }\n"
       << "  .on { background: var(--success); box-shadow: 0 0 6px rgba(98,196,98,.6); }\n"
@@ -288,6 +310,8 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
       << "<span class=\"count\" id=\"cnt-sessions\">" << s.rows.size() << "</span></button>\n"
       << "  <button class=\"tab\" data-tab=\"tab-history\">History "
       << "<span class=\"count\" id=\"cnt-history\">" << s.history.size() << "</span></button>\n"
+      << "  <button class=\"tab\" data-tab=\"tab-log\">Log "
+      << "<span class=\"count\" id=\"cnt-log\">" << s.log_lines << "</span></button>\n"
       << "</div>\n";
 
     // Live-session panel.
@@ -335,6 +359,13 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
         }
     }
     o << "</tbody>\n</table>\n</div>\n";      // #tab-history
+
+    // Log panel (outbound JSON frames; filled by the poller from /log.json).
+    o << "<div class=\"panel\" id=\"tab-log\" hidden>\n<table>\n<thead><tr>"
+      << "<th>Time (UTC)</th><th>#</th><th>Message</th>"
+      << "</tr></thead>\n<tbody id=\"lrows\">\n"
+      << "<tr><td colspan=\"3\" class=\"empty\">no frames logged yet</td></tr>\n"
+      << "</tbody>\n</table>\n</div>\n";      // #tab-log
     o << "</div>\n";                          // .wrap
 
     // Live poller: fetch the JSON snapshot and patch the DOM in place, so
@@ -345,7 +376,7 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
     o << R"JS(function dur(s){s=Math.max(0,Math.floor(s));var h=(s/3600)|0;s-=h*3600;var m=(s/60)|0;s-=m*60;var o='';if(h)o+=h+'h ';if(h||m)o+=m+'m ';return o+s+'s';}
 function setText(id,v){var e=document.getElementById(id);if(e&&e.textContent!==v)e.textContent=v;}
 function cell(cls,text){var td=document.createElement('td');if(cls)td.className=cls;td.textContent=text;return td;}
-function emptyRow(tb,msg){var tr=document.createElement('tr');var td=cell('empty',msg);td.colSpan=6;tr.appendChild(td);tb.appendChild(tr);}
+function emptyRow(tb,msg,span){var tr=document.createElement('tr');var td=cell('empty',msg);td.colSpan=span||6;tr.appendChild(td);tb.appendChild(tr);}
 function stateCell(active){var st=document.createElement('td');st.className=active?'state-on':'state-off';var dot=document.createElement('span');dot.className='dot '+(active?'on':'off');st.appendChild(dot);st.appendChild(document.createTextNode(active?'decoding':'idle'));return st;}
 function render(d){
   setText('cur',''+d.current_sessions);
@@ -387,12 +418,31 @@ function render(d){
     tr.appendChild(cell('mono',r.ended));
     tr.appendChild(cell('num',dur(r.duration_seconds)));
     htb.appendChild(tr);});
+  if(typeof d.log_lines==='number')setText('cnt-log',''+d.log_lines);
 }
+function renderLog(d){
+  var log=d.log||[];
+  var tb=document.getElementById('lrows');tb.textContent='';
+  if(!log.length){emptyRow(tb,'no frames logged yet',3);return;}
+  log.forEach(function(e){
+    var tr=document.createElement('tr');
+    tr.appendChild(cell('logtime',e.time));
+    tr.appendChild(cell('num',''+e.session));
+    tr.appendChild(cell('logmsg',e.text));
+    tb.appendChild(tr);});
+}
+function fetchLog(){
+  fetch('/log.json',{cache:'no-store'}).then(function(r){return r.json();})
+    .then(renderLog).catch(function(){});
+}
+var activeTab='tab-sessions';
 function showTab(id){
+  activeTab=id;
   var tabs=document.querySelectorAll('.tab');
   for(var i=0;i<tabs.length;i++){var t=tabs[i],on=t.getAttribute('data-tab')===id;
     if(on)t.classList.add('active');else t.classList.remove('active');
     var p=document.getElementById(t.getAttribute('data-tab'));if(p)p.hidden=!on;}
+  if(id==='tab-log')fetchLog();   // fill immediately on switching in
 }
 (function(){var tabs=document.querySelectorAll('.tab');
   for(var i=0;i<tabs.length;i++)tabs[i].addEventListener('click',function(){showTab(this.getAttribute('data-tab'));});
@@ -400,6 +450,7 @@ function showTab(id){
 function tick(){
   fetch('/status.json',{cache:'no-store'}).then(function(r){return r.json();})
     .then(render).catch(function(){})
+    .then(function(){if(activeTab==='tab-log')return fetchLog();})
     .then(function(){setTimeout(tick,POLL);});
 }
 setTimeout(tick,POLL);

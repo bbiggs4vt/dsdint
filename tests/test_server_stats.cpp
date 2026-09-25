@@ -105,6 +105,39 @@ int main() {
               "capped history keeps the most recent, newest-first");
     }
 
+    // ---- log buffer: capture, newest-first, cap, count ----
+    {
+        ServerStats st(50, /*log_limit=*/3);
+        st.add_log(1, "{\"type\":\"started\"}");
+        st.add_log(1, "{\"type\":\"event\",\"kind\":\"call\"}");
+        auto snap = st.log_snapshot();
+        check(snap.size() == 2, "log captures added frames");
+        check(snap[0].text == "{\"type\":\"event\",\"kind\":\"call\"}",
+              "log_snapshot is newest-first");
+        check(snap[0].session_id == 1, "log entry keeps its session id");
+        check(st.snapshot().log_lines == 2, "snapshot reports the log line count");
+
+        // exceed the cap -> oldest dropped
+        st.add_log(2, "a"); st.add_log(2, "b");
+        auto snap2 = st.log_snapshot();
+        check(snap2.size() == 3, "log is bounded to its limit (3)");
+        check(snap2[0].text == "b" && snap2[2].text == "{\"type\":\"event\",\"kind\":\"call\"}",
+              "cap drops the oldest, keeps newest-first order");
+
+        std::string lj = render_log_json(st.log_snapshot());
+        check(contains(lj, "\"log\":["), "log json has a log array");
+        check(contains(lj, "\"session\":2"), "log json carries the session id");
+        // The frame text is embedded as an escaped JSON string.
+        check(contains(lj, "\\\"type\\\":\\\"event\\\""), "log json escapes the frame text");
+    }
+    {
+        // A zero limit disables logging entirely.
+        ServerStats st(50, 0);
+        st.add_log(1, "x");
+        check(st.log_snapshot().empty() && st.snapshot().log_lines == 0,
+              "log_limit 0 disables the log buffer");
+    }
+
     // ---- JSON renderer: shape + escaping ----
     {
         ServerStats st;
@@ -120,6 +153,7 @@ int main() {
         check(contains(j, "\"chain\":\"fm\""), "json session carries chain");
         check(contains(j, "\"active\":true"), "json session active flag is a bare bool");
         check(contains(j, "\"remote\":\"1.2.3.4:5\""), "json session carries remote");
+        check(contains(j, "\"log_lines\":"), "json reports the log line count");
         check(contains(j, "\"history\":[]"), "json has an (empty) history array");
         st.remove_session(id);
         std::string j2 = render_status_json(st.snapshot());
@@ -147,8 +181,9 @@ int main() {
         check(contains(h, "Total sessions"), "html labels total sessions");
         check(contains(h, "&lt;script&gt;:80"), "html escapes the remote address");
         check(!contains(h, "<script>:80"), "raw markup does not leak into html");
-        check(contains(h, "data-tab=\"tab-sessions\"") && contains(h, "data-tab=\"tab-history\""),
-              "html has both Sessions and History tabs");
+        check(contains(h, "data-tab=\"tab-sessions\"") && contains(h, "data-tab=\"tab-history\"") &&
+              contains(h, "data-tab=\"tab-log\""),
+              "html has Sessions, History and Log tabs");
         check(contains(h, "no finished sessions yet"), "empty history shows a placeholder row");
         st.remove_session(id);
         std::string h2 = render_status_html(st.snapshot());

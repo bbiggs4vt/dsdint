@@ -902,6 +902,7 @@ over HTTP and the connection closed:
 |---|---|
 | `GET /`, `GET /status` | `text/html` dashboard; live-polls `/status.json` (~1 s) and patches the DOM in place, with a 5 s `<noscript>` meta-refresh fallback |
 | `GET /status.json` | `application/json` (see below) |
+| `GET /log.json` | `application/json` — the recent outbound JSON frames (see below) |
 | any other path | `404` |
 | non-GET | `405` |
 
@@ -941,6 +942,23 @@ over HTTP and the connection closed:
 - Unlike the WebSocket frames, this JSON is **nested** (a `sessions`
   array, a `by_protocol` object) — it is a separate diagnostic surface,
   not a wire event.
+
+`GET /log.json` returns the recent JSON frames the server has sent clients
+— for the status page's **Log** tab — as a bounded, in-memory ring (last
+300, newest first, reset on restart):
+
+```json
+{ "log": [
+  { "session": 41, "time": "2026-09-25 15:43:10Z",
+    "text": "{\"type\":\"event\",\"kind\":\"call\",\"talkgroup\":\"19535\", ... }" }
+] }
+```
+
+- `text` is each outbound frame verbatim, embedded as a JSON string.
+- Binary voice PCM is never logged, and the high-rate `kind:"voice"`
+  events are skipped so they can't flood the ring; every other frame
+  (`capabilities`, `started`, `error`, and the non-voice `event`s) is kept.
+  `status.json` reports the current line count as `log_lines`.
 
 ## Testing a client against a fake server
 

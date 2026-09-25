@@ -48,14 +48,48 @@ struct FinishedRow {
     double duration_s = 0.0;                             // total connected lifetime
 };
 
+// One buffered outbound JSON frame, for the status page's log tab.
+struct LogEntry {
+    std::uint64_t session_id = 0;
+    std::chrono::system_clock::time_point ts;
+    std::string text;                                    // the JSON frame sent to the client
+};
+
 class ServerStats {
 public:
     // history_limit: how many of the most-recent finished sessions to keep
-    // for the history tab (in memory only; reset on restart).
-    explicit ServerStats(std::size_t history_limit = 50)
+    // for the history tab. log_limit: how many of the most-recent outbound
+    // JSON frames to keep for the log tab. Both are in-memory only and reset
+    // on restart.
+    explicit ServerStats(std::size_t history_limit = 50, std::size_t log_limit = 300)
         : history_limit_(history_limit),
+          log_limit_(log_limit),
           started_wall_(std::chrono::system_clock::now()),
           started_mono_(std::chrono::steady_clock::now()) {}
+
+    // Record one outbound JSON frame (already serialized) for the log tab.
+    // Oversized frames are truncated so one pathological line can't bloat the
+    // ring buffer.
+    void add_log(std::uint64_t session_id, const std::string& text) {
+        if (log_limit_ == 0) return;
+        std::lock_guard<std::mutex> lk(mu_);
+        LogEntry e;
+        e.session_id = session_id;
+        e.ts = std::chrono::system_clock::now();
+        constexpr std::size_t kMaxLine = 2048;
+        e.text = text.size() > kMaxLine ? text.substr(0, kMaxLine) + "\xE2\x80\xA6" : text;
+        log_.push_back(std::move(e));
+        while (log_.size() > log_limit_) log_.pop_front();
+    }
+
+    // The buffered log, newest first.
+    std::vector<LogEntry> log_snapshot() const {
+        std::lock_guard<std::mutex> lk(mu_);
+        std::vector<LogEntry> out;
+        out.reserve(log_.size());
+        for (auto it = log_.rbegin(); it != log_.rend(); ++it) out.push_back(*it);
+        return out;
+    }
 
     // A WebSocket client connected. Returns its stable id; records it in the
     // live table and bumps the cumulative total.
@@ -121,6 +155,7 @@ public:
         std::vector<SessionRow> rows;                 // sorted by id
         std::map<std::string, std::size_t> by_protocol; // active-pipeline count per protocol
         std::vector<FinishedRow> history;             // finished sessions, most recent first
+        std::size_t log_lines = 0;                    // buffered outbound frames (for the tab count)
     };
 
     Snapshot snapshot() const {
@@ -142,6 +177,7 @@ public:
         // History newest-first (history_ keeps oldest at the front).
         s.history.reserve(history_.size());
         for (auto it = history_.rbegin(); it != history_.rend(); ++it) s.history.push_back(*it);
+        s.log_lines = log_.size();
         return s; // sessions_ is a std::map, so rows come out ordered by id
     }
 
@@ -149,7 +185,9 @@ private:
     mutable std::mutex mu_;
     std::map<std::uint64_t, SessionRow> sessions_;
     std::deque<FinishedRow> history_;
+    std::deque<LogEntry> log_;
     std::size_t history_limit_;
+    std::size_t log_limit_;
     std::uint64_t last_id_ = 0;
     std::uint64_t total_sessions_ = 0;
     std::chrono::system_clock::time_point started_wall_;
