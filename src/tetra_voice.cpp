@@ -25,12 +25,16 @@ int b64val(unsigned char c) {
 std::vector<uint8_t> base64_decode(const std::string& in) {
     std::vector<uint8_t> out;
     out.reserve(in.size() * 3 / 4 + 3);
-    int acc = 0, bits = 0;
+    // Only the low `bits` (< 8) + 6 bits of acc are ever read, so keep it
+    // masked to 14 bits: an unmasked int accumulator overflowed (signed
+    // left shift -- undefined behavior, flagged by UBSan) after ~5 chars.
+    unsigned acc = 0;
+    int bits = 0;
     for (unsigned char c : in) {
         if (c == '=' ) break;
         const int v = b64val(c);
         if (v < 0) continue; // skip whitespace/newlines and stray chars
-        acc = (acc << 6) | v;
+        acc = ((acc << 6) | static_cast<unsigned>(v)) & 0x3FFFu;
         bits += 6;
         if (bits >= 8) {
             bits -= 8;

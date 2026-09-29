@@ -198,6 +198,13 @@ void run_protocol_checks() {
     // Hint normalization: underscores/case, like every other hint.
     cl.send_text(R"({"type":"start","protocol":"PAGER_AUTO","sample_rate":48000,"pocsag_mode":"alpha"})");
     check(cl.read(msg, is_text) && msg.find("\"type\":\"started\"") != std::string::npos, "PAGER_AUTO starts");
+    // The multimon-ng child holds none of the server's sockets (stdio aside:
+    // it inherits stderr on purpose). See child_fds.hpp.
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    std::size_t leaked = 0;
+    const auto kids = child_pids();
+    for (int pid : kids) leaked += inherited_socket_count(pid, 3);
+    check(!kids.empty() && leaked == 0, "multimon-ng child holds none of the server's sockets");
     cl.send_text(R"({"type":"set_gain","gain":30000})");       // accepted, no reply
     cl.send_text(R"({"type":"set_freq_offset","hz":1000})");   // applies to the pager demod
     cl.send_text(R"({"type":"stop"})");

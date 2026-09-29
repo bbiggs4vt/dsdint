@@ -5,6 +5,7 @@
 // join-before-close ordering in stop()).
 
 #include "tetra_process.hpp"
+#include "child_fds.hpp"
 
 #include <unistd.h>
 #include <fcntl.h>
@@ -104,6 +105,7 @@ bool TetraProcess::start(const TetraProcessConfig& cfg, EventCallback on_event, 
         close(stdin_pipe[0]); close(stdin_pipe[1]);
         close(exec_pipe[0]); // keep exec_pipe[1]; execvp closes it via CLOEXEC
         close(udp_fd_);      // child sends via its own socket, not our bound one
+        close_inherited_fds(exec_pipe[1]); // incl. other sessions' WebSocket sockets
 
         // The env the sq5bpf fork reads to decide where to send TETMON.
         setenv("TETRA_HACK_IP", "127.0.0.1", 1);

@@ -1,4 +1,5 @@
 #include "dsd_process.hpp"
+#include "child_fds.hpp"
 
 #include <unistd.h>
 #include <fcntl.h>
@@ -193,6 +194,7 @@ bool DsdProcess::start(const DsdProcessConfig& cfg, EventCallback on_event, Audi
         close(stdout_pipe[0]); close(stdout_pipe[1]);
         close(exec_pipe[0]); // keep exec_pipe[1]; execvp closes it via CLOEXEC
         if (udp_fd_ >= 0) close(udp_fd_); // child doesn't need our bound socket
+        close_inherited_fds(exec_pipe[1]); // incl. other sessions' WebSocket sockets
 
         auto argv_strs = build_argv();
         std::vector<char*> argv_c;

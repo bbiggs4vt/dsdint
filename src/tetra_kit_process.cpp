@@ -4,6 +4,7 @@
 // structural difference is dual UDP (bits out, JSON in) instead of stdin.
 
 #include "tetra_kit_process.hpp"
+#include "child_fds.hpp"
 
 #include <unistd.h>
 #include <fcntl.h>
@@ -96,6 +97,13 @@ bool TetraKitProcess::start(const TetraKitProcessConfig& cfg, EventCallback on_e
 
     if (pid == 0) {
         // ---- child ----
+        // tetra-kit's decoder reads UDP, never stdin: give it /dev/null rather
+        // than the server's own stdin (the other backends feed stdin a pipe).
+        int devnull_in = open("/dev/null", O_RDONLY);
+        if (devnull_in >= 0) {
+            dup2(devnull_in, STDIN_FILENO);
+            if (devnull_in > STDERR_FILENO) close(devnull_in);
+        }
         if (!cfg_.inherit_child_log) {
             int devnull = open("/dev/null", O_WRONLY);
             if (devnull >= 0) {
@@ -107,6 +115,7 @@ bool TetraKitProcess::start(const TetraKitProcessConfig& cfg, EventCallback on_e
         close(json_fd_);  // child uses its own sockets, not ours
         close(bits_fd_);
         close(exec_pipe[0]);
+        close_inherited_fds(exec_pipe[1]); // incl. other sessions' WebSocket sockets
 
         auto argv_strs = build_argv();
         std::vector<char*> argv_c;

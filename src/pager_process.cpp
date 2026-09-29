@@ -1,4 +1,5 @@
 #include "pager_process.hpp"
+#include "child_fds.hpp"
 
 #include <cerrno>
 #include <csignal>
@@ -6,7 +7,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
-#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -74,26 +74,6 @@ std::vector<std::string> build_multimon_argv(const MultimonConfig& cfg) {
     return argv;
 }
 
-namespace {
-// Child side, between fork and exec: close every inherited fd above stderr
-// except `keep` (the exec-status pipe, which CLOEXEC closes on success).
-// O_CLOEXEC on our own pipes isn't enough -- Asio's sockets are NOT
-// close-on-exec, so without this every decoder child holds a copy of every
-// WebSocket socket open at the time it was forked, and a session's socket
-// isn't really closed (no FIN reaches the client) until every such child
-// exits. Only async-signal-safe calls here.
-void close_fds_except(int keep) {
-#if defined(SYS_close_range)
-    if (keep > 3) syscall(SYS_close_range, 3u, static_cast<unsigned>(keep - 1), 0u);
-    if (syscall(SYS_close_range, static_cast<unsigned>(keep + 1), ~0u, 0u) == 0) return;
-#endif
-    long max_fd = sysconf(_SC_OPEN_MAX);
-    if (max_fd < 0 || max_fd > 65536) max_fd = 65536;
-    for (int fd = 3; fd < max_fd; ++fd)
-        if (fd != keep) close(fd);
-}
-} // namespace
-
 bool MultimonProcess::start(const MultimonConfig& cfg, LineCallback on_line, ExitCallback on_exit) {
     std::signal(SIGPIPE, SIG_IGN);
     // Resolve the decoder up front: under `stdbuf` a missing multimon-ng would
@@ -135,7 +115,7 @@ bool MultimonProcess::start(const MultimonConfig& cfg, LineCallback on_line, Exi
     if (pid == 0) {
         dup2(in_pipe[0], STDIN_FILENO);
         dup2(out_pipe[1], STDOUT_FILENO);
-        close_fds_except(exec_pipe[1]);
+        close_inherited_fds(exec_pipe[1]); // see child_fds.hpp
         execvp(argv_c[0], argv_c.data());
         int err = errno;
         ssize_t unused = ::write(exec_pipe[1], &err, sizeof(err));

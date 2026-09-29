@@ -329,6 +329,55 @@ void test_tetra_protocol_routes_to_tetra_backend() {
     client.close();
 }
 
+// Decoder children must not inherit the server's sockets (see
+// child_pids/inherited_socket_count in test_ws_client.hpp). Two clients stay
+// connected while each backend kind is spawned, so there are live WebSocket
+// sockets (plus the listener) in this process for a leaky fork to copy.
+void test_decoder_children_inherit_no_sockets() {
+    std::printf("test_decoder_children_inherit_no_sockets\n");
+    TestClient bystander;
+    check(bystander.connect(kTestPort), "bystander client connects");
+
+    struct Mode { const char* protocol; double rate; };
+    const Mode modes[] = {{"dmr", 2'000'000.0}, {"tetra", 72'000.0}, {"tetrakit", 72'000.0}};
+    for (const auto& m : modes) {
+        TestClient client;
+        check(client.connect(kTestPort), std::string("connects for ") + m.protocol);
+        client.send_text(json::Writer().field("type", std::string("start"))
+                             .field("sample_rate", m.rate)
+                             .field("protocol", std::string(m.protocol)).str());
+        std::string resp; bool is_text = false;
+        const bool got = client.read(resp, is_text);
+        check(got && resp.find("\"type\":\"started\"") != std::string::npos,
+              std::string(m.protocol) + ": started");
+
+        // Let the child get past exec (its fd table is final from then on).
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        const auto kids = child_pids();
+        check(!kids.empty(), std::string(m.protocol) + ": a decoder child is running");
+        std::size_t leaked = 0;
+        for (int pid : kids) {
+            const std::size_t n = inherited_socket_count(pid);
+            if (n) {
+                std::string cmd;
+                if (std::FILE* f = std::fopen(("/proc/" + std::to_string(pid) + "/cmdline").c_str(), "r")) {
+                    int c;
+                    while ((c = std::fgetc(f)) != EOF) cmd += c ? static_cast<char>(c) : ' ';
+                    std::fclose(f);
+                }
+                note("child " + std::to_string(pid) + " (" + cmd + ") shares " + std::to_string(n) + " socket(s)");
+            }
+            leaked += n;
+        }
+        check(leaked == 0, std::string(m.protocol) + ": decoder child holds none of the server's sockets (found " +
+                               std::to_string(leaked) + ")");
+
+        client.send_text(json::Writer().field("type", std::string("stop")).str());
+        client.close();
+    }
+    bystander.close();
+}
+
 } // namespace
 
 int main() {
@@ -368,6 +417,7 @@ int main() {
     test_binary_before_start_is_silently_ignored();
     test_audio_pipeline_relays_events_and_audio();
     test_tetra_protocol_routes_to_tetra_backend();
+    test_decoder_children_inherit_no_sockets();
 
     server_ioc.stop();
     for (auto& t : pool) t.join();

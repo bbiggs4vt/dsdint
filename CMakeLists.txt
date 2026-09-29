@@ -217,6 +217,14 @@ set_tests_properties(tetra_kit_json_test PROPERTIES TIMEOUT 60)
 # TetraKitProcess: the tetra-kit subprocess backend (bits out over UDP, JSON
 # in over UDP). Exercised against a fake decoder stub, like the osmo backend.
 add_executable(tetra_kit_fake EXCLUDE_FROM_ALL tests/tetra_kit_fake.cpp)
+# Also expose it under the name TetraKitProcess looks up on PATH ("decoder"),
+# for test_session's runtime-routing / fd-hygiene checks.
+add_custom_command(TARGET tetra_kit_fake POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy
+    $<TARGET_FILE:tetra_kit_fake>
+    $<TARGET_FILE_DIR:tetra_kit_fake>/decoder
+  COMMENT "Copying tetra_kit_fake to decoder (PATH-based lookup expects this exact name)"
+)
 find_package(ZLIB REQUIRED)
 add_executable(test_tetra_kit_process EXCLUDE_FROM_ALL
   src/tetra_kit_process.cpp src/tetra_kit_json.cpp src/tetra_voice.cpp
@@ -495,7 +503,7 @@ target_compile_options(test_session PRIVATE -Wall -Wextra)
 # test-fake-dsd-fme for the DSD path; tetra_fake_rx (copied to "tetra-rx")
 # for the runtime TETRA path. Both land in the same dir, which the test
 # prepends to PATH.
-add_dependencies(test_session test-fake-dsd-fme tetra_fake_rx)
+add_dependencies(test_session test-fake-dsd-fme tetra_fake_rx tetra_kit_fake)
 
 add_test(NAME session_integration_test COMMAND test_session)
 set_tests_properties(session_integration_test PROPERTIES

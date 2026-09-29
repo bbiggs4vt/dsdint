@@ -19,6 +19,9 @@
 #include <boost/asio/ip/tcp.hpp>
 
 #include <atomic>
+#include <dirent.h>
+#include <set>
+#include <unistd.h>
 #include <chrono>
 #include <cmath>
 #include <complex>
@@ -191,6 +194,69 @@ private:
     websocket::stream<beast::tcp_stream> ws_;
     std::string capabilities_; // greeting frame consumed in connect()
 };
+
+// ---- Child-process fd hygiene checks (Linux /proc) ----
+//
+// A decoder child must not hold any of the server's sockets. Asio's sockets
+// are not close-on-exec, so a child forked without closing inherited fds keeps
+// a copy of the listening socket and of every WebSocket connection open at
+// fork time -- those TCP sockets then outlive the sessions that owned them
+// (lingering in CLOSE_WAIT inside the child) until the child exits.
+
+// Direct children of this process (the server under test is in-process, so
+// its decoder subprocesses are our children).
+inline std::vector<int> child_pids() {
+    std::vector<int> out;
+    const int self = static_cast<int>(::getpid());
+    DIR* d = ::opendir("/proc");
+    if (!d) return out;
+    while (dirent* e = ::readdir(d)) {
+        const int pid = std::atoi(e->d_name);
+        if (pid <= 0) continue;
+        std::FILE* f = std::fopen(("/proc/" + std::string(e->d_name) + "/stat").c_str(), "r");
+        if (!f) continue;
+        char buf[512] = {0};
+        const std::size_t n = std::fread(buf, 1, sizeof(buf) - 1, f);
+        std::fclose(f);
+        buf[n] = 0;
+        // Fields after the ")" that closes comm: state ppid ...
+        const char* rp = std::strrchr(buf, ')');
+        char state = 0;
+        int ppid = 0;
+        if (rp && std::sscanf(rp + 1, " %c %d", &state, &ppid) == 2 && ppid == self && state != 'Z')
+            out.push_back(pid);
+    }
+    ::closedir(d);
+    return out;
+}
+
+// "socket:[inode]" targets of a process's open fds numbered >= min_fd.
+inline std::set<std::string> socket_inodes(const std::string& pid, int min_fd = 0) {
+    std::set<std::string> out;
+    const std::string dir = "/proc/" + pid + "/fd";
+    DIR* d = ::opendir(dir.c_str());
+    if (!d) return out;
+    while (dirent* e = ::readdir(d)) {
+        if (e->d_name[0] == '.' || std::atoi(e->d_name) < min_fd) continue;
+        char target[256];
+        const ssize_t n = ::readlink((dir + "/" + e->d_name).c_str(), target, sizeof(target) - 1);
+        if (n <= 0) continue;
+        target[n] = 0;
+        if (std::strncmp(target, "socket:", 7) == 0) out.insert(target);
+    }
+    ::closedir(d);
+    return out;
+}
+
+// Number of sockets `child` shares with this process (i.e. inherited).
+// min_fd = 3 ignores the child's stdio, for a backend that deliberately
+// inherits the server's stderr (multimon-ng's diagnostics).
+inline std::size_t inherited_socket_count(int child, int min_fd = 0) {
+    const auto mine = socket_inodes("self");
+    std::size_t shared = 0;
+    for (const auto& s : socket_inodes(std::to_string(child), min_fd)) shared += mine.count(s);
+    return shared;
+}
 
 // Synthetic FM-modulated IQ block, same construction as
 // test_fm_demod.cpp -- content doesn't matter much here (the fake dsd-fme

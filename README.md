@@ -376,9 +376,12 @@ Two process details matter for multimon-ng:
   FLEX pages would sit in a 4 KiB buffer until the session stopped, so the
   child runs under coreutils `stdbuf -oL`. Set `PAGER_NO_STDBUF=1` to disable
   that.
-- **Inherited sockets.** The child closes every inherited fd before `exec`.
-  Asio's sockets aren't close-on-exec, and without this a decoder would keep
-  other sessions' WebSocket connections alive after they closed.
+- **Inherited sockets.** Every decoder child closes all inherited fds before
+  `exec`. That covers dsd-fme, tetra-rx, tetra-kit and multimon-ng alike (see
+  `src/child_fds.hpp`). Asio's sockets aren't close-on-exec, and without this
+  each decoder kept copies of the listening socket and of other sessions'
+  WebSocket connections alive after they closed. `test_session` checks this
+  for every backend.
 
 **Tests:**
 - `test_pager_demod` checks the demod against synthetic FSK.
