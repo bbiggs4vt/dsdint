@@ -7,7 +7,10 @@
 #include "../src/server_stats.hpp"
 #include "../src/status_page.hpp"
 
+#include <chrono>
 #include <cstdio>
+#include <thread>
+#include <vector>
 #include <string>
 
 using namespace dsdsrv;
@@ -190,6 +193,99 @@ int main() {
         check(contains(h2, "&lt;script&gt;:80") && !contains(h2, "<script>:80"),
               "history table also escapes the remote address");
         check(contains(h2, "Ended (UTC)"), "history table has an Ended column");
+    }
+
+    // ---- run-wide protocol usage (every protocol requested, not just live) ----
+    {
+        ServerStats st;
+        auto a = st.add_session("10.0.0.1:1");
+        auto b = st.add_session("10.0.0.2:2");
+
+        // Session a: dmr, then switches to nxdn48, then pager-auto.
+        st.note_request(a, "dmr", "fm");
+        st.set_protocol(a, "dmr", "fm", true);
+        st.set_pipeline_active(a, false);
+        st.note_request(a, "nxdn48", "fm");
+        st.set_protocol(a, "nxdn48", "fm", true);
+        st.set_pipeline_active(a, false);
+        st.note_request(a, "pager-auto", "pager");
+        st.set_protocol(a, "pager-auto", "pager", true);
+        // Session b: dmr too, plus a tetra request that failed (no start).
+        st.note_request(b, "dmr", "fm");
+        st.set_protocol(b, "dmr", "fm", true);
+        st.note_request(b, "tetra", "tetra");
+        // b restarts dmr on the same connection: a second start, same session.
+        st.set_pipeline_active(b, false);
+        st.note_request(b, "dmr", "fm");
+        st.set_protocol(b, "dmr", "fm", true);
+
+        auto s = st.snapshot();
+        auto find = [&](const std::string& p) -> const ProtocolUsage* {
+            for (const auto& u : s.protocols) if (u.protocol == p) return &u;
+            return nullptr;
+        };
+        check(s.protocols.size() == 4, "protocols lists all 4 requested (dmr, nxdn48, pager-auto, tetra)");
+        const auto* dmr = find("dmr");
+        check(dmr && dmr->requests == 3 && dmr->starts == 3 && dmr->sessions == 2,
+              "dmr: 3 requests, 3 starts, 2 distinct sessions");
+        check(dmr && dmr->active_now == 1, "dmr: 1 pipeline active now");
+        const auto* nx = find("nxdn48");
+        check(nx && nx->requests == 1 && nx->starts == 1 && nx->active_now == 0,
+              "nxdn48 stays listed after its pipeline stopped");
+        const auto* tet = find("tetra");
+        check(tet && tet->requests == 1 && tet->starts == 0 && tet->chain == "tetra",
+              "failed request (tetra) is counted with 0 starts");
+        check(s.protocols.front().protocol == "dmr", "most recently requested protocol is listed first");
+        check(s.rows[0].protocols_used == (std::vector<std::string>{"dmr", "nxdn48", "pager-auto"}),
+              "live session lists every protocol it used, in order");
+        check(s.rows[1].protocols_used == std::vector<std::string>{"dmr"},
+              "restarting the same protocol doesn't duplicate it");
+        check(s.rows[1].protocols_requested == (std::vector<std::string>{"dmr", "tetra"}),
+              "session records what it asked for, failed requests included");
+        check(status_detail::protocol_trail(s.rows[1].protocols_requested, s.rows[1].protocols_used,
+                                            s.rows[1].protocol) == "dmr \xE2\x86\x92 tetra \xE2\x9C\x97",
+              "trail marks a request that never started with a cross");
+
+        // Disconnect a: history keeps the full trail; usage survives.
+        st.remove_session(a);
+        auto s2 = st.snapshot();
+        check(s2.history.size() == 1 && s2.history[0].protocols_used.size() == 3,
+              "history keeps the finished session's full protocol trail");
+        bool pager_listed = false;
+        for (const auto& u : s2.protocols)
+            if (u.protocol == "pager-auto") pager_listed = u.starts == 1 && u.active_now == 0;
+        check(pager_listed, "pager-auto usage survives its session disconnecting");
+
+        std::string j = render_status_json(s2);
+        check(contains(j, "\"protocols\":[{"), "json has a protocols array");
+        check(contains(j, "\"protocol\":\"tetra\",\"chain\":\"tetra\",\"requests\":1,\"starts\":0,\"failed\":1"),
+              "json protocol row carries requests/starts/failed");
+        check(contains(j, "\"protocols_used\":[\"dmr\",\"nxdn48\",\"pager-auto\"]"),
+              "json history row carries protocols_used");
+        std::string h = render_status_html(s2);
+        check(contains(h, "data-tab=\"tab-protocols\""), "html has a Protocols tab");
+        check(contains(h, "dmr \xE2\x86\x92 nxdn48 \xE2\x86\x92 pager-auto"),
+              "html history shows the protocol trail");
+        check(contains(h, "<td>tetra</td><td>tetra</td>"), "html protocols table lists the failed request");
+    }
+    {
+        // Decode time accumulates across start/stop cycles and includes the
+        // running pipeline.
+        ServerStats st;
+        auto a = st.add_session("x");
+        st.note_request(a, "dmr", "fm");
+        st.set_protocol(a, "dmr", "fm", true);
+        std::this_thread::sleep_for(std::chrono::milliseconds(120));
+        st.set_pipeline_active(a, false);
+        st.set_protocol(a, "dmr", "fm", true);
+        std::this_thread::sleep_for(std::chrono::milliseconds(120));
+        auto s = st.snapshot();
+        check(!s.protocols.empty() && s.protocols[0].decode_s >= 0.2 && s.protocols[0].decode_s < 2.0,
+              "decode time sums completed + running pipeline time");
+        st.remove_session(a); // banks the running time
+        auto s2 = st.snapshot();
+        check(s2.protocols[0].decode_s >= 0.2 && s2.protocols[0].active_now == 0,
+              "disconnect banks the running pipeline's time");
     }
 
     // ---- helpers ----

@@ -509,21 +509,33 @@ and a few hundred bytes) and flicker-free in the browser.
 Both show the number of **currently connected** sessions, the
 **cumulative total** since the server started, how many are **actively
 decoding**, a per-protocol breakdown of the active ones, and a table of
-each live client (id, peer address, decode protocol, idle vs decoding,
+each live client (id, peer address, decode protocols, idle vs decoding,
 connect time and duration). A session's protocol appears
 once it sends `start`; before that it shows `-`. HTTP status requests are
 **not** counted as sessions.
 
-The HTML page has three tabs: **Sessions** (the live clients above),
-**History** — the most recent finished sessions (newest first, last 50 by
-default) with their connect/end times and total duration — and **Log**, a
+The HTML page has four tabs:
+- **Sessions:** the live clients above.
+- **Protocols:** a run-wide record of every protocol clients have asked for
+  since the server started, not just what's running now. For each protocol:
+  whether it's active now, requests / started / failed counts, distinct
+  sessions, total decode time, and first/last request time.
+- **History:** the most recent finished sessions (newest first, last 50 by
+  default) with their connect/end times and total duration.
+- **Log:** described below.
+
+In Sessions and History, the protocol column lists every protocol a client
+requested on that connection (e.g. `dmr → nxdn48 ✗ → pager-auto`). ✗ marks a
+request whose pipeline failed to start.
+
+The **Log** tab is a
 live view of the JSON frames the server has sent clients (last 300, newest
 first), with a **Pause** button to freeze the view for inspection. Binary
 voice audio, the high-rate `kind:"voice"` events, and the once-per-connect
 `capabilities` greeting are excluded; everything else
-(`started`/`error`/metadata events) is shown. History and Log are in-memory only and reset on restart;
-the JSON exposes History as a `history` array and the Log via a separate
-`/log.json` endpoint.
+(`started`/`error`/metadata events) is shown. Protocols, History and Log are in-memory only and reset on restart;
+the JSON exposes them as `protocols` and `history` arrays, and the Log via a
+separate `/log.json` endpoint.
 
 ```bash
 curl http://localhost:22600/status.json

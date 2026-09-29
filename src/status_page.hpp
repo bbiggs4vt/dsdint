@@ -13,6 +13,7 @@
 
 #include "server_stats.hpp"
 
+#include <algorithm>
 #include <ctime>
 #include <sstream>
 #include <string>
@@ -94,6 +95,32 @@ inline std::string format_utc(std::chrono::system_clock::time_point tp) {
     return buf;
 }
 
+// JSON array of strings.
+inline std::string json_str_array(const std::vector<std::string>& v) {
+    std::string o = "[";
+    for (std::size_t i = 0; i < v.size(); ++i) {
+        if (i) o += ",";
+        o += "\"" + json_escape(v[i]) + "\"";
+    }
+    return o + "]";
+}
+
+// "dmr → nxdn48 ✗ → pager-auto": every protocol a session asked for, in
+// order, with ✗ on requests whose pipeline never started. Falls back to the
+// current protocol for a session with no recorded requests.
+inline std::string protocol_trail(const std::vector<std::string>& requested,
+                                  const std::vector<std::string>& used, const std::string& current) {
+    const std::vector<std::string>& list = requested.empty() ? used : requested;
+    if (list.empty()) return current.empty() ? "-" : current;
+    std::string o;
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        if (i) o += " \xE2\x86\x92 ";
+        o += list[i];
+        if (std::find(used.begin(), used.end(), list[i]) == used.end()) o += " \xE2\x9C\x97";
+    }
+    return o;
+}
+
 } // namespace status_detail
 
 inline std::string render_status_json(const ServerStats::Snapshot& s) {
@@ -127,6 +154,8 @@ inline std::string render_status_json(const ServerStats::Snapshot& s) {
         o << ",\"remote\":\"" << json_escape(r.remote) << "\"";
         o << ",\"protocol\":\"" << json_escape(r.protocol) << "\"";
         o << ",\"chain\":\"" << json_escape(r.chain) << "\"";
+        o << ",\"protocols_used\":" << json_str_array(r.protocols_used);
+        o << ",\"protocols_requested\":" << json_str_array(r.protocols_requested);
         o << ",\"active\":" << (r.active ? "true" : "false");
         o << ",\"connected\":\"" << json_escape(format_utc(r.connected)) << "\"";
         o << ",\"duration_seconds\":" << static_cast<long>(dur);
@@ -145,7 +174,29 @@ inline std::string render_status_json(const ServerStats::Snapshot& s) {
         o << ",\"chain\":\"" << json_escape(r.chain) << "\"";
         o << ",\"connected\":\"" << json_escape(format_utc(r.connected)) << "\"";
         o << ",\"ended\":\"" << json_escape(format_utc(r.ended)) << "\"";
+        o << ",\"protocols_used\":" << json_str_array(r.protocols_used);
+        o << ",\"protocols_requested\":" << json_str_array(r.protocols_requested);
         o << ",\"duration_seconds\":" << static_cast<long>(r.duration_s);
+        o << "}";
+    }
+    o << "]";
+
+    // Run-wide protocol usage (everything requested since start).
+    o << ",\"protocols\":[";
+    for (std::size_t i = 0; i < s.protocols.size(); ++i) {
+        const auto& u = s.protocols[i];
+        if (i) o << ",";
+        o << "{";
+        o << "\"protocol\":\"" << json_escape(u.protocol) << "\"";
+        o << ",\"chain\":\"" << json_escape(u.chain) << "\"";
+        o << ",\"requests\":" << u.requests;
+        o << ",\"starts\":" << u.starts;
+        o << ",\"failed\":" << (u.requests > u.starts ? u.requests - u.starts : 0);
+        o << ",\"sessions\":" << u.sessions;
+        o << ",\"active\":" << u.active_now;
+        o << ",\"decode_seconds\":" << static_cast<long>(u.decode_s);
+        o << ",\"first_requested\":\"" << (u.requests ? json_escape(format_utc(u.first_requested)) : "") << "\"";
+        o << ",\"last_requested\":\"" << (u.requests ? json_escape(format_utc(u.last_requested)) : "") << "\"";
         o << "}";
     }
     o << "]";
@@ -321,6 +372,8 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
     o << "<div class=\"tabs\">\n"
       << "  <button class=\"tab active\" data-tab=\"tab-sessions\">Sessions "
       << "<span class=\"count\" id=\"cnt-sessions\">" << s.rows.size() << "</span></button>\n"
+      << "  <button class=\"tab\" data-tab=\"tab-protocols\">Protocols "
+      << "<span class=\"count\" id=\"cnt-protocols\">" << s.protocols.size() << "</span></button>\n"
       << "  <button class=\"tab\" data-tab=\"tab-history\">History "
       << "<span class=\"count\" id=\"cnt-history\">" << s.history.size() << "</span></button>\n"
       << "  <button class=\"tab\" data-tab=\"tab-log\">Log "
@@ -329,7 +382,7 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
 
     // Live-session panel.
     o << "<div class=\"panel\" id=\"tab-sessions\">\n<table>\n<thead><tr>"
-      << "<th>#</th><th>Client</th><th>Protocol</th>"
+      << "<th>#</th><th>Client</th><th>Protocols</th>"
       << "<th>State</th><th>Connected (UTC)</th><th class=\"num\">Duration</th>"
       << "</tr></thead>\n<tbody id=\"rows\">\n";
     if (s.rows.empty()) {
@@ -341,7 +394,7 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
             o << "<tr>"
               << "<td class=\"num\">" << r.id << "</td>"
               << "<td class=\"mono\">" << html_escape(r.remote.empty() ? "-" : r.remote) << "</td>"
-              << "<td>" << html_escape(r.protocol) << "</td>"
+              << "<td>" << html_escape(protocol_trail(r.protocols_requested, r.protocols_used, r.protocol)) << "</td>"
               << "<td class=\"" << (r.active ? "state-on" : "state-off") << "\">"
               << "<span class=\"dot " << (r.active ? "on" : "off") << "\"></span>"
               << (r.active ? "decoding" : "idle") << "</td>"
@@ -352,9 +405,39 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
     }
     o << "</tbody>\n</table>\n</div>\n";      // #tab-sessions
 
+    // Run-wide protocols panel: everything requested since the server started.
+    o << "<div class=\"panel\" id=\"tab-protocols\">\n<table>\n<thead><tr>"
+      << "<th>Protocol</th><th>Chain</th><th>Now</th>"
+      << "<th class=\"num\">Requests</th><th class=\"num\">Started</th><th class=\"num\">Failed</th>"
+      << "<th class=\"num\">Sessions</th><th class=\"num\">Decode time</th>"
+      << "<th>First requested (UTC)</th><th>Last requested (UTC)</th>"
+      << "</tr></thead>\n<tbody id=\"prows\">\n";
+    if (s.protocols.empty()) {
+        o << "<tr><td colspan=\"10\" class=\"empty\">no protocols requested yet</td></tr>\n";
+    } else {
+        for (const auto& u : s.protocols) {
+            const bool on = u.active_now > 0;
+            o << "<tr>"
+              << "<td>" << html_escape(u.protocol) << "</td>"
+              << "<td>" << html_escape(u.chain.empty() ? "-" : u.chain) << "</td>"
+              << "<td class=\"" << (on ? "state-on" : "state-off") << "\">"
+              << "<span class=\"dot " << (on ? "on" : "off") << "\"></span>"
+              << (on ? std::to_string(u.active_now) + " decoding" : std::string("idle")) << "</td>"
+              << "<td class=\"num\">" << u.requests << "</td>"
+              << "<td class=\"num\">" << u.starts << "</td>"
+              << "<td class=\"num\">" << (u.requests > u.starts ? u.requests - u.starts : 0) << "</td>"
+              << "<td class=\"num\">" << u.sessions << "</td>"
+              << "<td class=\"num\">" << html_escape(human_duration(u.decode_s)) << "</td>"
+              << "<td class=\"mono\">" << (u.requests ? html_escape(format_utc(u.first_requested)) : "-") << "</td>"
+              << "<td class=\"mono\">" << (u.requests ? html_escape(format_utc(u.last_requested)) : "-") << "</td>"
+              << "</tr>\n";
+        }
+    }
+    o << "</tbody>\n</table>\n</div>\n";      // #tab-protocols
+
     // Session-history panel (finished sessions, newest first).
     o << "<div class=\"panel\" id=\"tab-history\">\n<table>\n<thead><tr>"
-      << "<th>#</th><th>Client</th><th>Protocol</th>"
+      << "<th>#</th><th>Client</th><th>Protocols</th>"
       << "<th>Connected (UTC)</th><th>Ended (UTC)</th><th class=\"num\">Duration</th>"
       << "</tr></thead>\n<tbody id=\"hrows\">\n";
     if (s.history.empty()) {
@@ -364,7 +447,7 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
             o << "<tr>"
               << "<td class=\"num\">" << r.id << "</td>"
               << "<td class=\"mono\">" << html_escape(r.remote.empty() ? "-" : r.remote) << "</td>"
-              << "<td>" << html_escape(r.protocol) << "</td>"
+              << "<td>" << html_escape(protocol_trail(r.protocols_requested, r.protocols_used, r.protocol)) << "</td>"
               << "<td class=\"mono\">" << html_escape(format_utc(r.connected)) << "</td>"
               << "<td class=\"mono\">" << html_escape(format_utc(r.ended)) << "</td>"
               << "<td class=\"num\">" << html_escape(human_duration(r.duration_s)) << "</td>"
@@ -394,6 +477,8 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
 function setText(id,v){var e=document.getElementById(id);if(e&&e.textContent!==v)e.textContent=v;}
 function cell(cls,text){var td=document.createElement('td');if(cls)td.className=cls;td.textContent=text;return td;}
 function emptyRow(tb,msg,span){var tr=document.createElement('tr');var td=cell('empty',msg);td.colSpan=span||6;tr.appendChild(td);tb.appendChild(tr);}
+function trail(req,used,cur){var l=(req&&req.length)?req:(used||[]);if(!l.length)return cur||'-';
+  return l.map(function(p){return (used||[]).indexOf(p)<0?p+' \u2717':p;}).join(' \u2192 ');}
 function stateCell(active){var st=document.createElement('td');st.className=active?'state-on':'state-off';var dot=document.createElement('span');dot.className='dot '+(active?'on':'off');st.appendChild(dot);st.appendChild(document.createTextNode(active?'decoding':'idle'));return st;}
 function render(d){
   setText('cur',''+d.current_sessions);
@@ -417,7 +502,7 @@ function render(d){
     var tr=document.createElement('tr');
     tr.appendChild(cell('num',''+r.id));
     tr.appendChild(cell('mono',r.remote||'-'));
-    tr.appendChild(cell('',r.protocol));
+    tr.appendChild(cell('',trail(r.protocols_requested,r.protocols_used,r.protocol)));
     tr.appendChild(stateCell(r.active));
     tr.appendChild(cell('mono',r.connected));
     tr.appendChild(cell('num',dur(r.duration_seconds)));
@@ -430,11 +515,28 @@ function render(d){
     var tr=document.createElement('tr');
     tr.appendChild(cell('num',''+r.id));
     tr.appendChild(cell('mono',r.remote||'-'));
-    tr.appendChild(cell('',r.protocol));
+    tr.appendChild(cell('',trail(r.protocols_requested,r.protocols_used,r.protocol)));
     tr.appendChild(cell('mono',r.connected));
     tr.appendChild(cell('mono',r.ended));
     tr.appendChild(cell('num',dur(r.duration_seconds)));
     htb.appendChild(tr);});
+  var pr=d.protocols||[];
+  setText('cnt-protocols',''+pr.length);
+  var ptb=document.getElementById('prows');ptb.textContent='';
+  if(!pr.length){emptyRow(ptb,'no protocols requested yet',10);}
+  else pr.forEach(function(u){
+    var tr=document.createElement('tr');
+    tr.appendChild(cell('',u.protocol));
+    tr.appendChild(cell('',u.chain||'-'));
+    var st=stateCell(u.active>0);st.lastChild.textContent=u.active>0?(u.active+' decoding'):'idle';tr.appendChild(st);
+    tr.appendChild(cell('num',''+u.requests));
+    tr.appendChild(cell('num',''+u.starts));
+    tr.appendChild(cell('num',''+u.failed));
+    tr.appendChild(cell('num',''+u.sessions));
+    tr.appendChild(cell('num',dur(u.decode_seconds)));
+    tr.appendChild(cell('mono',u.first_requested||'-'));
+    tr.appendChild(cell('mono',u.last_requested||'-'));
+    ptb.appendChild(tr);});
   if(typeof d.log_lines==='number')setText('cnt-log',''+d.log_lines);
 }
 function renderLog(d){

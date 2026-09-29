@@ -482,6 +482,12 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
 
     const ProtocolHint hint = parse_protocol_hint(protocol);
     const bool want_pager = hint_is_pager(hint);
+    // Record the request for the status page's run-wide protocols view, before
+    // any of the ways a start can fail below (bad key, missing decoder, ...).
+    if (stats_) {
+        stats_->note_request(stats_id_, protocol_hint_label(hint),
+                             hint_is_tetra(hint) ? "tetra" : want_pager ? "pager" : "fm");
+    }
 
     const bool want_tetra = hint_is_tetra(hint);
 

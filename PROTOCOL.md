@@ -1030,12 +1030,22 @@ over HTTP and the connection closed:
   "by_protocol": { "dmr": 1 },
   "sessions": [
     { "id": 41, "remote": "10.0.0.5:52233", "protocol": "dmr", "chain": "fm",
+      "protocols_used": ["nxdn48", "dmr"], "protocols_requested": ["nxdn48", "dmr"],
       "active": true, "connected": "2026-09-22 18:10:41Z", "duration_seconds": 71 }
   ],
   "history": [
     { "id": 40, "remote": "10.0.0.5:52190", "protocol": "nxdn48", "chain": "fm",
       "connected": "2026-09-22 18:05:02Z", "ended": "2026-09-22 18:09:55Z",
+      "protocols_used": ["nxdn48"], "protocols_requested": ["tetra", "nxdn48"],
       "duration_seconds": 293 }
+  ],
+  "protocols": [
+    { "protocol": "dmr", "chain": "fm", "requests": 31, "starts": 31, "failed": 0,
+      "sessions": 28, "active": 1, "decode_seconds": 5120,
+      "first_requested": "2026-09-22 17:13:40Z", "last_requested": "2026-09-22 18:10:41Z" },
+    { "protocol": "tetra", "chain": "tetra", "requests": 1, "starts": 0, "failed": 1,
+      "sessions": 0, "active": 0, "decode_seconds": 0,
+      "first_requested": "2026-09-22 18:05:02Z", "last_requested": "2026-09-22 18:05:02Z" }
   ]
 }
 ```
@@ -1044,13 +1054,31 @@ over HTTP and the connection closed:
   WebSocket connections right now; `active_pipelines` is how many are
   decoding. HTTP status requests are **not** counted as sessions.
 - A session's `protocol`/`chain` are `-`/`""` until it sends `start`;
-  `chain` is `fm` (FM + DSD) or `tetra`. `active` flips to `false` on
-  `stop` while the row keeps its last protocol label.
+  `chain` is `fm` (FM + DSD), `tetra` or `pager`. `active` flips to `false`
+  on `stop` while the row keeps its last protocol label.
+- `protocols_requested` lists every protocol the session asked for (in
+  first-request order); `protocols_used` the ones whose pipeline actually
+  started. A client can switch protocols with a new `start` on the same
+  connection, so both can hold several entries.
 - `history` is the most recent finished sessions (newest first, bounded to
   the server's history limit — 50 by default), each with the `ended`
   wall-clock time and total connected `duration_seconds`. It is in-memory
   only and resets on restart. The HTML page shows it under a **History**
   tab next to **Sessions**.
+- `protocols` is a **run-wide** record of every protocol requested since
+  the server started (most recently requested first), not only the live
+  ones:
+  - `requests` counts `start` messages asking for it, and `starts` counts
+    those whose pipeline came up; `failed` is the difference (e.g. a
+    missing decoder or an invalid key).
+  - `sessions` counts distinct sessions that ran it, and `active` how many
+    are decoding it right now.
+  - `decode_seconds` is total pipeline run time across all sessions,
+    including still-running ones.
+
+  It is unaffected by the history limit (the set of protocol labels is
+  fixed, so it can't grow without bound) and resets on restart. The HTML
+  page shows it under a **Protocols** tab.
 - Unlike the WebSocket frames, this JSON is **nested** (a `sessions`
   array, a `by_protocol` object) — it is a separate diagnostic surface,
   not a wire event.
