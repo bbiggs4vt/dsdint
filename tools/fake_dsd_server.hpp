@@ -494,7 +494,7 @@ private:
                     "\"extra_keys_tetra\":\"mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; "
                     "service; pdu; usage_marker; dl_usage_marker; encr\","
                     "\"extra_keys_pager\":\"protocol; baud; message_type; function; flex_type; levels; "
-                    "phase; cycle; frame; addr_type; group; fragment; info_type\"}");
+                    "phase; cycle; frame; addr_type; group; fragment; info_type; payload\"}");
             }
             read_loop(fd);
             close_client_fd();

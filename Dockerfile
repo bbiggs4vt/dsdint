@@ -130,6 +130,8 @@ COPY tests /opt/dsd-server/tests
 # tools/ carries nxdn_make_sample.cpp, which the NXDN DSDcc test builds to
 # generate its input sample (see CMakeLists). Stdlib-only, no build cost.
 COPY tools /opt/dsd-server/tools
+# Real off-air paging captures (X-Midas BLUE) used by test_session_pager.
+COPY samples /opt/dsd-server/samples
 RUN cmake -S /opt/dsd-server -B /opt/dsd-server/build \
         -DCMAKE_BUILD_TYPE=Release \
         -DDSD_FME_BIN=/usr/local/bin/dsd-fme \

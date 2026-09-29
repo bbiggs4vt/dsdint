@@ -204,7 +204,7 @@ components:
             extra_keys_ysf: "uplink; downlink; call_mode; data_type; src_rid; dst_rid"
             extra_keys_edacs: "lcn; afs; lid; system_id"
             extra_keys_tetra: "mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr"
-            extra_keys_pager: "protocol; baud; message_type; function; flex_type; levels; phase; cycle; frame; addr_type; group; fragment; info_type"
+            extra_keys_pager: "protocol; baud; message_type; function; flex_type; levels; phase; cycle; frame; addr_type; group; fragment; info_type; payload"
         - name: dsdcc-build
           payload:
             type: capabilities
@@ -216,7 +216,7 @@ components:
             extra_keys_dstar: "rpt1; rpt2; radio_text; gps"
             extra_keys_ysf: "uplink; downlink; call_mode; data_type; src_rid; dst_rid"
             extra_keys_tetra: "mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr"
-            extra_keys_pager: "protocol; baud; message_type; function; flex_type; levels; phase; cycle; frame; addr_type; group; fragment; info_type"
+            extra_keys_pager: "protocol; baud; message_type; function; flex_type; levels; phase; cycle; frame; addr_type; group; fragment; info_type; payload"
 
     Started:
       name: started

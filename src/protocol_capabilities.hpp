@@ -169,6 +169,7 @@ inline const std::vector<CapFamily>& cap_families() {
             {"group",        KeyBackend::Pager},
             {"fragment",     KeyBackend::Pager},
             {"info_type",    KeyBackend::Pager},
+            {"payload",      KeyBackend::Pager},
         }},
     };
     return fams;

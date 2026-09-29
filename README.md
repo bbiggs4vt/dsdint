@@ -346,6 +346,10 @@ frame:
 - `emergency` flags a FLEX priority page, and `crc_error` a failed FLEX
   checksum.
 - `extra` carries protocol, baud, message type and the FLEX frame details.
+- Pages whose text looks like ciphertext (encrypted "secure paging") are
+  still emitted, since the capcode is valid, with
+  `payload=encrypted_or_binary` in `extra` so clients don't display them as
+  text.
 - FLEX network broadcasts (date/time/system id) arrive as `kind:"sync"`.
 
 The same `start` message works. `sample_rate`, `channel_bandwidth`,

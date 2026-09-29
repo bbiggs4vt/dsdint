@@ -98,6 +98,43 @@ int main() {
         R"({"baud":1600,"level":2,"phase":"A","cycle":1,"frame":1,"msg_type":"biw_sysid","note":"a;b=c"})", ev));
     CHECK(ev.extra.find("note=a,b,c") != std::string::npos);
 
+    // ---- payload=encrypted_or_binary ----
+    // Real encrypted US POCSAG (samples/s381_..., s487_...): the page itself
+    // is still emitted (capcode is in the clear), flagged in extra.
+    CHECK(multimon_line_to_event(
+        R"({"demod_name":"POCSAG1200","address":1900321,"function":3,"alpha":"p+^L+(0<ETB><SYN>\"<DEL>>~<VT><LF>vC<DLE>3f"})",
+        ev));
+    CHECK(ev.kind == "page" && ev.talkgroup == "1900321");
+    CHECK(ev.extra == "protocol=pocsag; baud=1200; message_type=alpha; function=3; payload=encrypted_or_binary");
+    CHECK(multimon_line_to_event(
+        R"({"demod_name":"POCSAG1200","address":1900067,"function":1,"alpha":"[f<US>dhfd<SI>Xfps<SUB><EM>`a{G <ENQ>Vy<SYN>nv9T<BEL>D<ACK>#;#baA<K-6[!$w}4GF`t<DC4>9<ETX><DC1>=fL"})",
+        ev));
+    CHECK(ev.extra.find("payload=encrypted_or_binary") != std::string::npos);
+    // The same ciphertext rendered as numeric (multimon-ng's auto mode can
+    // emit both renderings of an ambiguous page).
+    CHECK(multimon_line_to_event(
+        R"({"demod_name":"POCSAG1200","address":1900067,"function":1,"numeric":"U53[78 86339[18533 7].9 083 U[328.06- U5 -6[ 15[0443 8673217838 U56U 6U-019]]-7.-1-806.35273884["})",
+        ev));
+    CHECK(ev.extra.find("payload=encrypted_or_binary") != std::string::npos);
+    // Plaintext is never flagged: real pages, symbol-heavy but readable text,
+    // pipe-delimited dispatch formats, and numeric pages with brackets/dots.
+    CHECK(multimon_line_to_event(pocsag, ev) && ev.extra.find("payload") == std::string::npos); // +++TIME=...
+    CHECK(multimon_line_to_event(flex, ev) && ev.extra.find("payload") == std::string::npos);
+    CHECK(!looks_encrypted("ALERT|FIRE|STN 7|UNIT E12 ~ASAP {code 3}", false));
+    CHECK(!looks_encrypted("Line one<LF>line two<CR><LF>line three<HT>end", false));
+    CHECK(!looks_encrypted("[2] 555-1234", true));
+    CHECK(!looks_encrypted("555.123.4567 U", true));
+    CHECK(!looks_encrypted("<SYN><ETB>x", false)); // too short to judge
+    CHECK(looks_encrypted("ab<SOH>cd<STX>ef<ETX>gh", false));
+    // FLEX secure / binary message types are flagged by type.
+    CHECK(multimon_line_to_event(
+        R"({"baud":1600,"level":2,"phase":"A","cycle":1,"frame":2,"capcode":44,"addr_type":"S","is_group":false,"msg_type":"secure","message":"x"})",
+        ev));
+    CHECK(ev.extra.find("payload=encrypted_or_binary") != std::string::npos);
+    // Tone-only pages carry no payload to judge.
+    CHECK(multimon_line_to_event(R"({"demod_name":"POCSAG1200","address":671968,"function":1})", ev));
+    CHECK(ev.extra.find("payload") == std::string::npos);
+
     // Padding trim.
     CHECK(trim_pager_padding("abc<NUL><NUL>") == "abc");
     CHECK(trim_pager_padding("abc <EOT><ETX> ") == "abc");

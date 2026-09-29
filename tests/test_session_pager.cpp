@@ -13,7 +13,7 @@
 // Pages are read BEFORE any stop is sent, so this also proves they stream
 // back live rather than only when the decoder is flushed.
 //
-// Usage: test_session_pager <fixtures dir>
+// Usage: test_session_pager <fixtures dir> [<BLUE samples dir>]
 // Env:   MULTIMON_NG (decoder binary; default "multimon-ng" on PATH)
 //        DSD_TEST_PACE_MS (ms slept per 100 ms IQ block; default 4)
 // Exit 77 (ctest SKIP) when multimon-ng with --json/FLEX_NEXT or the
@@ -178,6 +178,85 @@ void run_case(const std::string& dir, const Case& c) {
         check(got.count(c.expect) == 1, c.file + ": expected page [" + c.expect.first + "] '" + c.expect.second + "'");
 }
 
+// ---- Real off-air captures in X-Midas BLUE format (repo samples/) ----
+// US VHF POCSAG (152.180 / 152.116 MHz), complex float32, attached header.
+// Streamed as-is at their native sample rate.
+bool read_blue_cf(const std::string& path, std::vector<cf32>& iq, double& fs) {
+    std::ifstream f(path, std::ios::binary);
+    std::vector<char> b((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (b.size() < 512 || std::memcmp(b.data(), "BLUE", 4) != 0 || std::memcmp(b.data() + 8, "EEEI", 4) != 0 ||
+        b[52] != 'C' || b[53] != 'F')
+        return false;
+    double data_start, data_size, xdelta;
+    std::memcpy(&data_start, b.data() + 32, 8);
+    std::memcpy(&data_size, b.data() + 40, 8);
+    std::memcpy(&xdelta, b.data() + 264, 8);
+    if (xdelta <= 0 || data_start + data_size > b.size()) return false;
+    fs = 1.0 / xdelta;
+    iq.resize(static_cast<std::size_t>(data_size) / sizeof(cf32));
+    std::memcpy(iq.data(), b.data() + static_cast<std::size_t>(data_start), iq.size() * sizeof(cf32));
+    return true;
+}
+
+struct BlueCase {
+    std::string file;
+    std::string expect_tg; // "" = the capture must produce NO page event
+    bool expect_encrypted;
+};
+
+void run_blue_case(const std::string& dir, const BlueCase& c) {
+    std::printf("--- %s (real off-air BLUE, protocol \"pager-auto\")\n", c.file.c_str());
+    std::vector<cf32> iq;
+    double fs = 0;
+    if (!read_blue_cf(dir + "/" + c.file, iq, fs)) { check(false, c.file + ": readable CF BLUE file"); return; }
+
+    TestClient cl;
+    if (!cl.connect(kTestPort)) { check(false, c.file + ": connect"); return; }
+    cl.send_text(json::Writer().field("type", std::string("start")).field("sample_rate", fs)
+                     .field("protocol", std::string("pager-auto")).str());
+    std::string msg;
+    bool is_text = false;
+    check(cl.read(msg, is_text) && msg.find("\"type\":\"started\"") != std::string::npos, c.file + ": started");
+    const std::size_t blk = static_cast<std::size_t>(fs / 10);
+    for (std::size_t pos = 0; pos < iq.size(); pos += blk) {
+        const std::size_t n = std::min(blk, iq.size() - pos);
+        std::vector<uint8_t> bytes(n * sizeof(cf32));
+        std::memcpy(bytes.data(), iq.data() + pos, bytes.size());
+        cl.send_binary(bytes);
+        std::this_thread::sleep_for(std::chrono::milliseconds(pace_ms()));
+    }
+    // Trailing silence (no carrier) so the decoder sees the transmission end.
+    std::vector<uint8_t> quiet(blk * sizeof(cf32), 0);
+    for (int i = 0; i < 5; ++i) cl.send_binary(quiet);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+    std::vector<std::pair<std::string, std::string>> pages; // talkgroup, extra
+    while (cl.read(msg, is_text, std::chrono::milliseconds(pages.empty() ? 3000 : 1500))) {
+        if (!is_text) continue;
+        auto obj = json::parse_flat_object(msg);
+        if (json::get_string(obj, "type") == "event" && json::get_string(obj, "kind") == "page")
+            pages.emplace_back(json::get_string(obj, "talkgroup"), json::get_string(obj, "extra"));
+    }
+    cl.close();
+
+    if (c.expect_tg.empty()) {
+        check(pages.empty(), c.file + ": produces no page (not a POCSAG transmission / no page in capture), got " +
+                                 std::to_string(pages.size()));
+        return;
+    }
+    bool found = false, flagged = true;
+    for (const auto& [tg, extra] : pages) {
+        if (tg != c.expect_tg) continue;
+        found = true;
+        flagged = flagged && extra.find("payload=encrypted_or_binary") != std::string::npos;
+    }
+    check(found, c.file + ": page to capcode " + c.expect_tg + " decoded from real off-air IQ");
+    if (found)
+        check(flagged == c.expect_encrypted, c.file + std::string(": payload ") +
+                                                 (c.expect_encrypted ? "flagged" : "not flagged") +
+                                                 " as encrypted_or_binary");
+}
+
 void run_protocol_checks() {
     std::printf("--- protocol checks\n");
     TestClient cl;
@@ -269,6 +348,20 @@ int main(int argc, char** argv) {
         {"real_flex1600.raw", "flex", {"FLEX_NEXT"}, {"1523020", "Passage Ambulance Wilhelminabrug Leiden"}},
     };
     for (const auto& c : cases) run_case(dir, c);
+
+    // Real US off-air captures (samples/, argv[2]); skipped if absent.
+    const std::string samples = argc > 2 ? argv[2] : "";
+    if (!samples.empty() && std::ifstream(samples + "/s381_f152.180_POCSAG_20260929_101952.blue")) {
+        const std::vector<BlueCase> blue = {
+            {"s381_f152.180_POCSAG_20260929_101952.blue", "1900321", true},
+            {"s487_f152.180_POCSAG_20260929_102110.blue", "1900067", true},
+            {"s504_f152.180_POCSAG_20260929_102129.blue", "", false}, // idle fill pattern only
+            {"s473_f152.116_POCSAG_20260929_102057.blue", "", false}, // narrow non-POCSAG signal
+        };
+        for (const auto& c : blue) run_blue_case(samples, c);
+    } else {
+        std::printf("--- real BLUE samples not found (argv[2]); skipping those cases\n");
+    }
 
     server_ioc.stop();
     for (auto& t : pool) t.join();

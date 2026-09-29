@@ -24,6 +24,17 @@ void add_token(std::string& extra, const std::string& key, std::string value) {
     extra += key + "=" + value;
 }
 
+// Control-character names multimon-ng renders as "<NAME>" in POCSAG text.
+bool is_control_name(const std::string& n) {
+    static const char* kNames[] = {"NUL", "SOH", "STX", "ETX", "EOT", "ENQ", "ACK", "BEL", "BS",
+                                   "HT",  "LF",  "VT",  "FF",  "CR",  "SO",  "SI",  "DLE", "DC1",
+                                   "DC2", "DC3", "DC4", "NAK", "SYN", "ETB", "CAN", "EM",  "SUB",
+                                   "ESC", "FS",  "GS",  "RS",  "US",  "DEL"};
+    for (const char* k : kNames)
+        if (n == k) return true;
+    return false;
+}
+
 // FLEX_NEXT msg_type (demod_flex_next.c, flex_next_json_emit) -> the coarse
 // message_type shared with POCSAG. The exact FLEX type rides in flex_type.
 const char* flex_message_type(const std::string& mt) {
@@ -52,6 +63,8 @@ void pocsag_event(const Fields& f, const std::string& demod, DsdEvent& ev) {
     add_token(ev.extra, "baud", demod.substr(6)); // "POCSAG1200" -> "1200"
     add_token(ev.extra, "message_type", type);
     add_token(ev.extra, "function", get(f, "function"));
+    if (type != "tone" && looks_encrypted(ev.message, type == "numeric"))
+        add_token(ev.extra, "payload", "encrypted_or_binary");
 }
 
 bool flex_event(const Fields& f, DsdEvent& ev, bool forward_system) {
@@ -77,6 +90,10 @@ bool flex_event(const Fields& f, DsdEvent& ev, bool forward_system) {
         const std::string grp = get(f, "is_group");
         if (!grp.empty()) add_token(ev.extra, "group", grp == "true" ? "1" : "0");
         add_token(ev.extra, "fragment", get(f, "fragment"));
+        const std::string pt(page_type);
+        if (pt == "secure" || pt == "binary" ||
+            ((pt == "alpha" || pt == "numeric") && looks_encrypted(ev.message, pt == "numeric")))
+            add_token(ev.extra, "payload", "encrypted_or_binary");
         return true;
     }
 
@@ -98,6 +115,31 @@ bool flex_event(const Fields& f, DsdEvent& ev, bool forward_system) {
 }
 
 } // namespace
+
+bool looks_encrypted(const std::string& text, bool numeric) {
+    std::size_t n = 0, suspicious = 0;
+    for (std::size_t i = 0; i < text.size();) {
+        if (!numeric && text[i] == '<') {
+            const std::size_t close = text.find('>', i + 1);
+            if (close != std::string::npos && close - i <= 4 && is_control_name(text.substr(i + 1, close - i - 1))) {
+                const std::string name = text.substr(i + 1, close - i - 1);
+                ++n;
+                if (name != "LF" && name != "CR" && name != "HT") ++suspicious;
+                i = close + 1;
+                continue;
+            }
+        }
+        const char c = text[i++];
+        ++n;
+        if (numeric && (c == 'U' || c == '[' || c == ']')) ++suspicious;
+    }
+    // Thresholds and minimum lengths: see the header. Deliberately
+    // conservative -- a false alarm would hide a readable page from a client,
+    // which is worse than letting some short ciphertext through unflagged.
+    if (n < (numeric ? 16u : 8u)) return false;
+    const double frac = static_cast<double>(suspicious) / static_cast<double>(n);
+    return numeric ? frac >= 0.12 : frac >= 0.10;
+}
 
 std::string trim_pager_padding(std::string s) {
     static const char* kPad[] = {"<NUL>", "<EOT>", "<ETX>", "<ETB>"};

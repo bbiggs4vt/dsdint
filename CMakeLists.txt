@@ -701,7 +701,7 @@ add_executable(test_session_pager EXCLUDE_FROM_ALL
 target_include_directories(test_session_pager PRIVATE src tests ${Boost_INCLUDE_DIRS})
 target_link_libraries(test_session_pager PRIVATE Boost::system Threads::Threads ZLIB::ZLIB m)
 target_compile_options(test_session_pager PRIVATE -Wall -Wextra)
-add_test(NAME session_pager_test COMMAND test_session_pager "${PAGER_FIXTURES_DIR}")
+add_test(NAME session_pager_test COMMAND test_session_pager "${PAGER_FIXTURES_DIR}" "${CMAKE_SOURCE_DIR}/samples")
 set_tests_properties(session_pager_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
 if(MULTIMON_NG_BIN)
   set_tests_properties(session_pager_test PROPERTIES ENVIRONMENT "MULTIMON_NG=${MULTIMON_NG_BIN}")

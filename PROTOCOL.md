@@ -329,9 +329,28 @@ Event mapping (`kind:"page"`):
 | `message` | the page text (`""` for a tone-only page). POCSAG fill padding (`<NUL>`, `<EOT>`, …) is trimmed; other control characters stay as multimon-ng renders them (`<LF>`, …). |
 | `emergency` | `"1"` for a FLEX priority message. |
 | `crc_error` | `"1"` when FLEX reports a failed message checksum. |
-| `extra` | `protocol` (`pocsag`/`flex`), `baud`, `message_type` (`alpha`, `numeric`, `tone`, `skyper`, `binary`, `secure`, `instruction`, `short_message`), `function` (POCSAG function bits 0–3); FLEX adds `flex_type` (exact FLEX type, e.g. `special_numeric`), `levels` (2/4), `phase`, `cycle`, `frame`, `addr_type`, `group` (`1` for a group message), `fragment`. |
+| `extra` | `protocol` (`pocsag`/`flex`), `baud`, `message_type` (`alpha`, `numeric`, `tone`, `skyper`, `binary`, `secure`, `instruction`, `short_message`), `function` (POCSAG function bits 0–3); FLEX adds `flex_type` (exact FLEX type, e.g. `special_numeric`), `levels` (2/4), `phase`, `cycle`, `frame`, `addr_type`, `group` (`1` for a group message), `fragment`. Plus `payload=encrypted_or_binary` when the text looks like ciphertext, or for a FLEX secure/binary message (see below). |
 | `raw` | multimon-ng's JSON line, verbatim (it carries everything, including FLEX `group_capcodes`). |
 | others | `""` (`source_id`, `slot`, `color_code`, `ran`, `nac`, `alias`). |
+
+**Encrypted pages.** multimon-ng decodes every payload as text whether or
+not it is one, so an encrypted page (common on US hospital/EMS "secure
+paging") still arrives as a normal `page` event. The capcode, function and
+time are valid, because the address isn't encrypted, but `message` is
+ciphertext rendered as characters. Such events carry
+**`payload=encrypted_or_binary`** in `extra`, so a client can avoid showing
+`message` as text. The detector is a conservative heuristic
+(`looks_encrypted` in `src/pager_events.*`):
+- alpha pages need 8+ characters, at least 10% of them control codes other
+  than LF/CR/HT;
+- numeric pages need 16+ characters, at least 12% of them the BCD symbols
+  `U [ ]`;
+- FLEX `secure`/`binary` messages are flagged by type.
+
+It catches ~90% of short and >99% of long random payloads. It flagged none
+of 49 real plaintext pages, including symbol-heavy and pipe-delimited
+dispatch text. The token is absent when the text looks readable; it is a
+hint, not a guarantee.
 
 FLEX control-channel broadcasts (BIW date/time/system id) arrive as
 **`kind:"sync"`** — network information, like TETRA's `NETINFO1` — with
@@ -373,7 +392,7 @@ a key for is omitted entirely. The client reads the field for whichever
 protocol it's about to request.
 
 ```json
-{"type":"capabilities","protocols":"dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; pager-auto; pocsag; pocsag512; pocsag1200; pocsag2400; flex; auto","audio":"pcm_s16le_8000_mono","event_kinds":"voice; sync; call; message; burst; page; unknown","extra_keys_dmr":"network_type; network_id; site_id; rest_channel; lcn","extra_keys_p25":"rfss; site_id; system_id; wacn; alg_id; key_id","extra_keys_nxdn":"site_code; system_code; location_id; category","extra_keys_dstar":"rpt1; rpt2; radio_text","extra_keys_ysf":"uplink; downlink; call_mode; data_type; src_rid; dst_rid","extra_keys_edacs":"lcn; afs; lid; system_id","extra_keys_tetra":"mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr","extra_keys_pager":"protocol; baud; message_type; function; flex_type; levels; phase; cycle; frame; addr_type; group; fragment; info_type"}
+{"type":"capabilities","protocols":"dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; pager-auto; pocsag; pocsag512; pocsag1200; pocsag2400; flex; auto","audio":"pcm_s16le_8000_mono","event_kinds":"voice; sync; call; message; burst; page; unknown","extra_keys_dmr":"network_type; network_id; site_id; rest_channel; lcn","extra_keys_p25":"rfss; site_id; system_id; wacn; alg_id; key_id","extra_keys_nxdn":"site_code; system_code; location_id; category","extra_keys_dstar":"rpt1; rpt2; radio_text","extra_keys_ysf":"uplink; downlink; call_mode; data_type; src_rid; dst_rid","extra_keys_edacs":"lcn; afs; lid; system_id","extra_keys_tetra":"mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr","extra_keys_pager":"protocol; baud; message_type; function; flex_type; levels; phase; cycle; frame; addr_type; group; fragment; info_type; payload"}
 ```
 
 | field | type | meaning |
