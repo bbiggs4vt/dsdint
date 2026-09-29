@@ -407,19 +407,18 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
 
     // Run-wide protocols panel: everything requested since the server started.
     o << "<div class=\"panel\" id=\"tab-protocols\">\n<table>\n<thead><tr>"
-      << "<th>Protocol</th><th>Chain</th><th>Now</th>"
+      << "<th>Protocol</th><th>Now</th>"
       << "<th class=\"num\">Requests</th><th class=\"num\">Started</th><th class=\"num\">Failed</th>"
       << "<th class=\"num\">Sessions</th><th class=\"num\">Decode time</th>"
       << "<th>First requested (UTC)</th><th>Last requested (UTC)</th>"
       << "</tr></thead>\n<tbody id=\"prows\">\n";
     if (s.protocols.empty()) {
-        o << "<tr><td colspan=\"10\" class=\"empty\">no protocols requested yet</td></tr>\n";
+        o << "<tr><td colspan=\"9\" class=\"empty\">no protocols requested yet</td></tr>\n";
     } else {
         for (const auto& u : s.protocols) {
             const bool on = u.active_now > 0;
             o << "<tr>"
               << "<td>" << html_escape(u.protocol) << "</td>"
-              << "<td>" << html_escape(u.chain.empty() ? "-" : u.chain) << "</td>"
               << "<td class=\"" << (on ? "state-on" : "state-off") << "\">"
               << "<span class=\"dot " << (on ? "on" : "off") << "\"></span>"
               << (on ? std::to_string(u.active_now) + " decoding" : std::string("idle")) << "</td>"
@@ -523,11 +522,10 @@ function render(d){
   var pr=d.protocols||[];
   setText('cnt-protocols',''+pr.length);
   var ptb=document.getElementById('prows');ptb.textContent='';
-  if(!pr.length){emptyRow(ptb,'no protocols requested yet',10);}
+  if(!pr.length){emptyRow(ptb,'no protocols requested yet',9);}
   else pr.forEach(function(u){
     var tr=document.createElement('tr');
     tr.appendChild(cell('',u.protocol));
-    tr.appendChild(cell('',u.chain||'-'));
     var st=stateCell(u.active>0);st.lastChild.textContent=u.active>0?(u.active+' decoding'):'idle';tr.appendChild(st);
     tr.appendChild(cell('num',''+u.requests));
     tr.appendChild(cell('num',''+u.starts));

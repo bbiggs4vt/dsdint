@@ -266,7 +266,8 @@ int main() {
         check(contains(h, "data-tab=\"tab-protocols\""), "html has a Protocols tab");
         check(contains(h, "dmr \xE2\x86\x92 nxdn48 \xE2\x86\x92 pager-auto"),
               "html history shows the protocol trail");
-        check(contains(h, "<td>tetra</td><td>tetra</td>"), "html protocols table lists the failed request");
+        check(contains(h, "<td>tetra</td><td class=\"state-off\">"), "html protocols table lists the failed request");
+        check(!contains(h, "<th>Chain</th>"), "html protocols table has no Chain column");
     }
     {
         // Decode time accumulates across start/stop cycles and includes the
