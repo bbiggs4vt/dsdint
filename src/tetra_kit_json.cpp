@@ -22,6 +22,38 @@ bool contains(const std::string& hay, const char* needle) {
     return hay.find(needle) != std::string::npos;
 }
 
+bool hex4(const std::string& s, std::size_t pos, unsigned& out) {
+    if (pos + 4 > s.size()) return false;
+    out = 0;
+    for (std::size_t k = pos; k < pos + 4; ++k) {
+        const char h = s[k];
+        out <<= 4;
+        if (h >= '0' && h <= '9') out |= static_cast<unsigned>(h - '0');
+        else if (h >= 'a' && h <= 'f') out |= static_cast<unsigned>(h - 'a' + 10);
+        else if (h >= 'A' && h <= 'F') out |= static_cast<unsigned>(h - 'A' + 10);
+        else return false;
+    }
+    return true;
+}
+
+void append_utf8(std::string& out, unsigned cp) {
+    if (cp < 0x80) {
+        out += static_cast<char>(cp);
+    } else if (cp < 0x800) {
+        out += static_cast<char>(0xC0 | (cp >> 6));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        out += static_cast<char>(0xE0 | (cp >> 12));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else {
+        out += static_cast<char>(0xF0 | (cp >> 18));
+        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    }
+}
+
 // Parse a JSON string literal starting at s[i]=='"'; advance i past the
 // closing quote; return the unescaped contents (minimal unescaping).
 std::string parse_string(const std::string& s, std::size_t& i) {
@@ -37,7 +69,27 @@ std::string parse_string(const std::string& s, std::size_t& i) {
                 case '"': out += '"'; break;
                 case '\\': out += '\\'; break;
                 case '/': out += '/'; break;
-                default: out += c; break; // incl. \uXXXX left as-is-ish (rare here)
+                case 'b': out += '\b'; break;
+                case 'f': out += '\f'; break;
+                case 'u': {
+                    // \uXXXX -> UTF-8 (with surrogate pairs). multimon-ng's
+                    // cJSON writer emits these for control characters.
+                    unsigned cp = 0;
+                    if (hex4(s, i + 2, cp)) {
+                        i += 6;
+                        unsigned lo = 0;
+                        if (cp >= 0xD800 && cp <= 0xDBFF && i + 1 < s.size() && s[i] == '\\' &&
+                            s[i + 1] == 'u' && hex4(s, i + 2, lo) && lo >= 0xDC00 && lo <= 0xDFFF) {
+                            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                            i += 6;
+                        }
+                        append_utf8(out, cp);
+                        continue;
+                    }
+                    out += c;
+                    break;
+                }
+                default: out += c; break;
             }
             i += 2;
         } else {

@@ -63,12 +63,23 @@ set(TETRA_RUNTIME_SOURCES
   src/tetra_voice.cpp
 )
 
+# Paging runtime path: session.cpp also selects an FM -> multimon-ng chain at
+# run time for the paging hints (pager-auto / pocsag* / flex), so these ride
+# along with the TETRA sources in every session.cpp binary. pager_events uses
+# the tetra-kit flat-JSON scanner (already in TETRA_RUNTIME_SOURCES).
+set(PAGER_RUNTIME_SOURCES
+  src/pager_demod.cpp
+  src/pager_process.cpp
+  src/pager_events.cpp
+)
+set(RUNTIME_CHAIN_SOURCES ${TETRA_RUNTIME_SOURCES} ${PAGER_RUNTIME_SOURCES})
+
 add_executable(dsd-server
   src/main.cpp
   src/session.cpp
   src/dsd_process.cpp
   src/fm_demod.cpp
-  ${TETRA_RUNTIME_SOURCES}
+  ${RUNTIME_CHAIN_SOURCES}
 )
 target_include_directories(dsd-server PRIVATE src ${Boost_INCLUDE_DIRS})
 target_link_libraries(dsd-server PRIVATE Boost::system Threads::Threads ZLIB::ZLIB m)
@@ -266,7 +277,7 @@ if(DSD_BUILD_DSDCC_VARIANT)
       src/session.cpp
       src/fm_demod.cpp       # DSDcc variant uses the same hand-rolled demod;
       src/dsdcc_decoder.cpp  # this isolates the DSD backend as the one
-      ${TETRA_RUNTIME_SOURCES} # variable changed from the dsd-fme baseline.
+      ${RUNTIME_CHAIN_SOURCES} # variable changed from the dsd-fme baseline.
     )
     target_include_directories(dsd-server-dsdcc PRIVATE src ${Boost_INCLUDE_DIRS} ${DSDCC_INCLUDE_DIR})
     target_link_libraries(dsd-server-dsdcc PRIVATE Boost::system Threads::Threads ${DSDCC_LIBRARY} ZLIB::ZLIB m)
@@ -398,7 +409,7 @@ if(DSD_BUILD_DSDCC_VARIANT)
       src/session.cpp
       src/fm_demod.cpp
       src/dsdcc_decoder.cpp
-      ${TETRA_RUNTIME_SOURCES}
+      ${RUNTIME_CHAIN_SOURCES}
       tests/test_session_dsdcc.cpp
     )
     target_include_directories(test_session_dsdcc PRIVATE src ${Boost_INCLUDE_DIRS} ${DSDCC_INCLUDE_DIR})
@@ -475,7 +486,7 @@ add_executable(test_session EXCLUDE_FROM_ALL
   src/session.cpp
   src/dsd_process.cpp
   src/fm_demod.cpp
-  ${TETRA_RUNTIME_SOURCES}
+  ${RUNTIME_CHAIN_SOURCES}
   tests/test_session.cpp
 )
 target_include_directories(test_session PRIVATE src ${Boost_INCLUDE_DIRS})
@@ -549,7 +560,7 @@ add_executable(test_session_real_fme EXCLUDE_FROM_ALL
   src/session.cpp
   src/dsd_process.cpp
   src/fm_demod.cpp
-  ${TETRA_RUNTIME_SOURCES}
+  ${RUNTIME_CHAIN_SOURCES}
   tests/test_session_real_fme.cpp
 )
 target_include_directories(test_session_real_fme PRIVATE src ${Boost_INCLUDE_DIRS})
@@ -573,7 +584,7 @@ add_executable(test_session_concurrency EXCLUDE_FROM_ALL
   src/session.cpp
   src/dsd_process.cpp
   src/fm_demod.cpp
-  ${TETRA_RUNTIME_SOURCES}
+  ${RUNTIME_CHAIN_SOURCES}
   tests/test_session_concurrency.cpp
 )
 target_include_directories(test_session_concurrency PRIVATE src ${Boost_INCLUDE_DIRS})
@@ -639,7 +650,7 @@ if(DSD_BUILD_TSAN_TESTS)
     src/session.cpp
     src/dsd_process.cpp
     src/fm_demod.cpp
-    ${TETRA_RUNTIME_SOURCES}
+    ${RUNTIME_CHAIN_SOURCES}
     tests/test_session_concurrency.cpp
   )
   target_include_directories(test_session_concurrency_tsan PRIVATE src ${Boost_INCLUDE_DIRS})
@@ -648,6 +659,44 @@ if(DSD_BUILD_TSAN_TESTS)
     -Wall -Wextra -fsanitize=thread -fno-omit-frame-pointer -g -O1)
   target_link_options(test_session_concurrency_tsan PRIVATE -fsanitize=thread)
   add_dependencies(test_session_concurrency_tsan test-fake-dsd-fme)
+endif()
+
+# --- Paging chain (pager-auto / pocsag* / flex -> multimon-ng) ---
+# Unit tests for the paging demod and the multimon-ng JSON -> DsdEvent
+# mapping (no decoder needed), plus a full-stack session test against the
+# real multimon-ng. The full-stack test needs a multimon-ng with --json and
+# FLEX_NEXT (newer than the 1.3.0 distro package -- see README "Paging") and
+# the audio fixtures from tools/make_pager_fixtures.sh; it reports SKIPPED
+# (exit 77) when either is missing.
+add_executable(test_pager_demod EXCLUDE_FROM_ALL src/pager_demod.cpp tests/test_pager_demod.cpp)
+target_include_directories(test_pager_demod PRIVATE src)
+target_compile_options(test_pager_demod PRIVATE -Wall -Wextra)
+add_test(NAME pager_demod_test COMMAND test_pager_demod)
+
+add_executable(test_pager_events EXCLUDE_FROM_ALL
+  src/pager_events.cpp src/tetra_kit_json.cpp tests/test_pager_events.cpp)
+target_include_directories(test_pager_events PRIVATE src)
+target_compile_options(test_pager_events PRIVATE -Wall -Wextra)
+add_test(NAME pager_events_test COMMAND test_pager_events)
+
+set(MULTIMON_NG_BIN "" CACHE FILEPATH
+    "multimon-ng binary for the paging session test (default: multimon-ng on PATH)")
+set(PAGER_FIXTURES_DIR "${CMAKE_BINARY_DIR}/pager_fixtures" CACHE PATH
+    "Audio fixtures from tools/make_pager_fixtures.sh")
+add_executable(test_session_pager EXCLUDE_FROM_ALL
+  src/session.cpp
+  src/dsd_process.cpp
+  src/fm_demod.cpp
+  ${RUNTIME_CHAIN_SOURCES}
+  tests/test_session_pager.cpp
+)
+target_include_directories(test_session_pager PRIVATE src tests ${Boost_INCLUDE_DIRS})
+target_link_libraries(test_session_pager PRIVATE Boost::system Threads::Threads ZLIB::ZLIB m)
+target_compile_options(test_session_pager PRIVATE -Wall -Wextra)
+add_test(NAME session_pager_test COMMAND test_session_pager "${PAGER_FIXTURES_DIR}")
+set_tests_properties(session_pager_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+if(MULTIMON_NG_BIN)
+  set_tests_properties(session_pager_test PROPERTIES ENVIRONMENT "MULTIMON_NG=${MULTIMON_NG_BIN}")
 endif()
 
 # Registered last so the variant blocks above could optionally hand the

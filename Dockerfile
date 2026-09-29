@@ -16,8 +16,13 @@
 # image ships NO ACELP codec (patent-encumbered / GPLv3 — see TETRA_VOICE.md),
 # so they emit events only, not decoded audio.
 #
+# Paging is likewise a runtime hint, not a separate executable: "pager-auto",
+# "pocsag*" or "flex" runs an FM -> multimon-ng chain (the bundled multimon-ng,
+# built from upstream source because Debian's 1.3.0 package lacks the --json
+# output and FLEX_NEXT decoder the server needs).
+#
 # The DSP dependencies that Debian doesn't package — mbelib, DSDcc, dsd-fme,
-# osmo tetra-rx, and tetra-kit — are built from source, pinned to exact commits
+# osmo tetra-rx, tetra-kit and multimon-ng — are built from source, pinned to exact commits
 # (the DSD ones to the commits this project's backends were verified against —
 # see the notes in src/dsd_process.cpp and src/dsdcc_decoder.cpp; bump those
 # pins only in step with re-running the real-binary tests).
@@ -105,6 +110,18 @@ RUN git clone https://gitlab.com/larryth/tetra-kit /opt/src/tetra-kit \
     && make -C /opt/src/tetra-kit/decoder \
     && install -m 0755 /opt/src/tetra-kit/decoder/decoder /usr/local/bin/decoder
 
+# multimon-ng — the paging decoder (POCSAG 512/1200/2400 + FLEX_NEXT), spawned
+# per paging session with --json. Built headless (no X11 / PulseAudio / SDL
+# scope) so the binary needs nothing beyond libc/libm at run time. Its
+# gen-ng and bundled off-air POCSAG/FLEX samples feed the test stage.
+ARG MULTIMON_NG_COMMIT=0722194b7739748e49f18ac1fc76f236d4ca390d
+RUN git clone https://github.com/EliasOenal/multimon-ng /opt/src/multimon-ng \
+    && git -C /opt/src/multimon-ng checkout ${MULTIMON_NG_COMMIT} \
+    && cmake -S /opt/src/multimon-ng -B /opt/src/multimon-ng/build -DCMAKE_BUILD_TYPE=Release \
+        -DX11_SUPPORT=OFF -DPULSE_AUDIO_SUPPORT=OFF -DSDL3_SCOPE=OFF \
+    && cmake --build /opt/src/multimon-ng/build -j"$(nproc)" \
+    && install -m 0755 /opt/src/multimon-ng/build/multimon-ng /usr/local/bin/multimon-ng
+
 # The project itself. (.dockerignore keeps host build/ and .git out of
 # the context, so this is source-only.)
 COPY CMakeLists.txt /opt/dsd-server/
@@ -117,6 +134,8 @@ RUN cmake -S /opt/dsd-server -B /opt/dsd-server/build \
         -DCMAKE_BUILD_TYPE=Release \
         -DDSD_FME_BIN=/usr/local/bin/dsd-fme \
         -DDSDCC_SAMPLES_DIR=/opt/src/dsdcc/samples \
+        -DMULTIMON_NG_BIN=/usr/local/bin/multimon-ng \
+        -DPAGER_FIXTURES_DIR=/opt/dsd-server/build/pager_fixtures \
     && cmake --build /opt/dsd-server/build -j"$(nproc)" --target \
         dsd-server dsd-server-dsdcc
 
@@ -141,6 +160,10 @@ RUN cmake -S /opt/dsd-server -B /opt/dsd-server/build \
 # (60 ms/block is ~1.4x realtime; the QEMU-emulated ARM64 runs use 100.)
 FROM build AS test
 ARG DSD_TEST_PACE_MS=10
+# sox converts multimon-ng's bundled FLAC captures into the paging fixtures.
+RUN apt-get update && apt-get install -y --no-install-recommends sox \
+    && rm -rf /var/lib/apt/lists/* \
+    && /opt/dsd-server/tools/make_pager_fixtures.sh /opt/src/multimon-ng /opt/dsd-server/build/pager_fixtures
 RUN cmake --build /opt/dsd-server/build -j"$(nproc)" --target \
         test-fake-dsd-fme test_session test_session_concurrency \
         test_dsdcc_decoder test_session_dsdcc test_nxdn_dsdcc test_dpmr_dsdcc \
@@ -155,6 +178,7 @@ RUN cmake --build /opt/dsd-server/build -j"$(nproc)" --target \
         test_tetra_voice \
         test_fm_demod test_matched_filter test_dmr_slot_aggregator test_afc \
         test_server_stats \
+        test_pager_demod test_pager_events test_session_pager \
     && cd /opt/dsd-server/build \
     && DSD_TEST_PACE_MS=${DSD_TEST_PACE_MS} ctest --output-on-failure
 
@@ -188,6 +212,9 @@ COPY --from=build /usr/local/bin/dsd-fme /usr/local/bin/
 COPY --from=build /usr/lib/x86_64-linux-gnu/libosmocore.so.* /usr/lib/x86_64-linux-gnu/
 COPY --from=build /usr/local/bin/tetra-rx /usr/local/bin/
 COPY --from=build /usr/local/bin/decoder /usr/local/bin/
+# Paging decoder (headless build: libc/libm only). The server runs it under
+# coreutils' stdbuf (in the base image) to line-buffer its JSON output.
+COPY --from=build /usr/local/bin/multimon-ng /usr/local/bin/
 COPY --from=build /opt/dsd-server/build/dsd-server /usr/local/bin/
 COPY --from=build /opt/dsd-server/build/dsd-server-dsdcc /usr/local/bin/
 RUN ldconfig

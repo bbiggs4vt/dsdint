@@ -79,6 +79,8 @@
 #include "dsd_backend_selector.hpp"
 #include "tetra_frontend.hpp"
 #include "tetra_backend_iface.hpp"
+#include "pager_demod.hpp"
+#include "pager_process.hpp"
 #include "server_stats.hpp"
 
 namespace dsdsrv {
@@ -116,7 +118,8 @@ private:
     void start_pipeline(double sample_rate, double channel_bw, double freq_offset, float gain, bool afc,
                         const std::string& protocol = "",
                         const std::string& key_type = "", const std::string& key = "",
-                        bool matched_filter = false);
+                        bool matched_filter = false,
+                        const std::string& pocsag_mode = "", bool invert = false);
     void stop_pipeline();
 
     // Thread-safe send of a text/binary frame; queues if a write is
@@ -151,7 +154,7 @@ private:
     // reset in stop_pipeline. Only touched on the strand thread except the
     // worker, which reads it after worker_running_ is set (so it is stable for
     // the worker's lifetime); the atomic keeps that publication well-defined.
-    enum class Chain { Fm, Tetra };
+    enum class Chain { Fm, Tetra, Pager };
     std::atomic<Chain> chain_{Chain::Fm};
 
     // Both front ends are members; start_pipeline instantiates exactly one per
@@ -179,6 +182,14 @@ private:
     // The runtime-selected TETRA backend, non-null only while a TETRA session
     // is active (created in start_pipeline via make_tetra_backend).
     std::unique_ptr<ITetraBackend> tetra_backend_;
+    // Paging chain (protocol pager-auto / pocsag* / flex): its own FM demod
+    // (22050 Hz output for multimon-ng) + a multimon-ng subprocess. Null
+    // unless a paging session is active. pager_demod_ is guarded by
+    // demod_mutex_ like the other demods.
+    std::unique_ptr<PagerFmDemodulator> pager_demod_;
+    std::unique_ptr<MultimonProcess> pager_proc_;
+    // "pager decoder exited" is reported once per pipeline.
+    std::atomic<bool> pager_failed_{false};
     uint16_t udp_audio_port_ = 0; // only meaningful for the DsdProcess (subprocess) backend; 0 under TETRA/DSDcc
 
     // Producer (network thread via on_binary) / consumer (worker thread)

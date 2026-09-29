@@ -30,7 +30,9 @@ namespace dsdsrv {
 // Which backend a given `extra` key comes from. `Both` = either DSD
 // backend; `Tetra` = the TETRA chain (a separate subprocess path present
 // in both builds), so it's always available regardless of the DSD choice.
-enum class KeyBackend { Fme, Dsdcc, Both, Tetra };
+// `Pager` = the paging chain (FM -> multimon-ng subprocess), likewise present
+// in every build.
+enum class KeyBackend { Fme, Dsdcc, Both, Tetra, Pager };
 
 #if defined(DSD_USE_DSDCC_BACKEND)
 inline constexpr KeyBackend kActiveDsdBackend = KeyBackend::Dsdcc;
@@ -41,7 +43,8 @@ inline constexpr KeyBackend kActiveDsdBackend = KeyBackend::Fme;
 inline bool cap_key_active(KeyBackend b) {
     // Both/Tetra are always live; a backend-specific key only when this is
     // the compiled DSD backend.
-    return b == KeyBackend::Both || b == KeyBackend::Tetra || b == kActiveDsdBackend;
+    return b == KeyBackend::Both || b == KeyBackend::Tetra || b == KeyBackend::Pager ||
+           b == kActiveDsdBackend;
 }
 
 struct CapKey { const char* key; KeyBackend backend; };
@@ -72,6 +75,12 @@ inline const std::vector<CapKey>& cap_protocols() {
         {"x2tdma",        KeyBackend::Fme},
         {"tetra",         KeyBackend::Tetra},
         {"tetrakit",      KeyBackend::Tetra},
+        {"pager-auto",    KeyBackend::Pager},
+        {"pocsag",        KeyBackend::Pager},
+        {"pocsag512",     KeyBackend::Pager},
+        {"pocsag1200",    KeyBackend::Pager},
+        {"pocsag2400",    KeyBackend::Pager},
+        {"flex",          KeyBackend::Pager},
         {"auto",          KeyBackend::Both},
     };
     return protos;
@@ -144,6 +153,23 @@ inline const std::vector<CapFamily>& cap_families() {
             {"dl_usage_marker",  KeyBackend::Tetra},
             {"encr",             KeyBackend::Tetra},
         }},
+        // Paging (kind "page"; FLEX system info rides kind "sync" with
+        // info_type plus the BIW's own fields, e.g. year/month/day).
+        {"extra_keys_pager", {
+            {"protocol",     KeyBackend::Pager},
+            {"baud",         KeyBackend::Pager},
+            {"message_type", KeyBackend::Pager},
+            {"function",     KeyBackend::Pager},
+            {"flex_type",    KeyBackend::Pager},
+            {"levels",       KeyBackend::Pager},
+            {"phase",        KeyBackend::Pager},
+            {"cycle",        KeyBackend::Pager},
+            {"frame",        KeyBackend::Pager},
+            {"addr_type",    KeyBackend::Pager},
+            {"group",        KeyBackend::Pager},
+            {"fragment",     KeyBackend::Pager},
+            {"info_type",    KeyBackend::Pager},
+        }},
     };
     return fams;
 }
@@ -174,7 +200,7 @@ inline std::string build_capabilities_json() {
     w.field("protocols", protos);
     // Audio shape is now uniform across backends (see PROTOCOL.md).
     w.field("audio", std::string("pcm_s16le_8000_mono"));
-    w.field("event_kinds", std::string("voice; sync; call; message; burst; unknown"));
+    w.field("event_kinds", std::string("voice; sync; call; message; burst; page; unknown"));
     for (const auto& fam : cap_families()) {
         std::string keys = cap_join_family(fam);
         if (!keys.empty()) w.field(fam.field, keys);

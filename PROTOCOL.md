@@ -36,7 +36,7 @@ back to the defaults shown (see `handle_text_message` in `session.cpp`).
 
 | type | fields | effect |
 |---|---|---|
-| `start` | `sample_rate` (default 2000000), `channel_bandwidth` (12500), `freq_offset` (0), `gain` (26000), `afc` (false), `matched_filter` (false), `protocol` (""), `key_type` (""), `key` ("") | Builds the demod + DSD pipeline. If a pipeline is already running it is stopped and rebuilt (clean restart). Replies with `started` on success, `error` on failure. |
+| `start` | `sample_rate` (default 2000000), `channel_bandwidth` (12500), `freq_offset` (0), `gain` (26000), `afc` (false), `matched_filter` (false), `protocol` (""), `key_type` (""), `key` (""), `pocsag_mode` (""), `invert` (false) | Builds the demod + decoder pipeline. If a pipeline is already running it is stopped and rebuilt (clean restart). Replies with `started` on success, `error` on failure. |
 | `set_gain` | `gain` (26000) | Live-adjusts discriminator gain. No reply. Ignored (silently) if no pipeline is running. |
 | `set_freq_offset` | `hz` (0) | Live-adjusts the NCO shift. No reply. Ignored if no pipeline is running. Also resets any accumulated AFC correction (an explicit retune is a statement of new truth). |
 | `stop` | — | Tears down the pipeline (kills the dsd-fme child / destroys the decoder). No reply. The WebSocket stays open; a new `start` is accepted afterwards. |
@@ -73,11 +73,21 @@ case-insensitive, and spaces/underscores/hyphens are ignored:
 | `auto` / `unknown` / `not sure` / anything else | auto-detect | FM + DSD | `-fa` | auto |
 | `tetra` (or `osmo_tetra`) | **TETRA** via osmo `tetra-rx` | π/4-DQPSK + TETRA | — | — |
 | `tetrakit` | **TETRA** via tetra-kit `decoder` | π/4-DQPSK + TETRA | — | — |
+| `pager-auto` (or `pager_auto`, `pager`, `paging`) | **Paging**: POCSAG 512/1200/2400 + FLEX at once | FM + multimon-ng | — | — |
+| `pocsag` | POCSAG, all three rates | FM + multimon-ng | — | — |
+| `pocsag512` / `pocsag1200` / `pocsag2400` | POCSAG at one rate | FM + multimon-ng | — | — |
+| `flex` | FLEX (1600/3200/6400 bps, 2/4-level) | FM + multimon-ng | — | — |
 
 `tetra` / `tetrakit` are not FM modes: they replace the FM discriminator with
 the π/4-DQPSK modem and the DSD backend with a TETRA subprocess decoder, so
 the dsd-fme/DSDcc columns don't apply (`—`). Their IQ-rate and `event`-field
 differences are detailed in the [TETRA section](#tetra-protocoltetra--protocoltetrakit).
+
+The paging hints likewise run their own chain (an FM discriminator tuned for
+multimon-ng + a multimon-ng subprocess) and emit `kind:"page"` events; see the
+[Paging section](#paging-protocolpager-auto--pocsag--flex). Note plain `auto`
+remains the **DSD** auto-detect — paging is selected only by these explicit
+hints.
 
 `provoice` / `edacs*` / `x2tdma` are **dsd-fme-backend only** — DSDcc has no
 decoder for them, so on the `dsd-server-dsdcc` build they fall back to
@@ -279,6 +289,65 @@ traffic carrier present. The gap is therefore **not a capture-availability
 problem but an encrypted-network one**: it needs a TETRA network that runs its
 control plane in the clear (`Air encryption: 0`).
 
+### Paging (`protocol":"pager-auto"` / `pocsag*` / `flex`)
+
+Paging is a data service, not voice: the session decodes pager messages and
+emits them as ordinary `event` frames with **`kind:"page"`** — same flat shape,
+same thirteen fields — so a client handles pages alongside every voice
+protocol. The chain is an FM discriminator (sibling of the DSD one, but
+producing the 22050 Hz audio multimon-ng expects) feeding a per-session
+[multimon-ng](https://github.com/EliasOenal/multimon-ng) subprocess run with
+`--json`. `multimon-ng` must be on the server's `PATH` (or named by
+`$MULTIMON_NG`) and must be newer than the 1.3.0 distro package (it needs
+`--json` and the `FLEX_NEXT` decoder; the Docker image builds it from source).
+
+- **IQ:** same binary IQ as every other mode (interleaved LE `float32` at
+  `sample_rate`). Any rate from ~16 kHz up works; the default 2 MS/s is fine.
+- **`start` fields that apply:** `sample_rate`, `channel_bandwidth` (12500
+  suits 12.5 kHz paging channels; use ~25000 for wide ones), `freq_offset`,
+  `afc`, plus two paging-only fields:
+  - `pocsag_mode` (`""`/`auto` default, `alpha`, `numeric`, `skyper`): how
+    POCSAG message text is interpreted. In `auto`, multimon-ng guesses from
+    content, and an ambiguous message **may produce more than one `page`
+    event** (one per plausible rendering, differing in
+    `extra` `message_type`). Force a mode if you know your network.
+  - `invert` (default `false`): negate the discriminator, for spectrally
+    inverted (I/Q-swapped) IQ. FLEX detects polarity itself; POCSAG doesn't.
+- **Ignored `start` fields:** `gain` (the paging demod scales PCM by
+  deviation in Hz, so the level is right at any IQ rate; the DSD `gain` is a
+  dsd-fme-specific factor), `matched_filter`, `key_type`, `key`. `set_gain`
+  is an accepted no-op; `set_freq_offset` retunes as usual.
+- **`started`:** `udp_audio_port` is `0`. No audio is ever emitted.
+- **`stop`:** multimon-ng is sent EOF first, so a page it was still
+  assembling is flushed and sent before the pipeline goes away.
+
+Event mapping (`kind:"page"`):
+
+| field | value |
+|---|---|
+| `talkgroup` | the pager address — POCSAG RIC / FLEX **capcode** (decimal). `""` for a POCSAG message whose address codeword was lost. |
+| `message` | the page text (`""` for a tone-only page). POCSAG fill padding (`<NUL>`, `<EOT>`, …) is trimmed; other control characters stay as multimon-ng renders them (`<LF>`, …). |
+| `emergency` | `"1"` for a FLEX priority message. |
+| `crc_error` | `"1"` when FLEX reports a failed message checksum. |
+| `extra` | `protocol` (`pocsag`/`flex`), `baud`, `message_type` (`alpha`, `numeric`, `tone`, `skyper`, `binary`, `secure`, `instruction`, `short_message`), `function` (POCSAG function bits 0–3); FLEX adds `flex_type` (exact FLEX type, e.g. `special_numeric`), `levels` (2/4), `phase`, `cycle`, `frame`, `addr_type`, `group` (`1` for a group message), `fragment`. |
+| `raw` | multimon-ng's JSON line, verbatim (it carries everything, including FLEX `group_capcodes`). |
+| others | `""` (`source_id`, `slot`, `color_code`, `ran`, `nac`, `alias`). |
+
+FLEX control-channel broadcasts (BIW date/time/system id) arrive as
+**`kind:"sync"`** — network information, like TETRA's `NETINFO1` — with
+`extra` `protocol=flex; baud=…; info_type=biw_date|biw_time|biw_sysid|…` plus
+that broadcast's own fields (e.g. `year`, `month`, `day`). FLEX per-frame BCH
+statistics are not forwarded.
+
+**Status:** end-to-end tested (`tests/test_session_pager.cpp`) against the
+real multimon-ng: gen-ng synthetic POCSAG 512/1200/2400 and 1600 bps FLEX
+pages, and multimon-ng's bundled **off-air** recordings — POCSAG at all three
+rates and a 51 s capture of the Dutch P2000 FLEX network (46/46 pages) — each
+FM-modulated into IQ and streamed through the server, which must return every
+page a direct multimon-ng decode of the same audio finds. Not yet verified: a
+live SDR as the source, and 3200/6400 bps 4-level FLEX (no capture or
+generator available).
+
 ---
 
 ## Server → Client
@@ -304,7 +373,7 @@ a key for is omitted entirely. The client reads the field for whichever
 protocol it's about to request.
 
 ```json
-{"type":"capabilities","protocols":"dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; auto","audio":"pcm_s16le_8000_mono","event_kinds":"voice; sync; call; message; burst; unknown","extra_keys_dmr":"network_type; network_id; site_id; rest_channel; lcn","extra_keys_p25":"rfss; site_id; system_id; wacn; alg_id; key_id","extra_keys_nxdn":"site_code; system_code; location_id; category","extra_keys_dstar":"rpt1; rpt2; radio_text","extra_keys_ysf":"uplink; downlink; call_mode; data_type; src_rid; dst_rid","extra_keys_edacs":"lcn; afs; lid; system_id","extra_keys_tetra":"mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr"}
+{"type":"capabilities","protocols":"dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; pager-auto; pocsag; pocsag512; pocsag1200; pocsag2400; flex; auto","audio":"pcm_s16le_8000_mono","event_kinds":"voice; sync; call; message; burst; page; unknown","extra_keys_dmr":"network_type; network_id; site_id; rest_channel; lcn","extra_keys_p25":"rfss; site_id; system_id; wacn; alg_id; key_id","extra_keys_nxdn":"site_code; system_code; location_id; category","extra_keys_dstar":"rpt1; rpt2; radio_text","extra_keys_ysf":"uplink; downlink; call_mode; data_type; src_rid; dst_rid","extra_keys_edacs":"lcn; afs; lid; system_id","extra_keys_tetra":"mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr","extra_keys_pager":"protocol; baud; message_type; function; flex_type; levels; phase; cycle; frame; addr_type; group; fragment; info_type"}
 ```
 
 | field | type | meaning |
@@ -312,8 +381,8 @@ protocol it's about to request.
 | `type` | string | `"capabilities"` |
 | `protocols` | string | `"; "`-joined `protocol` hint values this build actually decodes. |
 | `audio` | string | Decoded-audio wire shape, currently always `"pcm_s16le_8000_mono"` (see the audio section below). |
-| `event_kinds` | string | `"; "`-joined `event` `kind` values (`voice; sync; call; message; burst; unknown`). |
-| `extra_keys_<family>` | string | `"; "`-joined `extra` token keys this build can emit for that protocol family (`dmr`, `p25`, `nxdn`, `dstar`, `ysf`, `edacs`, `tetra`). Present only when non-empty. See the `extra` token vocabulary above for each token's meaning. |
+| `event_kinds` | string | `"; "`-joined `event` `kind` values (`voice; sync; call; message; burst; page; unknown`). |
+| `extra_keys_<family>` | string | `"; "`-joined `extra` token keys this build can emit for that protocol family (`dmr`, `p25`, `nxdn`, `dstar`, `ysf`, `edacs`, `tetra`, `pager`). Present only when non-empty. See the `extra` token vocabulary above for each token's meaning. |
 
 The example above is from the dsd-fme build. The DSDcc build's frame is the
 same shape but narrower: `protocols` drops the dsd-fme-only entries
@@ -346,7 +415,7 @@ strand and therefore run after it).
 ### `error` — something was rejected
 
 The connection **stays open** after every error; only the offending
-message is affected. Exactly six message texts exist:
+message is affected. Exactly nine message texts exist:
 
 ```json
 {"type":"error","message":"unknown message type: <type>"}
@@ -355,6 +424,9 @@ message is affected. Exactly six message texts exist:
 {"type":"error","message":"invalid or missing key for key_type '<type>' (expected decimal/hex digits)"}
 {"type":"error","message":"failed to start TETRA backend"}
 {"type":"error","message":"failed to start DSD backend"}
+{"type":"error","message":"failed to start pager backend"}
+{"type":"error","message":"pager decoder exited unexpectedly"}
+{"type":"error","message":"unknown pocsag_mode: <mode>"}
 ```
 
 | message | trigger |
@@ -365,6 +437,9 @@ message is affected. Exactly six message texts exist:
 | `invalid or missing key for key_type '...' ...` | A `start` named a `key_type` (bp/rc4/des/aes/hytera/scrambler) but its `key` was empty or not decimal/hex digits. The key is validated before any backend is launched, so no pipeline starts; retry `start` with a valid key. |
 | `failed to start TETRA backend` | A `start` with `protocol` `tetra`/`tetrakit` couldn't bring up the TETRA decoder subprocess (usually: no `tetra-rx` / `tetra-kit` on the server's PATH). No pipeline is running after this; a corrected `start` may be retried. |
 | `failed to start DSD backend` | `start` couldn't bring up the decoder — for the subprocess backend, the fork/exec of dsd-fme failed (usually: no `dsd-fme` on the server's PATH); for the DSDcc backend, an unsupported config (e.g. a non-48 kHz internal rate). No pipeline is running after this; a corrected `start` may be retried. |
+| `failed to start pager backend` | A paging `start` couldn't spawn multimon-ng (not on `PATH` / `$MULTIMON_NG`). No pipeline is running; a corrected `start` may be retried. |
+| `pager decoder exited unexpectedly` | multimon-ng died mid-session — typically a too-old build (1.3.0) rejecting `--json`. Sent once; send `start` again once fixed. |
+| `unknown pocsag_mode: ...` | A paging `start` with a `pocsag_mode` other than `auto`/`alpha`/`numeric`/`skyper`. No pipeline starts. |
 
 Match on the prefix up to the first `:` if you need to branch on error
 kind; treat the remainder as free text.
@@ -383,7 +458,7 @@ string means "not present in this event".
 | field | type | meaning |
 |---|---|---|
 | `type` | string | `"event"` |
-| `kind` | string | Best-effort classification: `"voice"`, `"sync"`, `"call"`, `"message"` (a decoded DMR short-data/SMS body, dsd-fme backend), `"burst"` (DSDcc backend only), or `"unknown"`. See the per-backend notes below for exactly when each occurs. **On the subprocess backend, `unknown` events are suppressed by default** — dsd-fme prints a large startup banner / version / device-config block that all classifies as `unknown` noise, so it isn't forwarded (server-side `DsdProcessConfig::forward_unknown`; set it true to forward unrecognized lines for classifier debugging). Recognized events (`voice`/`sync`/`call`/`burst`) are always forwarded. |
+| `kind` | string | Best-effort classification: `"voice"`, `"sync"`, `"call"`, `"message"` (a decoded DMR short-data/SMS body, dsd-fme backend), `"burst"` (DSDcc backend only), `"page"` (a decoded pager message — paging hints only, see the [Paging section](#paging-protocolpager-auto--pocsag--flex)), or `"unknown"`. See the per-backend notes below for exactly when each occurs. **On the subprocess backend, `unknown` events are suppressed by default** — dsd-fme prints a large startup banner / version / device-config block that all classifies as `unknown` noise, so it isn't forwarded (server-side `DsdProcessConfig::forward_unknown`; set it true to forward unrecognized lines for classifier debugging). Recognized events (`voice`/`sync`/`call`/`burst`) are always forwarded. |
 | `talkgroup` | string | Decimal talkgroup / group-call target ID, or `""`. Kept as a string because IDs can exceed what a client might assume about integer width, and `""` is the natural "absent". |
 | `source_id` | string | Decimal source radio ID, or `""`. |
 | `slot` | string | TDMA slot, `"1"` or `"2"`, or `""` when the event isn't slot-specific. On the dsd-fme backend the physical slot is printed only on each burst's `Sync:` line (`[slot1]`/`[SLOT2]`); the server carries that slot forward onto the CSBK/call/voice/message lines dsd-fme prints for the *same* burst (they arrive with no marker of their own), so those events get the right `slot` without the client having to track it. Only traffic kinds (`voice`/`call`/`message`/`burst`) inherit it; channel-wide/`unknown` lines stay `""`, and any line that carries its own `[slotN]` overrides it. The DSDcc backend tags voice/call/burst events with their slot natively. |
@@ -418,6 +493,11 @@ the field stays `""` for that protocol — not that it is omitted.
 | `alias` | ✓* | — | — | — | — | — | — | DMR talker alias; *dsd-fme backend only |
 | `crc_error` | ✓ | ✓ | ✓ | ✓ | ✓* | ✓* | — | FEC/CRC-failure flag (dsd-fme, and DSDcc for DMR/NXDN); *D-STAR/YSF: dsd-fme only. TETRA: the external decoder discards failing PDUs itself, so surviving events aren't CRC-flagged |
 | `message` | ✓* | — | — | — | — | — | — | DMR short-data / SMS text; *dsd-fme backend only (DSDcc doesn't decode the DMR data plane) |
+
+Paging (not a column above): `talkgroup` (capcode), `message` (page text),
+`emergency` (FLEX priority), `crc_error` (FLEX checksum), `extra` and `raw`
+carry values; every other field stays `""`. See the
+[Paging section](#paging-protocolpager-auto--pocsag--flex).
 | `extra` | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | protocol/backend-specific `key=value` tokens (see below) |
 | `raw` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | always the source line/description |
 
@@ -829,6 +909,17 @@ real caller SSI arrives on the `D-SETUP` and is associated by `usage_marker`, so
 `talkgroup`/`color_code` stay `""` here (unlike the osmo backend). PDUs that are
 neither call nor traffic (e.g. the `MLE` `D-NWRK-BROADCAST` system info) pass
 through as `unknown`, suppressed by default but carrying their fields.
+
+#### Paging (`protocol":"pager-auto"` / `"flex"`) — real examples
+
+Captured from the server decoding multimon-ng's bundled off-air recordings
+(a POCSAG 1200 sample and the Dutch P2000 FLEX network), FM-modulated into IQ:
+
+```json
+{"type":"event","kind":"page","talkgroup":"273040","source_id":"","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"0","message":"+++TIME=0008300324+++TIME=0008300324","extra":"protocol=pocsag; baud=1200; message_type=alpha; function=3","raw":"{\"demod_name\":\"POCSAG1200\",\"address\":273040,\"function\":3,\"alpha\":\"+++TIME=0008300324+++TIME=0008300324<NUL>\"}"}
+{"type":"event","kind":"page","talkgroup":"1523020","source_id":"","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"0","message":"Passage Ambulance Wilhelminabrug Leiden","extra":"protocol=flex; baud=1600; message_type=alpha; flex_type=alphanumeric; levels=2; phase=A; cycle=14; frame=118; addr_type=S; group=0; fragment=complete","raw":"{\"timestamp\":\"2026-09-29 12:54:04\",\"baud\":1600,\"level\":2,\"phase\":\"A\",\"cycle\":14,\"frame\":118,\"capcode\":1523020,\"addr_type\":\"S\",\"is_group\":false,\"msg_type\":\"alphanumeric\",\"type_tag\":\"ALN\",\"fragment\":\"complete\",\"msg_number\":0,\"retrieval\":0,\"maildrop\":0,\"k_ok\":true,\"sig_ok\":true,\"message\":\"Passage Ambulance Wilhelminabrug Leiden\"}"}
+{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"0","message":"","extra":"protocol=flex; baud=1600; info_type=biw_date; day=4; month=9; year=2024","raw":"{\"timestamp\":\"2026-09-29 12:54:04\",\"baud\":1600,\"level\":2,\"phase\":\"A\",\"cycle\":14,\"frame\":115,\"msg_type\":\"biw_date\",\"biw_position\":1,\"type_tag\":\"BIW_DATE\",\"year\":2024,\"month\":9,\"day\":4}"}
+```
 
 ### Binary frames — decoded voice audio
 

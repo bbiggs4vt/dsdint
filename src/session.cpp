@@ -2,6 +2,7 @@
 #include "json_util.hpp"
 #include "protocol_capabilities.hpp"
 #include "status_page.hpp"
+#include "pager_events.hpp"
 
 #include <iostream>
 #include <cstring>
@@ -247,10 +248,16 @@ void Session::handle_text_message(const std::string& msg) {
             // means no key (unchanged behavior). See start_pipeline.
             std::string key_type = json::get_string(obj, "key_type");
             std::string key = json::get_string(obj, "key");
-            start_pipeline(sample_rate, bw, offset, gain, afc, protocol, key_type, key, matched_filter);
+            // Paging-only options (ignored by the FM/DSD and TETRA chains):
+            // POCSAG text interpretation and discriminator polarity.
+            std::string pocsag_mode = json::get_string(obj, "pocsag_mode");
+            bool invert = json::get_bool(obj, "invert", false);
+            start_pipeline(sample_rate, bw, offset, gain, afc, protocol, key_type, key, matched_filter,
+                           pocsag_mode, invert);
         } else if (type == "set_gain") {
             // Only the FM discriminator has a gain knob; the TETRA (π/4) modem
-            // doesn't -- accept the message (no error) and ignore it there.
+            // doesn't, and the paging demod auto-scales PCM by deviation --
+            // accept the message (no error) and ignore it there.
             if (chain_.load() == Chain::Fm) {
                 std::lock_guard<std::mutex> lock(demod_mutex_);
                 if (demod_) demod_->set_gain(static_cast<float>(json::get_number(obj, "gain", 26000.0)));
@@ -261,6 +268,9 @@ void Session::handle_text_message(const std::string& msg) {
             if (chain_.load() == Chain::Fm) {
                 std::lock_guard<std::mutex> lock(demod_mutex_);
                 if (demod_) demod_->set_freq_offset(json::get_number(obj, "hz", 0.0));
+            } else if (chain_.load() == Chain::Pager) {
+                std::lock_guard<std::mutex> lock(demod_mutex_);
+                if (pager_demod_) pager_demod_->set_freq_offset(json::get_number(obj, "hz", 0.0));
             }
         } else if (type == "stop") {
             stop_pipeline();
@@ -317,7 +327,10 @@ enum class ProtocolHint { Default, Dmr, Nxdn48, Nxdn96, P25p1, P25p2, Dpmr, Dsta
                           // + its ProVoice digital voice, and legacy Motorola
                           // X2-TDMA. Edacs = Standard/NET, EdacsEa = Extended
                           // Addressing; the *Esk forms add EDACS's 0xA0 ESK mask.
-                          ProVoice, Edacs, EdacsEsk, EdacsEa, EdacsEaEsk, X2tdma };
+                          ProVoice, Edacs, EdacsEsk, EdacsEa, EdacsEaEsk, X2tdma,
+                          // Paging (FM discriminator -> multimon-ng): all paging
+                          // decoders at once, or one family / rate.
+                          PagerAuto, Pocsag, Pocsag512, Pocsag1200, Pocsag2400, Flex };
 
 ProtocolHint parse_protocol_hint(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -347,12 +360,39 @@ ProtocolHint parse_protocol_hint(std::string s) {
     if (k == "edacsea") return ProtocolHint::EdacsEa;
     if (k == "edacs" || k == "edacsstd" || k == "edacsnet") return ProtocolHint::Edacs;
     if (k == "x2tdma" || k == "x2" || k == "x2t") return ProtocolHint::X2tdma;
+    // Paging runs its own chain (FM -> multimon-ng). Note plain "auto" stays
+    // the DSD auto-detect; paging is only selected by these explicit hints.
+    if (k == "pagerauto" || k == "pager" || k == "paging") return ProtocolHint::PagerAuto;
+    if (k == "pocsag") return ProtocolHint::Pocsag;
+    if (k == "pocsag512") return ProtocolHint::Pocsag512;
+    if (k == "pocsag1200") return ProtocolHint::Pocsag1200;
+    if (k == "pocsag2400") return ProtocolHint::Pocsag2400;
+    if (k == "flex" || k == "flexnext") return ProtocolHint::Flex;
     // "auto", "unknown", "notsure", and anything else -> auto-detect
     return ProtocolHint::Auto;
 }
 
 bool hint_is_tetra(ProtocolHint h) {
     return h == ProtocolHint::Tetra || h == ProtocolHint::Tetrakit;
+}
+
+bool hint_is_pager(ProtocolHint h) {
+    return h == ProtocolHint::PagerAuto || h == ProtocolHint::Pocsag || h == ProtocolHint::Pocsag512 ||
+           h == ProtocolHint::Pocsag1200 || h == ProtocolHint::Pocsag2400 || h == ProtocolHint::Flex;
+}
+
+// multimon-ng demodulators for a paging hint. Running all of them at once is
+// cheap (each is a correlator on 22 kHz audio) and is what makes pager-auto
+// work: whichever one syncs produces the pages.
+std::vector<std::string> pager_demods(ProtocolHint h) {
+    switch (h) {
+        case ProtocolHint::Pocsag:     return {"POCSAG512", "POCSAG1200", "POCSAG2400"};
+        case ProtocolHint::Pocsag512:  return {"POCSAG512"};
+        case ProtocolHint::Pocsag1200: return {"POCSAG1200"};
+        case ProtocolHint::Pocsag2400: return {"POCSAG2400"};
+        case ProtocolHint::Flex:       return {"FLEX_NEXT"};
+        default:                       return {"POCSAG512", "POCSAG1200", "POCSAG2400", "FLEX_NEXT"};
+    }
 }
 
 // Canonical, human-readable label for the status page's "Protocol" column.
@@ -376,6 +416,12 @@ const char* protocol_hint_label(ProtocolHint h) {
         case ProtocolHint::EdacsEa:    return "edacs_ea";
         case ProtocolHint::EdacsEaEsk: return "edacs_ea_esk";
         case ProtocolHint::X2tdma:     return "x2tdma";
+        case ProtocolHint::PagerAuto:  return "pager-auto";
+        case ProtocolHint::Pocsag:     return "pocsag";
+        case ProtocolHint::Pocsag512:  return "pocsag512";
+        case ProtocolHint::Pocsag1200: return "pocsag1200";
+        case ProtocolHint::Pocsag2400: return "pocsag2400";
+        case ProtocolHint::Flex:       return "flex";
         case ProtocolHint::Auto:       return "auto";
         case ProtocolHint::Default:    return "dmr"; // historical default
     }
@@ -431,10 +477,11 @@ bool key_value_is_valid(const std::string& v) {
 void Session::start_pipeline(double sample_rate, double channel_bw, double freq_offset,
                              float gain, bool afc, const std::string& protocol,
                              const std::string& key_type, const std::string& key,
-                             bool matched_filter) {
+                             bool matched_filter, const std::string& pocsag_mode, bool invert) {
     stop_pipeline(); // clean slate if already running
 
     const ProtocolHint hint = parse_protocol_hint(protocol);
+    const bool want_pager = hint_is_pager(hint);
 
     const bool want_tetra = hint_is_tetra(hint);
 
@@ -531,6 +578,87 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
             return;
         }
         chain_.store(Chain::Tetra);
+    } else if (want_pager) {
+        // ---- Paging: FM discriminator (22050 Hz) + multimon-ng subprocess ----
+        // gain / matched_filter / key_type / key are DSD-path knobs: the paging
+        // demod scales PCM by deviation in Hz (right at any IQ rate), and
+        // pagers aren't encrypted. Accepted for a uniform "start" shape and
+        // ignored. sample_rate, channel_bandwidth, freq_offset and afc apply.
+        (void)gain; (void)matched_filter; (void)key_type; (void)key;
+
+        std::string mode = pocsag_mode;
+        for (char& c : mode) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (!mode.empty() && mode != "auto" && mode != "alpha" && mode != "numeric" && mode != "skyper") {
+            send_text(json::Writer().field("type", std::string("error"))
+                          .field("message", std::string("unknown pocsag_mode: ") + pocsag_mode).str());
+            return;
+        }
+
+        PagerDemodConfig pcfg;
+        pcfg.input_sample_rate_hz = sample_rate;
+        pcfg.channel_bandwidth_hz = channel_bw;
+        pcfg.freq_offset_hz = freq_offset;
+        pcfg.afc_enabled = afc;
+        pcfg.invert = invert;
+
+        // Decoder lines arrive on the MultimonProcess reader thread. Capture
+        // the strand executor and a weak_ptr and only lock it ON the strand:
+        // if the reader thread ever held the last shared_ptr, ~Session would
+        // run there and join that very thread in stop_pipeline.
+        auto ex = ws_.get_executor();
+        auto on_line = [weak_self, ex](const std::string& line) {
+            DsdEvent ev;
+            if (!multimon_line_to_event(line, ev)) {
+                if (line.empty() || line[0] != '{') std::cerr << "multimon-ng: " << line << "\n";
+                return;
+            }
+            std::string s = json::Writer()
+                .field("type", std::string("event"))
+                .field("kind", ev.kind)
+                .field("talkgroup", ev.talkgroup)
+                .field("source_id", ev.source_id)
+                .field("slot", ev.slot)
+                .field("color_code", ev.color_code)
+                .field("ran", ev.ran)
+                .field("nac", ev.nac)
+                .field("emergency", ev.emergency)
+                .field("alias", ev.alias)
+                .field("crc_error", crc_error_wire(ev.crc_error))
+                .field("message", ev.message)
+                .field("extra", ev.extra)
+                .field("raw", ev.raw_line)
+                .str();
+            net::post(ex, [weak_self, s = std::move(s)] {
+                if (auto self = weak_self.lock()) self->send_text(s);
+            });
+        };
+        auto on_exit = [weak_self, ex] {
+            net::post(ex, [weak_self] {
+                auto self = weak_self.lock();
+                if (self && self->pipeline_active_.load() && self->chain_.load() == Chain::Pager &&
+                    !self->pager_failed_.exchange(true)) {
+                    self->send_text(json::Writer().field("type", std::string("error"))
+                                        .field("message", std::string("pager decoder exited unexpectedly")).str());
+                }
+            });
+        };
+
+        MultimonConfig mcfg;
+        mcfg.demods = pager_demods(hint);
+        mcfg.pocsag_mode = mode;
+        pager_failed_ = false;
+        auto proc = std::make_unique<MultimonProcess>();
+        if (!proc->start(mcfg, on_line, on_exit)) {
+            send_text(json::Writer().field("type", std::string("error"))
+                          .field("message", std::string("failed to start pager backend")).str());
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(demod_mutex_);
+            pager_demod_ = std::make_unique<PagerFmDemodulator>(pcfg);
+        }
+        pager_proc_ = std::move(proc);
+        chain_.store(Chain::Pager);
     } else {
         // ---- FM discriminator + DSD backend ----
         // Validate the optional decryption key up front: a named key_type with
@@ -681,7 +809,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
     // pipeline is up.
     if (stats_ && stats_id_) {
         stats_->set_protocol(stats_id_, protocol_hint_label(hint),
-                             want_tetra ? "tetra" : "fm", /*active=*/true);
+                             want_tetra ? "tetra" : want_pager ? "pager" : "fm", /*active=*/true);
     }
 
     send_text(json::Writer().field("type", std::string("started"))
@@ -705,6 +833,7 @@ void Session::stop_pipeline() {
     const Chain chain = chain_.exchange(Chain::Fm);
     switch (chain) {
         case Chain::Tetra: if (tetra_backend_) tetra_backend_->stop(); break;
+        case Chain::Pager: if (pager_proc_) pager_proc_->stop(); break; // flushes pending pages
         case Chain::Fm:    dsd_.stop(); break;
     }
     {
@@ -713,6 +842,7 @@ void Session::stop_pipeline() {
         std::lock_guard<std::mutex> lock(demod_mutex_);
         switch (chain) {
             case Chain::Tetra: tetra_demod_.reset(); tetra_backend_.reset(); break;
+            case Chain::Pager: pager_demod_.reset(); pager_proc_.reset(); break;
             case Chain::Fm:    demod_.reset(); break;
         }
     }
@@ -755,7 +885,14 @@ void Session::demod_worker_loop() {
             iq_queue_.pop_front();
         }
 
-        if (chain == Chain::Tetra) {
+        if (chain == Chain::Pager) {
+            pcm_scratch.clear();
+            {
+                std::lock_guard<std::mutex> lock(demod_mutex_);
+                if (pager_demod_) pager_demod_->process(block.data(), block.size(), pcm_scratch);
+            }
+            if (!pcm_scratch.empty() && pager_proc_) pager_proc_->write_audio(pcm_scratch.data(), pcm_scratch.size());
+        } else if (chain == Chain::Tetra) {
             std::vector<unsigned char> bits;
             {
                 std::lock_guard<std::mutex> lock(demod_mutex_);

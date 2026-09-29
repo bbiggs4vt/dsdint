@@ -24,6 +24,13 @@ Each connected WebSocket client gets its own `FmDemodulator` instance and
 its own dedicated `dsd-fme` child process — sessions are fully isolated,
 so multiple clients can decode different channels concurrently.
 
+It has since grown into a general **digital decoder server**: the same
+WebSocket, IQ format and `event` frame also carry **TETRA** (π/4-DQPSK +
+tetra-rx / tetra-kit) and **paging** (POCSAG / FLEX via multimon-ng), each
+selected per session by the client's `protocol` hint. Voice audio is emitted
+where a mode has it; data-only modes like paging just produce events. See
+"TETRA (runtime-selected)" and "Paging (runtime-selected)" below.
+
 ## What's implemented
 
 - `src/fm_demod.{hpp,cpp}` — the original hand-rolled streaming FM
@@ -311,6 +318,88 @@ the right parity, locked the same 18-burst grid, and — through the real
 `tetra-rx` — decoded the same network (MCC/MNC 234/78, ColorCode 0x17) while
 recovering ~5% more CRC-protected control-plane messages than differential
 (see PROTOCOL.md).
+
+## Paging (runtime-selected)
+
+POCSAG and FLEX pagers are decoded by a third runtime chain, picked per
+session by the `protocol` hint:
+
+| hint | decoders |
+|---|---|
+| `pager-auto` | POCSAG 512 + 1200 + 2400 and FLEX, all at once |
+| `pocsag` / `pocsag512` / `pocsag1200` / `pocsag2400` | POCSAG, all or one rate |
+| `flex` | FLEX (1600/3200/6400 bps, 2/4-level) |
+
+(Plain `auto` is still the DSD auto-detect; paging is only selected by these
+hints.) The chain is `src/pager_demod.*`, an FM discriminator that produces
+the 22050 Hz audio multimon-ng expects, feeding `src/pager_process.*`, a
+per-session [multimon-ng](https://github.com/EliasOenal/multimon-ng) child run
+with `--json`. `src/pager_events.*` maps its JSON onto the ordinary `event`
+frame:
+
+```json
+{"type":"event","kind":"page","talkgroup":"1523020","source_id":"","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"0","message":"Passage Ambulance Wilhelminabrug Leiden","extra":"protocol=flex; baud=1600; message_type=alpha; flex_type=alphanumeric; levels=2; phase=A; cycle=14; frame=118; addr_type=S; group=0; fragment=complete","raw":"{...multimon-ng's JSON...}"}
+```
+
+- `talkgroup` is the pager address (POCSAG RIC / FLEX capcode).
+- `message` is the page text.
+- `emergency` flags a FLEX priority page, and `crc_error` a failed FLEX
+  checksum.
+- `extra` carries protocol, baud, message type and the FLEX frame details.
+- FLEX network broadcasts (date/time/system id) arrive as `kind:"sync"`.
+
+The same `start` message works. `sample_rate`, `channel_bandwidth`,
+`freq_offset` and `afc` apply, plus two paging-only fields:
+- `pocsag_mode` (`auto`/`alpha`/`numeric`/`skyper`);
+- `invert` (for spectrally inverted IQ).
+
+`gain`, `matched_filter` and keys are ignored: the paging demod scales its
+output by deviation in Hz, so its level is right at any IQ rate. Full details
+are in PROTOCOL.md "Paging".
+
+**Decoder requirement:** a multimon-ng **newer than 1.3.0**, because it needs
+`--json` and the `FLEX_NEXT` decoder, and the Debian/Ubuntu packages are too
+old. The Docker image builds it from source at a pinned commit. To build it
+natively:
+
+```bash
+git clone https://github.com/EliasOenal/multimon-ng && cd multimon-ng
+git checkout 0722194b7739748e49f18ac1fc76f236d4ca390d
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DX11_SUPPORT=OFF -DPULSE_AUDIO_SUPPORT=OFF -DSDL3_SCOPE=OFF
+cmake --build build -j && sudo install -m755 build/multimon-ng /usr/local/bin/
+```
+
+The server finds it on `PATH`, or at `$MULTIMON_NG`.
+
+Two process details matter for multimon-ng:
+- **Output buffering.** multimon-ng never flushes its JSON output. On a pipe,
+  FLEX pages would sit in a 4 KiB buffer until the session stopped, so the
+  child runs under coreutils `stdbuf -oL`. Set `PAGER_NO_STDBUF=1` to disable
+  that.
+- **Inherited sockets.** The child closes every inherited fd before `exec`.
+  Asio's sockets aren't close-on-exec, and without this a decoder would keep
+  other sessions' WebSocket connections alive after they closed.
+
+**Tests:**
+- `test_pager_demod` checks the demod against synthetic FSK.
+- `test_pager_events` checks the JSON → event mapping against real
+  multimon-ng output.
+- `test_session_pager` runs the full stack with the real multimon-ng. It
+  streams FM-modulated IQ built from gen-ng synthetic pages and multimon-ng's
+  bundled **off-air** recordings: POCSAG at all three rates, and a 51 s
+  capture of the Dutch P2000 FLEX network with 46/46 pages recovered. Every
+  page a direct multimon-ng decode finds must come back live over the
+  WebSocket. It reports skipped unless multimon-ng and the fixtures are
+  present:
+
+```bash
+tools/make_pager_fixtures.sh /path/to/multimon-ng build/pager_fixtures   # needs its build/gen-ng + sox
+cmake -S . -B build -DMULTIMON_NG_BIN=/path/to/multimon-ng/build/multimon-ng
+cmake --build build --target test_session_pager && (cd build && ctest -R pager)
+```
+
+Not yet verified: a live SDR as the source, and 3200/6400 bps 4-level FLEX
+(no capture or generator was available).
 
 ## Testing session.cpp
 

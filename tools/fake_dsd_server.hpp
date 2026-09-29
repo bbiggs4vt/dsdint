@@ -481,9 +481,10 @@ private:
                 send_text(
                     "{\"type\":\"capabilities\","
                     "\"protocols\":\"dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; "
-                    "provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; auto\","
+                    "provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; "
+                    "pager-auto; pocsag; pocsag512; pocsag1200; pocsag2400; flex; auto\","
                     "\"audio\":\"pcm_s16le_8000_mono\","
-                    "\"event_kinds\":\"voice; sync; call; message; burst; unknown\","
+                    "\"event_kinds\":\"voice; sync; call; message; burst; page; unknown\","
                     "\"extra_keys_dmr\":\"network_type; network_id; site_id; rest_channel; lcn\","
                     "\"extra_keys_p25\":\"rfss; site_id; system_id; wacn; alg_id; key_id\","
                     "\"extra_keys_nxdn\":\"site_code; system_code; location_id; category\","
@@ -491,7 +492,9 @@ private:
                     "\"extra_keys_ysf\":\"uplink; downlink; call_mode; data_type; src_rid; dst_rid\","
                     "\"extra_keys_edacs\":\"lcn; afs; lid; system_id\","
                     "\"extra_keys_tetra\":\"mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; "
-                    "service; pdu; usage_marker; dl_usage_marker; encr\"}");
+                    "service; pdu; usage_marker; dl_usage_marker; encr\","
+                    "\"extra_keys_pager\":\"protocol; baud; message_type; function; flex_type; levels; "
+                    "phase; cycle; frame; addr_type; group; fragment; info_type\"}");
             }
             read_loop(fd);
             close_client_fd();

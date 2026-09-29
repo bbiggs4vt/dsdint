@@ -194,9 +194,9 @@ components:
         - name: dsd-fme-build
           payload:
             type: capabilities
-            protocols: "dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; auto"
+            protocols: "dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; pager-auto; pocsag; pocsag512; pocsag1200; pocsag2400; flex; auto"
             audio: pcm_s16le_8000_mono
-            event_kinds: "voice; sync; call; message; burst; unknown"
+            event_kinds: "voice; sync; call; message; burst; page; unknown"
             extra_keys_dmr: "network_type; network_id; site_id; rest_channel; lcn"
             extra_keys_p25: "rfss; site_id; system_id; wacn; alg_id; key_id"
             extra_keys_nxdn: "site_code; system_code; location_id; category"
@@ -204,17 +204,19 @@ components:
             extra_keys_ysf: "uplink; downlink; call_mode; data_type; src_rid; dst_rid"
             extra_keys_edacs: "lcn; afs; lid; system_id"
             extra_keys_tetra: "mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr"
+            extra_keys_pager: "protocol; baud; message_type; function; flex_type; levels; phase; cycle; frame; addr_type; group; fragment; info_type"
         - name: dsdcc-build
           payload:
             type: capabilities
-            protocols: "dmr; nxdn48; nxdn96; dpmr; dstar; ysf; tetra; tetrakit; auto"
+            protocols: "dmr; nxdn48; nxdn96; dpmr; dstar; ysf; tetra; tetrakit; pager-auto; pocsag; pocsag512; pocsag1200; pocsag2400; flex; auto"
             audio: pcm_s16le_8000_mono
-            event_kinds: "voice; sync; call; message; burst; unknown"
+            event_kinds: "voice; sync; call; message; burst; page; unknown"
             extra_keys_dmr: "unit_target; burst; sync_type"
             extra_keys_nxdn: "site_code; system_code; location_id"
             extra_keys_dstar: "rpt1; rpt2; radio_text; gps"
             extra_keys_ysf: "uplink; downlink; call_mode; data_type; src_rid; dst_rid"
             extra_keys_tetra: "mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr"
+            extra_keys_pager: "protocol; baud; message_type; function; flex_type; levels; phase; cycle; frame; addr_type; group; fragment; info_type"
 
     Started:
       name: started
@@ -367,6 +369,19 @@ components:
             Key value for key_type. Decimal or hex digits (AES/Hytera may
             include spaces between 64-bit words). For `bp`, a decimal number
             1–255 selecting a well-known built-in DMR Basic Privacy key.
+        pocsag_mode:
+          type: string
+          default: ""
+          enum: ["", auto, alpha, numeric, skyper]
+          description: |
+            Paging chain only. How POCSAG message text is interpreted; in
+            auto an ambiguous message may produce more than one page event.
+        invert:
+          type: boolean
+          default: false
+          description: |
+            Paging chain only. Negate the discriminator for spectrally
+            inverted (I/Q-swapped) IQ.
 
     SetGainRequest:
       type: object
@@ -421,6 +436,7 @@ components:
         extra_keys_ysf:   { type: string, description: '"; "-joined YSF extra keys.' }
         extra_keys_edacs: { type: string, description: '"; "-joined EDACS/ProVoice extra keys (dsd-fme build only).' }
         extra_keys_tetra: { type: string, description: '"; "-joined TETRA extra keys.' }
+        extra_keys_pager: { type: string, description: '"; "-joined paging (POCSAG/FLEX) extra keys.' }
 
     Started:
       type: object
@@ -450,7 +466,10 @@ components:
             `binary frame length not a multiple of 8 bytes`,
             `invalid or missing key for key_type '<type>' (expected decimal/hex digits)`,
             `failed to start TETRA backend`,
-            `failed to start DSD backend`. Branch on the prefix up to the
+            `failed to start DSD backend`,
+            `failed to start pager backend`,
+            `pager decoder exited unexpectedly`,
+            `unknown pocsag_mode: <mode>`. Branch on the prefix up to the
             first `:`.
 
     Event:
@@ -517,10 +536,13 @@ components:
         dsd-fme-backend-only provoice, edacs, edacs_esk, edacs_ea, edacs_ea_esk,
         x2tdma (these fall back to auto on the DSDcc build). TETRA runs a
         separate signal path (not FM/DSD): tetra (osmo tetra-rx) or tetrakit
-        (tetra-kit's decoder).
+        (tetra-kit's decoder). Paging runs a third path (FM -> multimon-ng,
+        kind "page"): pager-auto (all paging decoders), pocsag, pocsag512,
+        pocsag1200, pocsag2400, flex.
       enum: ["", dmr, nxdn48, nxdn96, p25, p25p2, dpmr, dstar, ysf,
              provoice, edacs, edacs_esk, edacs_ea, edacs_ea_esk, x2tdma,
-             tetra, tetrakit, auto]
+             tetra, tetrakit, pager-auto, pocsag, pocsag512, pocsag1200,
+             pocsag2400, flex, auto]
 
     KeyType:
       type: string
@@ -536,4 +558,6 @@ components:
         Best-effort event classification. `message` is a decoded DMR
         short-data/SMS body (dsd-fme backend). `burst` is DSDcc/DMR-only;
         `unknown` is suppressed by default (startup banner / diagnostics).
-      enum: [voice, sync, call, message, burst, unknown]
+        `page` is a decoded pager message (paging hints only): talkgroup =
+        capcode, message = page text, extra = protocol/baud/message_type/...
+      enum: [voice, sync, call, message, burst, page, unknown]

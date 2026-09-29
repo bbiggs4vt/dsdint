@@ -68,7 +68,9 @@ message StartRequest {
   // edacs_ea_esk | x2tdma | auto (provoice / edacs* / x2tdma are
   // dsd-fme-backend only — they fall back to auto on the DSDcc build).
   // TETRA chain (a separate signal path, not FM/DSD): tetra (osmo tetra-rx) |
-  // tetrakit (tetra-kit's decoder). "" / absent keeps the server default (DMR).
+  // tetrakit (tetra-kit's decoder). Paging chain (FM -> multimon-ng, emits
+  // kind "page"): pager-auto | pocsag | pocsag512 | pocsag1200 | pocsag2400 |
+  // flex. "" / absent keeps the server default (DMR).
   string protocol = 7;
   // Optional decryption key. key_type: bp | rc4 | des | aes | hytera |
   // scrambler ("" = none). key: decimal or hex digits (see PROTOCOL.md).
@@ -80,6 +82,10 @@ message StartRequest {
   // in normal conditions; FM/DSD chain only (ignored by TETRA), hand-rolled
   // demod only. See README.md.
   bool matched_filter = 10 [json_name = "matched_filter"];
+  // Paging only: POCSAG text interpretation, "" / auto | alpha | numeric |
+  // skyper; and discriminator polarity for spectrally inverted IQ.
+  string pocsag_mode = 11 [json_name = "pocsag_mode"];
+  bool invert = 12;
 }
 
 // {"type":"set_gain","gain":N}. Live discriminator-gain adjust. No reply.
@@ -129,6 +135,7 @@ message Capabilities {
   string extra_keys_ysf = 9 [json_name = "extra_keys_ysf"];
   string extra_keys_edacs = 10 [json_name = "extra_keys_edacs"];
   string extra_keys_tetra = 11 [json_name = "extra_keys_tetra"];
+  string extra_keys_pager = 12 [json_name = "extra_keys_pager"];
 }
 
 // {"type":"started","udp_audio_port":N}. Pipeline is up. udp_audio_port is
@@ -142,12 +149,14 @@ message Started {
 
 // {"type":"error","message":"..."}. Something was rejected. The socket
 // stays open. (Named ErrorMessage because `Error` collides with a
-// built-in type in some target languages.) One of six texts (branch on
+// built-in type in some target languages.) One of nine texts (branch on
 // the prefix up to the first ":"): "unknown message type: <type>",
 // "bad control message: <detail>",
 // "binary frame length not a multiple of 8 bytes",
 // "invalid or missing key for key_type '<type>' (expected decimal/hex digits)",
-// "failed to start TETRA backend", "failed to start DSD backend".
+// "failed to start TETRA backend", "failed to start DSD backend",
+// "failed to start pager backend", "pager decoder exited unexpectedly",
+// "unknown pocsag_mode: <mode>".
 message ErrorMessage {
   string type = 1;    // = "error"
   string message = 2;
@@ -159,7 +168,7 @@ message ErrorMessage {
 // token vocabulary.
 message Event {
   string type = 1;                                    // = "event"
-  string kind = 2;         // voice | sync | call | message | burst | unknown
+  string kind = 2;         // voice | sync | call | message | burst | page | unknown
   string talkgroup = 3;    // decimal; a callsign for D-STAR/YSF; TETRA group SSI
   string source_id = 4 [json_name = "source_id"];   // decimal, a callsign, or TETRA party SSI
   string slot = 5;         // DMR TDMA slot "1"/"2"
