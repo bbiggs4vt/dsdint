@@ -196,6 +196,24 @@ int main() {
         check(e.extra.find("wacn=BEE0A") != std::string::npos, "P25: wacn=BEE0A");
     }
     {
+        // P25 status tokens ending in "TS" (NETSTS/ADJSTS/RFSSSTS/UNITS) followed
+        // by a channel number must NOT be read as a TDMA slot -- P25 Phase 1 has
+        // no slots. Regression for a bogus "Slot 6" on a P25 sync.
+        check(classify_dsd_fme_line(" ADJSTS 6 RFSS[008] SITE [008]").slot.empty(),
+              "P25 ADJSTS 6: no spurious slot");
+        check(classify_dsd_fme_line("  NETSTS 6  WACN [580A0]").slot.empty(),
+              "P25 NETSTS 6: no spurious slot");
+        check(classify_dsd_fme_line(" Secondary C-CCH  STS 6").slot.empty(),
+              "P25 STS 6: no spurious slot");
+        check(classify_dsd_fme_line(" P25 UNITS 6 registered").slot.empty(),
+              "P25 UNITS 6: no spurious slot");
+        check(classify_dsd_fme_line("17:30:46 Sync: +P25p1 NAC/CC: 717; RFSS: 001;  TSBK").slot.empty(),
+              "P25 TSBK: no spurious slot");
+        // Real slot markers still parse (DMR bracket/word; P25p2 TDMA TS0/TS1).
+        check(classify_dsd_fme_line(" Slot 2 Data Header").slot == "2", "real 'Slot 2' still parsed");
+        check(classify_dsd_fme_line(" P25p2 TS1 voice").slot == "1", "P25p2 'TS1' still parsed");
+    }
+    {
         // NXDN "Site Code" must still NOT be captured as site_id.
         DsdEvent e = classify_dsd_fme_line(
             "Adjacent Information - Cat: Global - Sys Code: 8 - Site Code 2 ");

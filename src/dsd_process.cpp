@@ -552,7 +552,11 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     static const std::regex tg_re(R"(TGT?[:=]?\s*(\d+))", std::regex::icase);
     static const std::regex src_re(R"((?:SRC|RID|Source)[:=]?\s*(\d+))", std::regex::icase);
     static const std::regex slot_bracket_re(R"(\[slot\s*(\d)\])", std::regex::icase);
-    static const std::regex slot_re(R"((?:TS|Slot)[:=]?\s*(\d))", std::regex::icase);
+    // \b before TS/Slot so it can't match the "TS" tail of P25 status tokens
+    // (NETSTS, ADJSTS, RFSSSTS, UNITS, ...) followed by a channel number, which
+    // would otherwise set a bogus slot on a P25 sync (P25 Phase 1 has no slots;
+    // Phase 2 only 0/1). "TSBK" etc. never matched (no digit follows).
+    static const std::regex slot_re(R"(\b(?:TS|Slot)[:=]?\s*(\d))", std::regex::icase);
     // "Colour/Color Code" (DMR) or "Channel Code" (dPMR) -- both are the
     // per-channel colour code, so both land in color_code.
     static const std::regex cc_re(R"((?:Colou?r|Channel)\s*Code[:=]?\s*(\d+))", std::regex::icase);
