@@ -25,7 +25,9 @@
 #include <atomic>
 #include <functional>
 #include <cstdint>
+#include <cctype>
 #include <mutex>
+#include <optional>
 
 namespace dsdsrv {
 
@@ -59,6 +61,92 @@ struct DmrSlotCarry {
             ev.kind == "message" || ev.kind == "burst") {
             ev.slot = current;
         }
+    }
+};
+
+// Decode the human-readable text carried in a reassembled DMR data PDU, given
+// its bytes as a contiguous uppercased hex string (what dsd-fme's "-Z" dump
+// prints for a "Multi Block PDU Message"). DMR short-data / TMS messages embed
+// their text as UTF-16LE (Motorola/Hytera TMS: each char byte followed by
+// 0x00) or plain ASCII/UTF-8; the surrounding IP/UDP/TMS headers and CRC are
+// binary. This scans for the longest printable run of each kind and returns it
+// -- UTF-16LE preferred -- or "" when the PDU carries no printable text (a
+// control/telemetry/binary PDU), so a caller emits a message only for real
+// text and stays silent otherwise. Free function; unit-tested directly.
+std::string decode_dmr_pdu_text(const std::string& hex_upper);
+
+// Reassembles dsd-fme's "-Z" hex dump of a DMR data PDU and, when it decodes to
+// printable text, yields one `message` event. Under -Z dsd-fme prints a header
+// line "Slot N - Multi Block PDU Message" (or "... Control Message") followed
+// by wrapped rows of contiguous hex; fed each cleaned stdout line in order,
+// this accumulates that hex and, when the dump ends (the next non-hex line or
+// end of stream), decodes it via decode_dmr_pdu_text. A text PDU (e.g. an SMS
+// "test") becomes a message; a non-text PDU yields nothing -- so this never
+// adds per-frame or binary-PDU noise. Single-threaded (the stdout reader), no
+// locking; unit-tested via tests/test_dsd_fme_parse.
+struct DmrPduTextCarry {
+    bool capturing = false;
+    int slot = 0;
+    std::string hex;
+
+    // Feed one cleaned line, in stdout order. Returns a `message` event when
+    // this line ends a text-carrying dump, else nullopt. Call flush() at EOS.
+    std::optional<DsdEvent> feed(const std::string& line) {
+        int hdr_slot = 0;
+        if (is_header(line, hdr_slot)) {
+            std::optional<DsdEvent> done = finish(); // flush a prior dump, if any
+            capturing = true; slot = hdr_slot; hex.clear();
+            return done;
+        }
+        if (capturing) {
+            std::string h;
+            if (extract_hex(line, h)) { hex += h; return std::nullopt; }
+            return finish();                          // a non-hex line ends the dump
+        }
+        return std::nullopt;
+    }
+
+    std::optional<DsdEvent> flush() { return finish(); }
+
+private:
+    std::optional<DsdEvent> finish() {
+        if (!capturing) return std::nullopt;
+        capturing = false;
+        std::string h = hex; hex.clear();
+        if (h.empty()) return std::nullopt;
+        std::string text = decode_dmr_pdu_text(h);
+        if (text.empty()) return std::nullopt;        // non-text PDU: stay quiet
+        DsdEvent ev;
+        ev.kind = "message";
+        ev.slot = slot == 1 ? "1" : (slot == 2 ? "2" : "");
+        ev.message = text;
+        ev.crc_error = "";                             // reported as "0" on the wire
+        ev.raw_line = "DMR short-data PDU (dsd-fme -Z): " + text;
+        return ev;
+    }
+
+    static bool is_header(const std::string& l, int& slot_out) {
+        std::size_t p = l.find("Slot ");
+        if (p == std::string::npos) return false;
+        std::size_t i = p + 5;
+        if (i >= l.size() || !std::isdigit(static_cast<unsigned char>(l[i]))) return false;
+        if (l.find("Multi Block", i) == std::string::npos) return false;
+        if (l.find("Message", i) == std::string::npos) return false;
+        slot_out = l[i] - '0';
+        return true;
+    }
+
+    // True when the line is a run of hex nibbles (ignoring whitespace), an even
+    // number of them. `out` gets the uppercased nibbles.
+    static bool extract_hex(const std::string& l, std::string& out) {
+        out.clear();
+        for (char c : l) {
+            if (std::isspace(static_cast<unsigned char>(c))) continue;
+            if (std::isxdigit(static_cast<unsigned char>(c)))
+                out += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            else { out.clear(); return false; }
+        }
+        return !out.empty() && (out.size() % 2 == 0);
     }
 };
 
@@ -113,6 +201,15 @@ struct DsdProcessConfig {
     // (useful when developing the classifier: an unrecognized line you
     // expected to parse still surfaces with its raw text).
     bool forward_unknown = false;
+
+    // Decode DMR short-data / SMS text. When true, dsd-fme is run with "-Z"
+    // (Log MBE/PDU Payloads to console) so it prints the reassembled data-PDU
+    // bytes, and DmrPduTextCarry turns a text-carrying PDU into a `message`
+    // event. Without -Z dsd-fme never prints the SMS body at all. This adds no
+    // client-visible noise: the extra -Z lines classify as "unknown" (and stay
+    // suppressed), and a message is emitted only when a PDU decodes to printable
+    // text -- never per voice frame, never for a binary/control PDU. Default on.
+    bool decode_short_data = true;
 };
 
 // Emit filter for the subprocess backend: whether a classified event should
@@ -187,6 +284,9 @@ private:
     // Carries dsd-fme's per-burst slot onto its unmarked follow-on lines.
     // Touched only by the stdout reader thread, so it needs no lock.
     DmrSlotCarry slot_carry_;
+    // Reassembles dsd-fme "-Z" data-PDU hex dumps into `message` events (only
+    // when cfg_.decode_short_data). Stdout-reader-thread only, no lock.
+    DmrPduTextCarry pdu_text_carry_;
 };
 
 } // namespace dsdsrv

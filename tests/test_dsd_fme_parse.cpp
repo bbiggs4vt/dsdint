@@ -513,6 +513,76 @@ int main() {
         check(crc_error_wire("0") == "0", "crc wire: any non-\"1\" -> \"0\"");
     }
 
+    // ---- decode_dmr_pdu_text: pull printable text out of a reassembled PDU ----
+    {
+        // Real dsd-fme -Z "Multi Block PDU Message" hex for the SMS "test"
+        // (an IP/UDP TMS datagram; the text is UTF-16LE: 74 00 65 00 73 00 74 00).
+        const std::string sms =
+            "4500002E0005000040118D3E"
+            "0C00007BE10000010FA70FA7"
+            "001AF5D80010A00086040D00"
+            "0A0074006500730074000000"
+            "00000000000000006E2AF064";
+        check(decode_dmr_pdu_text(sms) == "test", "UTF-16LE SMS decodes to \"test\"");
+
+        // A plain-ASCII body ("HELLO" = 48 45 4C 4C 4F) inside a PDU.
+        check(decode_dmr_pdu_text("00001148454C4C4F00") == "HELLO",
+              "ASCII run of >= 4 decodes as the message");
+
+        // A binary/control PDU (no printable run) yields nothing -- this is
+        // what keeps telemetry/control PDUs from surfacing as garbage messages.
+        check(decode_dmr_pdu_text("0FA70FA7E100000140118D3E").empty(),
+              "binary PDU -> no text (stays quiet)");
+        check(decode_dmr_pdu_text("").empty(), "empty hex -> no text");
+    }
+
+    // ---- DmrPduTextCarry: reassemble a -Z dump into one message event ----
+    {
+        DmrPduTextCarry ph;
+        check(!ph.feed(" Slot 1 Data Header - Group - Unconfirmed - Source: 123 Target: 1")
+                   .has_value(),
+              "pre-dump line emits nothing");
+        check(!ph.feed(" Slot 1 - Multi Block PDU Message").has_value(),
+              "dump header starts capture, emits nothing yet");
+        ph.feed("  4500002E0005000040118D3E");
+        ph.feed("  0C00007BE10000010FA70FA7");
+        ph.feed("  001AF5D80010A00086040D00");
+        ph.feed("  0A0074006500730074000000");
+        ph.feed("  00000000000000006E2AF064");
+        auto ev = ph.feed(" Total audio errors: 0");   // non-hex line ends the dump
+        check(ev.has_value(), "non-hex line ends the dump and yields a message");
+        if (ev) {
+            check(ev->kind == "message", "emitted event kind is message");
+            check(ev->slot == "1", "message carries the header's slot");
+            check(ev->message == "test", "message body is the decoded text");
+            check(ev->crc_error != "1", "decoded message is not CRC-flagged");
+        }
+        check(!ph.flush().has_value(), "nothing left after the dump ended");
+    }
+    {
+        // Slot-2 dump flushed at end-of-stream (no terminator line).
+        DmrPduTextCarry ph;
+        ph.feed(" Slot 2 - Multi Block PDU Message");
+        ph.feed("  0A0074006500730074000000");
+        auto ev = ph.flush();
+        check(ev.has_value() && ev->slot == "2" && ev->message == "test",
+              "EOS flush emits the pending slot-2 message");
+    }
+    {
+        // A control PDU with no printable text stays silent.
+        DmrPduTextCarry ph;
+        ph.feed(" Slot 1 - Multi Block Control Message");
+        ph.feed("  0FA70FA7E100000140118D3E");
+        check(!ph.flush().has_value(), "non-text control PDU emits no message");
+    }
+    {
+        // Hex with no preceding header is ignored (not mistaken for a dump).
+        DmrPduTextCarry ph;
+        check(!ph.feed("  0A0074006500730074000000").has_value(),
+              "hex line without a header: ignored");
+        check(!ph.flush().has_value(), "nothing captured without a header");
+    }
+
     if (g_failures == 0) {
         std::printf("\nALL DSD-FME PARSE TESTS PASSED\n");
         return 0;

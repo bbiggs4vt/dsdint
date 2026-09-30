@@ -766,6 +766,28 @@ tree to exercise them live), so `raw` is representative:
   `-`/spaces for other non-printables) is trimmed off the tail. Encrypted or
   multi-block/segmented messages may come through partial or garbled.
 
+There is a **third** path for IP/UDP-based TMS short data (Motorola/Hytera-style
+SMS), which dsd-fme only decodes with its `-Z` payload-logging flag — the server
+passes it by default. Instead of a `…Text:` line, the message text rides inside
+the reassembled *Multi Block PDU* the `-Z` dump prints; the server reassembles
+that PDU's bytes and extracts the embedded text (UTF-16LE or ASCII/UTF-8),
+emitting it as a normal `message` event:
+
+```json
+{"type":"event","kind":"message","talkgroup":"","source_id":"","slot":"1","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"0","message":"test","extra":"","raw":"DMR short-data PDU (dsd-fme -Z): test"}
+```
+
+- This is a **real** capture: an SMS "test" sent to a talkgroup, decoded from
+  its UTF-16LE TMS payload. `slot` is filled from the PDU's slot; the TMS
+  transport doesn't restate the SMS source/target on the text line, so those
+  stay `""` (they appear on the preceding data-header/preamble `call` events).
+- A message is emitted **only** when the reassembled PDU actually contains a
+  printable text run. Binary/control/telemetry PDUs (and every per-frame `-Z`
+  payload line) decode to no text and are silently dropped, so this adds no
+  new event noise — voice-only traffic produces no `message` events at all.
+- Disable the whole path (and the `-Z` flag) by building/running with the
+  subprocess backend's `decode_short_data` off; it is on by default.
+
 ##### P25 (subprocess backend with `protocol:"p25"` / `"p25p2"`)
 
 The first two frames are **real** — from a P25 Phase 1 control-channel

@@ -95,6 +95,12 @@ std::vector<std::string> DsdProcess::build_argv() const {
     } else {
         argv.push_back("null"); // never let it default to Pulse -- see notes above
     }
+    // -Z ("Log MBE/PDU Payloads to console") makes dsd-fme print the
+    // reassembled data-PDU bytes -- the only way it emits a DMR short-data /
+    // SMS body. The stdout reader turns a text-carrying PDU into a `message`
+    // (see DmrPduTextCarry); the rest of -Z's output classifies as suppressed
+    // "unknown", so this adds no client-visible noise.
+    if (cfg_.decode_short_data) argv.push_back("-Z");
     for (const auto& a : cfg_.extra_args) argv.push_back(a);
     return argv;
 }
@@ -334,6 +340,14 @@ void DsdProcess::stdout_reader_loop() {
             // (and of lines that are pure ANSI color churn, which
             // strip_ansi reduces to empty).
             if (!line.empty() && on_event_) {
+                // A completed short-data PDU (its hex dump ends at this line)
+                // becomes a `message`, emitted before this line's own event.
+                if (cfg_.decode_short_data) {
+                    if (auto mev = pdu_text_carry_.feed(line)) {
+                        slot_carry_.apply(*mev);
+                        on_event_(*mev);
+                    }
+                }
                 DsdEvent ev = classify_line(line);
                 slot_carry_.apply(ev);   // stamp the burst's slot onto unmarked lines
                 publish_active_slot(ev);
@@ -344,10 +358,17 @@ void DsdProcess::stdout_reader_loop() {
     // Flush any trailing partial line on exit.
     std::string tail = strip_ansi(buf);
     if (!tail.empty() && on_event_) {
+        if (cfg_.decode_short_data) {
+            if (auto mev = pdu_text_carry_.feed(tail)) { slot_carry_.apply(*mev); on_event_(*mev); }
+        }
         DsdEvent ev = classify_line(tail);
         slot_carry_.apply(ev);
         publish_active_slot(ev);
         if (dsd_fme_forward_event(ev, cfg_.forward_unknown)) on_event_(ev);
+    }
+    // End of stream: emit any text PDU still being accumulated.
+    if (cfg_.decode_short_data && on_event_) {
+        if (auto mev = pdu_text_carry_.flush()) { slot_carry_.apply(*mev); on_event_(*mev); }
     }
 }
 
@@ -453,6 +474,53 @@ std::string tidy_callsign(const std::string& in) {
 
 bool dsd_fme_forward_event(const DsdEvent& ev, bool forward_unknown) {
     return forward_unknown || ev.kind != "unknown";
+}
+
+std::string decode_dmr_pdu_text(const std::string& hex_upper) {
+    // Hex string -> bytes. Any stray non-hex nibble (shouldn't happen: the
+    // caller only accumulates validated hex) aborts cleanly.
+    auto nib = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        return -1;
+    };
+    if (hex_upper.size() < 2) return std::string();
+    std::vector<unsigned char> b;
+    b.reserve(hex_upper.size() / 2);
+    for (std::size_t i = 0; i + 1 < hex_upper.size(); i += 2) {
+        int hi = nib(hex_upper[i]), lo = nib(hex_upper[i + 1]);
+        if (hi < 0 || lo < 0) return std::string();
+        b.push_back(static_cast<unsigned char>((hi << 4) | lo));
+    }
+    auto printable = [](unsigned char c) { return c >= 0x20 && c <= 0x7E; };
+
+    // Longest UTF-16LE run: consecutive (printable, 0x00) code units. This is
+    // how Motorola/Hytera TMS carries text; the null interleave makes a chance
+    // match in binary header/CRC bytes very unlikely, so a run >= 2 is trusted.
+    std::string best16, cur16;
+    for (std::size_t i = 0; i + 1 < b.size(); i += 2) {
+        if (printable(b[i]) && b[i + 1] == 0x00) cur16.push_back(static_cast<char>(b[i]));
+        else { if (cur16.size() > best16.size()) best16 = cur16; cur16.clear(); }
+    }
+    if (cur16.size() > best16.size()) best16 = cur16;
+
+    // Longest plain printable-ASCII run (ASCII / UTF-8 short data). Needs a
+    // higher bar (>= 4) so a few incidental printable header bytes don't read
+    // as a "message".
+    std::string best8, cur8;
+    for (unsigned char c : b) {
+        if (printable(c)) cur8.push_back(static_cast<char>(c));
+        else { if (cur8.size() > best8.size()) best8 = cur8; cur8.clear(); }
+    }
+    if (cur8.size() > best8.size()) best8 = cur8;
+
+    const bool ok16 = best16.size() >= 2;
+    const bool ok8 = best8.size() >= 4;
+    if (ok16 && best16.size() >= best8.size()) return best16; // prefer UTF-16 text
+    if (ok8) return best8;
+    if (ok16) return best16;
+    return std::string();
 }
 
 DsdEvent classify_dsd_fme_line(const std::string& line) {
