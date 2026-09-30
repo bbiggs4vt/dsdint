@@ -119,7 +119,8 @@ private:
                         const std::string& protocol = "",
                         const std::string& key_type = "", const std::string& key = "",
                         bool matched_filter = false,
-                        const std::string& pocsag_mode = "", bool invert = false);
+                        const std::string& pocsag_mode = "", bool invert = false,
+                        bool payload_hex = false);
     void stop_pipeline();
 
     // Thread-safe send of a text/binary frame; queues if a write is

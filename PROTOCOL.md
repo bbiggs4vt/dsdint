@@ -36,7 +36,7 @@ back to the defaults shown (see `handle_text_message` in `session.cpp`).
 
 | type | fields | effect |
 |---|---|---|
-| `start` | `sample_rate` (default 2000000), `channel_bandwidth` (12500), `freq_offset` (0), `gain` (26000), `afc` (false), `matched_filter` (false), `protocol` (""), `key_type` (""), `key` (""), `pocsag_mode` (""), `invert` (false) | Builds the demod + decoder pipeline. If a pipeline is already running it is stopped and rebuilt (clean restart). Replies with `started` on success, `error` on failure. |
+| `start` | `sample_rate` (default 2000000), `channel_bandwidth` (12500), `freq_offset` (0), `gain` (26000), `afc` (false), `matched_filter` (false), `protocol` (""), `key_type` (""), `key` (""), `pocsag_mode` (""), `invert` (false), `payload_hex` (false) | Builds the demod + decoder pipeline. If a pipeline is already running it is stopped and rebuilt (clean restart). Replies with `started` on success, `error` on failure. |
 | `set_gain` | `gain` (26000) | Live-adjusts discriminator gain. No reply. Ignored (silently) if no pipeline is running. |
 | `set_freq_offset` | `hz` (0) | Live-adjusts the NCO shift. No reply. Ignored if no pipeline is running. Also resets any accumulated AFC correction (an explicit retune is a statement of new truth). |
 | `stop` | — | Tears down the pipeline (kills the dsd-fme child / destroys the decoder). No reply. The WebSocket stays open; a new `start` is accepted afterwards. |
@@ -164,6 +164,16 @@ weak-signal margin near the decode threshold; leave it off unless you're
 chasing marginal signals. Applies only to the FM/DSD chain (ignored by
 TETRA). See the README's matched-filter section for the measured
 A/B results and caveats.
+
+`payload_hex` (**debug, default `false`, dsd-fme backend only**): when
+`true`, dsd-fme is run with `-Z` (Logging Frame Payload) and the server
+turns its reassembled DMR **data-PDU** hex dumps into `data` events
+carrying `extra:"data_hex=<HEX>"` — the raw bytes behind a short-data /
+UDT message, so you can inspect a payload the lossy `Text:` rendering
+mangles (non-printable bytes become `_`/`-` placeholders). This is a
+**verbose debug switch**: `-Z` makes dsd-fme print payload hex for *every*
+frame (voice included), so leave it off in normal operation. Ignored by the
+DSDcc and TETRA chains. Currently covers the multi-block PDU/UDT dumps.
 
 Anything else — an unknown `type`, or a text frame that doesn't parse as
 a flat JSON object — gets an `error` reply (see below); the connection
@@ -392,7 +402,7 @@ a key for is omitted entirely. The client reads the field for whichever
 protocol it's about to request.
 
 ```json
-{"type":"capabilities","protocols":"dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; pager-auto; pocsag; pocsag512; pocsag1200; pocsag2400; flex; auto","audio":"pcm_s16le_8000_mono","event_kinds":"voice; sync; call; message; burst; page; unknown","extra_keys_dmr":"network_type; network_id; site_id; rest_channel; lcn","extra_keys_p25":"rfss; site_id; system_id; wacn; alg_id; key_id","extra_keys_nxdn":"site_code; system_code; location_id; category","extra_keys_dstar":"rpt1; rpt2; radio_text","extra_keys_ysf":"uplink; downlink; call_mode; data_type; src_rid; dst_rid","extra_keys_edacs":"lcn; afs; lid; system_id","extra_keys_tetra":"mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr","extra_keys_pager":"protocol; baud; message_type; function; flex_type; levels; phase; cycle; frame; addr_type; group; fragment; info_type; payload"}
+{"type":"capabilities","protocols":"dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; pager-auto; pocsag; pocsag512; pocsag1200; pocsag2400; flex; auto","audio":"pcm_s16le_8000_mono","event_kinds":"voice; sync; call; message; burst; page; data; unknown","extra_keys_dmr":"network_type; network_id; site_id; rest_channel; lcn; data_hex","extra_keys_p25":"rfss; site_id; system_id; wacn; alg_id; key_id","extra_keys_nxdn":"site_code; system_code; location_id; category","extra_keys_dstar":"rpt1; rpt2; radio_text","extra_keys_ysf":"uplink; downlink; call_mode; data_type; src_rid; dst_rid","extra_keys_edacs":"lcn; afs; lid; system_id","extra_keys_tetra":"mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr","extra_keys_pager":"protocol; baud; message_type; function; flex_type; levels; phase; cycle; frame; addr_type; group; fragment; info_type; payload"}
 ```
 
 | field | type | meaning |
@@ -540,6 +550,7 @@ frequencies — rides in `extra` rather than in dedicated fields.)
 | `network_id=<n>` | DMR | dsd-fme | trunked network ID (Tier III / Con+ / Cap+) |
 | `site_id=<n>` | DMR | dsd-fme | trunked site ID (may be `N.M` form) |
 | `rest_channel=<n>` | DMR | dsd-fme | rest channel / rest LSN |
+| `data_hex=<HEX>` | DMR | dsd-fme | raw reassembled data-PDU bytes on a `data` event; only when the session set `payload_hex:true` (see the `payload_hex` start option) |
 | `lcn=<n>` | DMR | dsd-fme | logical channel number (`LCN`/`LPCN`) |
 | `rfss=<n>` | P25 | dsd-fme | RF Sub-System id (trunking) |
 | `site_id=<n>` | DMR/P25 | dsd-fme | site id (DMR `Site ID:`, P25 `Site:`/`SITE [ ]`) |

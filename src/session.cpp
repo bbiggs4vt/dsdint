@@ -252,8 +252,12 @@ void Session::handle_text_message(const std::string& msg) {
             // POCSAG text interpretation and discriminator polarity.
             std::string pocsag_mode = json::get_string(obj, "pocsag_mode");
             bool invert = json::get_bool(obj, "invert", false);
+            // Verbose debug (dsd-fme backend only): add dsd-fme's "-Z" so the
+            // reassembled data-PDU bytes surface as `data` events carrying
+            // `data_hex=...`. Off by default; -Z is a firehose.
+            bool payload_hex = json::get_bool(obj, "payload_hex", false);
             start_pipeline(sample_rate, bw, offset, gain, afc, protocol, key_type, key, matched_filter,
-                           pocsag_mode, invert);
+                           pocsag_mode, invert, payload_hex);
         } else if (type == "set_gain") {
             // Only the FM discriminator has a gain knob; the TETRA (π/4) modem
             // doesn't, and the paging demod auto-scales PCM by deviation --
@@ -477,7 +481,8 @@ bool key_value_is_valid(const std::string& v) {
 void Session::start_pipeline(double sample_rate, double channel_bw, double freq_offset,
                              float gain, bool afc, const std::string& protocol,
                              const std::string& key_type, const std::string& key,
-                             bool matched_filter, const std::string& pocsag_mode, bool invert) {
+                             bool matched_filter, const std::string& pocsag_mode, bool invert,
+                             [[maybe_unused]] bool payload_hex) {
     stop_pipeline(); // clean slate if already running
 
     const ProtocolHint hint = parse_protocol_hint(protocol);
@@ -794,6 +799,13 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
                 dcfg.extra_args.push_back("-" + kflag);
                 dcfg.extra_args.push_back(key);
             }
+        }
+        // Verbose payload debug: dsd-fme "-Z" (Logging Frame Payload). The
+        // reader turns its reassembled data-PDU hex dumps into `data` events
+        // (extra="data_hex=..."). Opt-in -- it prints hex for every frame.
+        if (payload_hex) {
+            dcfg.payload_hex = true;
+            dcfg.extra_args.push_back("-Z");
         }
 #endif // DSD_USE_DSDCC_BACKEND
 

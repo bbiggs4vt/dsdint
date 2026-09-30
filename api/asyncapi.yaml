@@ -358,6 +358,13 @@ components:
             rolloff, DMR 4FSK) to the discriminator output for a few dB of
             weak-signal margin near threshold. No-op in normal conditions;
             FM/DSD chain only (ignored by TETRA), hand-rolled demod only.
+        payload_hex:
+          type: boolean
+          default: false
+          description: |
+            Debug, dsd-fme backend only. Run dsd-fme with -Z and surface its
+            reassembled DMR data-PDU hex as `data` events (extra=data_hex=...).
+            Verbose (-Z logs every frame's payload); leave off in normal use.
         protocol:
           $ref: "#/components/schemas/ProtocolHint"
         key_type:
@@ -560,4 +567,6 @@ components:
         `unknown` is suppressed by default (startup banner / diagnostics).
         `page` is a decoded pager message (paging hints only): talkgroup =
         capcode, message = page text, extra = protocol/baud/message_type/...
-      enum: [voice, sync, call, message, burst, page, unknown]
+        `data` is a raw reassembled DMR data PDU (dsd-fme backend, only when
+        the session set `payload_hex:true`): extra = `data_hex=<HEX>`.
+      enum: [voice, sync, call, message, burst, page, data, unknown]

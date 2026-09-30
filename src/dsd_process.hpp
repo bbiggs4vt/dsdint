@@ -25,7 +25,9 @@
 #include <atomic>
 #include <functional>
 #include <cstdint>
+#include <cctype>
 #include <mutex>
+#include <optional>
 
 namespace dsdsrv {
 
@@ -62,6 +64,79 @@ struct DmrSlotCarry {
     }
 };
 
+// Captures dsd-fme's "-Z" (Logging Frame Payload) hex dump of a reassembled
+// DMR data PDU and turns it into a `data` event carrying the raw bytes. Under
+// -Z, dsd-fme prints a header line "Slot N - Multi Block PDU Message" (or
+// "... Multi Block Control Message") followed by wrapped lines of contiguous
+// hex (12 bytes each). Fed each cleaned stdout line in order, this accumulates
+// that hex and, when the dump ends (the next non-hex line), yields one event
+// with extra="data_hex=<HEX>" so a client can see the actual bytes behind a
+// lossy/garbled short-data "Text:" body. Single-threaded (the stdout reader),
+// no locking; unit-tested via tests/test_dsd_fme_parse. Only relevant when the
+// session asked for payload hex (the -Z firehose is opt-in).
+struct PayloadHexCarry {
+    bool capturing = false;
+    int slot = 0;
+    std::string hex;
+
+    // Feed one cleaned line, in stdout order. Returns a completed `data` event
+    // when this line ends a dump, else nullopt. Call flush() at end of stream.
+    std::optional<DsdEvent> feed(const std::string& line) {
+        int hdr_slot = 0;
+        if (is_header(line, hdr_slot)) {
+            std::optional<DsdEvent> done = finish();   // flush a prior dump, if any
+            capturing = true; slot = hdr_slot; hex.clear();
+            return done;
+        }
+        if (capturing) {
+            std::string h;
+            if (extract_hex(line, h)) { hex += h; return std::nullopt; }
+            return finish();                           // a non-hex line ends the dump
+        }
+        return std::nullopt;
+    }
+
+    std::optional<DsdEvent> flush() { return finish(); }
+
+private:
+    std::optional<DsdEvent> finish() {
+        if (!capturing) return std::nullopt;
+        capturing = false;
+        if (hex.empty()) return std::nullopt;
+        DsdEvent ev;
+        ev.kind = "data";
+        ev.slot = slot == 1 ? "1" : (slot == 2 ? "2" : "");
+        ev.extra = "data_hex=" + hex;
+        ev.raw_line = "Multi Block PDU payload (dsd-fme -Z)";
+        hex.clear();
+        return ev;
+    }
+
+    static bool is_header(const std::string& l, int& slot_out) {
+        std::size_t p = l.find("Slot ");
+        if (p == std::string::npos) return false;
+        std::size_t i = p + 5;
+        if (i >= l.size() || !std::isdigit(static_cast<unsigned char>(l[i]))) return false;
+        if (l.find("Multi Block", i) == std::string::npos) return false;
+        if (l.find("Message", i) == std::string::npos) return false;
+        slot_out = l[i] - '0';
+        return true;
+    }
+
+    // True when the whole line is a run of hex nibbles (ignoring whitespace),
+    // an even number of them. `out` gets the uppercased nibbles.
+    static bool extract_hex(const std::string& l, std::string& out) {
+        out.clear();
+        for (char c : l) {
+            if (std::isspace(static_cast<unsigned char>(c))) continue;
+            if (std::isxdigit(static_cast<unsigned char>(c)))
+                out += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            else { out.clear(); return false; }
+        }
+        return !out.empty() && (out.size() % 2 == 0);
+    }
+};
+
 struct DsdProcessConfig {
     std::string dsd_fme_path = "dsd-fme";
     // Discriminator audio format we'll write to dsd-fme's stdin.
@@ -79,6 +154,12 @@ struct DsdProcessConfig {
     // {"-C", "451000000"} for a control channel). Kept separate from the
     // fixed flags above so callers don't have to rebuild the base command.
     std::vector<std::string> extra_args;
+
+    // Opt-in verbose debug: when true, session.cpp also appends dsd-fme's
+    // "-Z" (Logging Frame Payload) and the reader turns the reassembled
+    // data-PDU hex dumps into `data` events (extra="data_hex=..."). Off by
+    // default -- -Z is a firehose (hex for every frame, voice included).
+    bool payload_hex = false;
 
     // If nonzero, dsd-fme is told to stream decoded voice PCM out via
     // UDP to 127.0.0.1:<udp_audio_port> ("-o udp:127.0.0.1:<port>"),
@@ -187,6 +268,9 @@ private:
     // Carries dsd-fme's per-burst slot onto its unmarked follow-on lines.
     // Touched only by the stdout reader thread, so it needs no lock.
     DmrSlotCarry slot_carry_;
+    // Accumulates dsd-fme "-Z" data-PDU hex dumps into `data` events. Only
+    // active when cfg_.payload_hex; stdout-reader-thread only, no lock.
+    PayloadHexCarry payload_hex_;
 };
 
 } // namespace dsdsrv

@@ -506,6 +506,41 @@ int main() {
         check(c3.slot == "1", "subsequent unmarked call now inherits slot 1");
     }
 
+    // ---- PayloadHexCarry: dsd-fme -Z data-PDU hex -> `data` event ----
+    {
+        PayloadHexCarry ph;
+        check(!ph.feed(" Slot 1 Data Header - Indiv UDT - Source: 21 Target: 5").has_value(),
+              "pre-dump header line: nothing emitted");
+        check(!ph.feed(" Slot 1 - Multi Block Control Message").has_value(),
+              "dump header starts capture, emits nothing yet");
+        check(!ph.feed("  00A3B2C1D0").has_value(), "hex line accumulates");
+        check(!ph.feed("  1122").has_value(), "second hex line accumulates");
+        auto ev = ph.feed(" UTF8 Text: garbled");   // non-hex line ends the dump
+        check(ev.has_value(), "non-hex line ends the dump and yields an event");
+        if (ev) {
+            check(ev->kind == "data", "emitted event kind is data");
+            check(ev->slot == "1", "data event carries the header's slot");
+            check(ev->extra == "data_hex=00A3B2C1D01122",
+                  "data_hex is the concatenated, uppercased PDU bytes");
+        }
+        check(!ph.flush().has_value(), "nothing left to flush after the dump ended");
+    }
+    {
+        // Slot-2 "PDU Message" variant, flushed at end-of-stream (no terminator).
+        PayloadHexCarry ph;
+        ph.feed(" Slot 2 - Multi Block PDU Message");
+        ph.feed("  deadBEEF");   // mixed case -> uppercased
+        auto ev = ph.flush();
+        check(ev.has_value() && ev->slot == "2" && ev->extra == "data_hex=DEADBEEF",
+              "EOS flush emits the pending slot-2 dump, uppercased");
+    }
+    {
+        // A hex word appearing with no preceding dump header is ignored.
+        PayloadHexCarry ph;
+        check(!ph.feed("  DEAD").has_value(), "hex-looking line without a header: ignored");
+        check(!ph.flush().has_value(), "nothing captured without a header");
+    }
+
     // ---- crc_error wire form: definite 0/1, never blank ----
     {
         check(crc_error_wire("1") == "1", "crc wire: flagged -> \"1\"");

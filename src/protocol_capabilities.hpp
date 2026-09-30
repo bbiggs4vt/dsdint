@@ -99,6 +99,7 @@ inline const std::vector<CapFamily>& cap_families() {
             {"site_id",      KeyBackend::Fme},
             {"rest_channel", KeyBackend::Fme},
             {"lcn",          KeyBackend::Fme},
+            {"data_hex",     KeyBackend::Fme},
         }},
         {"extra_keys_p25", {
             {"rfss",      KeyBackend::Fme},
@@ -201,7 +202,7 @@ inline std::string build_capabilities_json() {
     w.field("protocols", protos);
     // Audio shape is now uniform across backends (see PROTOCOL.md).
     w.field("audio", std::string("pcm_s16le_8000_mono"));
-    w.field("event_kinds", std::string("voice; sync; call; message; burst; page; unknown"));
+    w.field("event_kinds", std::string("voice; sync; call; message; burst; page; data; unknown"));
     for (const auto& fam : cap_families()) {
         std::string keys = cap_join_family(fam);
         if (!keys.empty()) w.field(fam.field, keys);

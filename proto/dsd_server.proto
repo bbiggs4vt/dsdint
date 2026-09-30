@@ -86,6 +86,9 @@ message StartRequest {
   // skyper; and discriminator polarity for spectrally inverted IQ.
   string pocsag_mode = 11 [json_name = "pocsag_mode"];
   bool invert = 12;
+  // Debug, dsd-fme backend only: run dsd-fme with -Z and surface reassembled
+  // DMR data-PDU hex as `data` events (extra="data_hex=<HEX>"). Verbose.
+  bool payload_hex = 13 [json_name = "payload_hex"];
 }
 
 // {"type":"set_gain","gain":N}. Live discriminator-gain adjust. No reply.
@@ -168,7 +171,7 @@ message ErrorMessage {
 // token vocabulary.
 message Event {
   string type = 1;                                    // = "event"
-  string kind = 2;         // voice | sync | call | message | burst | page | unknown
+  string kind = 2;         // voice | sync | call | message | burst | page | data | unknown
   string talkgroup = 3;    // decimal; a callsign for D-STAR/YSF; TETRA group SSI
   string source_id = 4 [json_name = "source_id"];   // decimal, a callsign, or TETRA party SSI
   string slot = 5;         // DMR TDMA slot "1"/"2"
