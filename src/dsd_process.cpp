@@ -614,8 +614,19 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     else if (std::regex_search(line, emerg_val_re)) ev.emergency = "1";
     if (std::regex_search(line, m, alias_re)) ev.alias = m[1].str();
     if (std::regex_search(line, err_re)) ev.crc_error = "1";
-    if (std::regex_search(line, m, sms_re) && m[1].matched) {
+    // A short-data "Text:" body. When the frame failed CRC, dsd-fme still
+    // prints its (garbage) decoded bytes and appends a "(CRC ERR)"/"(FEC ERR)"
+    // marker -- which err_re just set crc_error from. That body is untrustworthy
+    // and its non-printable bytes come out as '_'/'-' placeholders, so don't
+    // surface it as a message; the event still carries crc_error=1. Only a
+    // CRC-clean body becomes a message.
+    if (ev.crc_error != "1" && std::regex_search(line, m, sms_re) && m[1].matched) {
         std::string msg = m[1].str();
+        // Defensive: strip a trailing decoder status marker if one ever slips
+        // through in a form err_re didn't catch, so it never lands in the body.
+        static const std::regex trailing_status_re(
+            R"(\s*\(?\s*(?:CRC|FEC|EMB)\s*ERR\s*\)?\s*$)", std::regex::icase);
+        msg = std::regex_replace(msg, trailing_status_re, "");
         // Trim leading whitespace and trailing padding: dsd-fme substitutes
         // '_' for null bytes and '-'/space for other non-printables, so a
         // short body in a fixed-width block is tail-padded with those.

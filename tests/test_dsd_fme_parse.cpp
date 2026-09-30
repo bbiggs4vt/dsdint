@@ -346,6 +346,32 @@ int main() {
         check(e.message.empty(), "all-padding body -> no message");
         check(e.kind == "unknown", "all-padding SMS line stays unknown (suppressed)");
     }
+    {
+        // A CRC-failed short-data body: dsd-fme prints the garbage decode plus a
+        // "(CRC ERR)" marker. crc_error is flagged and the untrustworthy body is
+        // NOT surfaced as a message (real captured shape).
+        DsdEvent e = classify_dsd_fme_line("ISO7 Text: _---@_________ (CRC ERR)");
+        check(e.crc_error == "1", "CRC-ERR text line: crc_error flagged");
+        check(e.message.empty(), "CRC-ERR text line: garbage body not surfaced as a message");
+        check(e.kind != "message", "CRC-ERR text line: not classified as a message");
+    }
+    {
+        // Same for FEC ERR, and with SRC/TGT present the event still carries
+        // those (only the message body is dropped).
+        DsdEvent e = classify_dsd_fme_line(
+            "Slot 2 - SRC: 6789; TGT: 12345; UTF8 Text: garble (FEC ERR)");
+        check(e.crc_error == "1", "FEC-ERR text line: crc_error flagged");
+        check(e.message.empty(), "FEC-ERR text line: no message body");
+        check(e.source_id == "6789" && e.talkgroup == "12345",
+              "FEC-ERR text line: SRC/TGT still parsed");
+    }
+    {
+        // A CRC-CLEAN but non-text body (binary/UDT) is still passed through --
+        // only CRC-failed bodies are dropped (documents the boundary).
+        DsdEvent e = classify_dsd_fme_line("ISO7 Text: _-- -16025");
+        check(e.crc_error != "1" && e.message == "_-- -16025",
+              "clean non-text body is still relayed verbatim");
+    }
 
     // ---- EDACS / ProVoice (dsd-fme -fh/-fe/-fp bracket + colon formats) ----
     {
