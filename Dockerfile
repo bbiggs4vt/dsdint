@@ -12,9 +12,12 @@
 # "tetrakit" (via the bundled tetra-kit decoder). Both decoders are on the
 # image's PATH.
 #
-# TETRA voice: TETRA sessions decode events and extract speech frames, but the
-# image ships NO ACELP codec (patent-encumbered / GPLv3 — see TETRA_VOICE.md),
-# so they emit events only, not decoded audio.
+# TETRA voice: TETRA sessions decode events and extract speech frames. By
+# default the image ships NO ACELP codec (patent-encumbered / GPLv3 — see
+# TETRA_VOICE.md), so they emit events only, not decoded audio. Opt in with
+# `--build-arg TETRA_CODEC=1` to compile the codec (from the already-cloned
+# tetra-kit) into the servers so TETRA sessions emit audio; such an image links
+# GPLv3 code (see the TETRA_CODEC arg below before redistributing).
 #
 # Paging is likewise a runtime hint, not a separate executable: "pager-auto",
 # "pocsag*" or "flex" runs an FM -> multimon-ng chain (the bundled multimon-ng,
@@ -132,12 +135,26 @@ COPY tests /opt/dsd-server/tests
 COPY tools /opt/dsd-server/tools
 # Real off-air paging captures (X-Midas BLUE) used by test_session_pager.
 COPY samples /opt/dsd-server/samples
-RUN cmake -S /opt/dsd-server -B /opt/dsd-server/build \
+# Optional TETRA voice codec. TETRA speech is ACELP (ETSI EN 300 395-2); the
+# reference codec is patent-encumbered and, as carried by tetra-kit, GPLv3, so
+# it is NOT vendored in the repo and OFF by default (image stays events-only).
+# `--build-arg TETRA_CODEC=1` compiles tetra-kit's already-cloned recorder/audio
+# codec into the servers so TETRA sessions emit decoded audio -- for your own
+# locally-built image. Such an image links GPLv3 code; consider that before
+# redistributing it. (No extra download: tetra-kit is already cloned above.)
+ARG TETRA_CODEC=0
+RUN CODEC_ARGS=""; \
+    if [ "$TETRA_CODEC" = "1" ]; then \
+        CODEC_ARGS="-DDSD_WITH_TETRA_CODEC=ON -DTETRA_KIT_DIR=/opt/src/tetra-kit"; \
+        echo "== Building WITH the TETRA ACELP voice codec (GPLv3) =="; \
+    fi; \
+    cmake -S /opt/dsd-server -B /opt/dsd-server/build \
         -DCMAKE_BUILD_TYPE=Release \
         -DDSD_FME_BIN=/usr/local/bin/dsd-fme \
         -DDSDCC_SAMPLES_DIR=/opt/src/dsdcc/samples \
         -DMULTIMON_NG_BIN=/usr/local/bin/multimon-ng \
         -DPAGER_FIXTURES_DIR=/opt/dsd-server/build/pager_fixtures \
+        $CODEC_ARGS \
     && cmake --build /opt/dsd-server/build -j"$(nproc)" --target \
         dsd-server dsd-server-dsdcc
 
@@ -162,6 +179,9 @@ RUN cmake -S /opt/dsd-server -B /opt/dsd-server/build \
 # (60 ms/block is ~1.4x realtime; the QEMU-emulated ARM64 runs use 100.)
 FROM build AS test
 ARG DSD_TEST_PACE_MS=10
+# Same opt-in as the build stage: with TETRA_CODEC=1 the codec round-trip test
+# is built and run too (it is only registered in a codec build).
+ARG TETRA_CODEC=0
 # sox converts multimon-ng's bundled FLAC captures into the paging fixtures.
 RUN apt-get update && apt-get install -y --no-install-recommends sox \
     && rm -rf /var/lib/apt/lists/* \
@@ -181,6 +201,9 @@ RUN cmake --build /opt/dsd-server/build -j"$(nproc)" --target \
         test_fm_demod test_matched_filter test_dmr_slot_aggregator test_afc \
         test_server_stats \
         test_pager_demod test_pager_events test_session_pager \
+    && if [ "$TETRA_CODEC" = "1" ]; then \
+           cmake --build /opt/dsd-server/build -j"$(nproc)" --target test_tetra_codec; \
+       fi \
     && cd /opt/dsd-server/build \
     && DSD_TEST_PACE_MS=${DSD_TEST_PACE_MS} ctest --output-on-failure
 

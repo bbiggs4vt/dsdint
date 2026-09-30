@@ -1,12 +1,20 @@
 # TETRA voice decode — design + status
 
-Status: **frame extraction implemented and validated; codec is the remaining
-plug-in.** `src/tetra_voice.*` extracts encoded speech from tetra-kit's JSON
-(base64 + zlib) into 690-int16 frames, and `TetraKitProcess` is wired to feed
-them to an optional `TetraVoiceDecoder` → `AudioCallback`. What's not in-repo
-is the ACELP synthesis codec itself (patent-encumbered / GPLv3 — see CODEC
-below); `make_tetra_voice_decoder()` returns null without it, so today's build
-extracts frames but emits no audio.
+Status: **tetra-kit voice path works via an opt-in codec build; osmo voice
+path is the remaining piece.** `src/tetra_voice.*` extracts encoded speech from
+tetra-kit's JSON (base64 + zlib) into 690-int16 frames, and `TetraKitProcess`
+feeds them to an optional `TetraVoiceDecoder` → `AudioCallback`. The codec
+binding now exists: `src/tetra_voice_codec.cpp` (compiled only with
+`DSD_WITH_TETRA_CODEC`) adapts tetra-kit's ACELP `audio_decoder` to the seam,
+so a codec build emits real 8 kHz audio on `protocol":"tetrakit"` sessions —
+validated by `tests/test_tetra_codec.cpp` (real captured frame → decoder →
+non-silent PCM). The codec is still **not vendored** (patent-encumbered /
+GPLv3 — see CODEC below); it is fetched only in an opt-in build
+(`cmake -DDSD_WITH_TETRA_CODEC=ON -DTETRA_KIT_DIR=<tetra-kit>` or the
+Dockerfile's `--build-arg TETRA_CODEC=1`, which reuses the tetra-kit it already
+clones). A default build still returns null from `make_tetra_voice_decoder()`
+and emits events only. The osmo (`protocol":"tetra"`) voice UDP path is not
+wired yet, so that backend stays events-only regardless.
 
 **Validated end to end on the real capture** (outside the repo, using
 tetra-kit's own GPLv3 codec as an oracle): our demod → tetra-kit decoder →
@@ -35,9 +43,12 @@ freely downloadable but **must not be vendored into this repo**. So the codec
 is an **optional external dependency**, found at build time exactly like
 DSDcc/mbelib is for the in-process DMR backend:
 
-- CMake option `DSD_WITH_TETRA_CODEC` (default OFF) + `find_library`/
-  `find_path` for the ETSI codec. When absent, the TETRA variants build
-  **events-only**, i.e. today's behavior — no regression, no new hard dep.
+- CMake option `DSD_WITH_TETRA_CODEC` (default OFF) + `-DTETRA_KIT_DIR=<tetra-kit
+  checkout>`, which compiles tetra-kit's `recorder/audio` codec sources (the
+  ETSI reference wrapped GPLv3) plus `src/tetra_voice_codec.cpp` into the
+  servers. When OFF, the TETRA variants build **events-only**, i.e. the default
+  behavior — no regression, no new hard dep. A build with it ON is GPLv3 by
+  virtue of the linked codec, which is why it is opt-in and off by default.
 - Encrypted traffic (TEA1–4) can't be decoded without keys and is out of
   scope regardless of the codec.
 
@@ -112,12 +123,12 @@ and the extraction paths above short-circuit (events-only build).
    690-int16 frames — DONE (`tetrakit_extract_speech_frame`). Unit-tested
    against a real captured frame (`tests/test_tetra_voice.cpp`), and
    `TetraKitProcess` is wired to call it per traffic report.
-3. **Wire codec → AudioCallback** — the extraction→decoder→`on_audio` wiring
-   is in place in `TetraKitProcess`; what remains is a concrete
-   `TetraVoiceDecoder` (below) so real PCM flows. Confirmed working with an
-   out-of-repo codec (the WAV validation above). Next: extend
-   `test_tetra_kit_process` with a stub decoder to assert PCM reaches the
-   client seam without needing the real codec.
+3. **Wire codec → AudioCallback** — DONE. `src/tetra_voice_codec.cpp` (a
+   `DSD_WITH_TETRA_CODEC` build only) implements `make_tetra_voice_decoder()`
+   on tetra-kit's `audio_decoder` (690 int16 → 480 int16 PCM), and
+   `TetraKitProcess` already routes extracted frames → decoder → `on_audio`.
+   `tests/test_tetra_codec.cpp` runs the real captured frame through it and
+   asserts non-silent PCM (gated on the codec build).
 4. **osmo voice UDP receiver** in `TetraProcess` (second socket, framing pinned
    against the fork), then the same codec → AudioCallback wiring.
 5. **Codec round-trip test** when `DSD_WITH_TETRA_CODEC` is available (encode a

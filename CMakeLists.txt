@@ -74,6 +74,71 @@ set(PAGER_RUNTIME_SOURCES
 )
 set(RUNTIME_CHAIN_SOURCES ${TETRA_RUNTIME_SOURCES} ${PAGER_RUNTIME_SOURCES})
 
+# --- Optional TETRA voice codec (opt-in; off by default) ---------------------
+# TETRA voice is ACELP (ETSI EN 300 395-2). The reference codec is patent-
+# encumbered and, as carried by tetra-kit, GPLv3 -- so it is NOT vendored here.
+# With DSD_WITH_TETRA_CODEC=ON the servers compile tetra-kit's recorder/audio
+# codec sources (from a checkout at TETRA_KIT_DIR) plus the adapter TU
+# src/tetra_voice_codec.cpp, and TETRA sessions emit decoded audio. A build
+# with this ON is GPLv3 by virtue of the linked codec; leave it OFF for a
+# clean, events-only image (today's default -- no behavior change, no new dep).
+# The Dockerfile's `--build-arg TETRA_CODEC=1` clones tetra-kit and flips this.
+option(DSD_WITH_TETRA_CODEC "Build the TETRA ACELP voice codec (GPLv3; needs -DTETRA_KIT_DIR) so TETRA sessions emit audio" OFF)
+if(DSD_WITH_TETRA_CODEC)
+  if(NOT TETRA_KIT_DIR)
+    message(FATAL_ERROR "DSD_WITH_TETRA_CODEC=ON requires -DTETRA_KIT_DIR=<tetra-kit checkout containing recorder/audio/>")
+  endif()
+  set(TETRA_CODEC_AUDIO_DIR "${TETRA_KIT_DIR}/recorder/audio")
+  set(TETRA_CODEC_INCLUDE_DIRS
+    ${TETRA_CODEC_AUDIO_DIR}
+    ${TETRA_CODEC_AUDIO_DIR}/cdecoder
+    ${TETRA_CODEC_AUDIO_DIR}/sdecoder)
+  set(TETRA_CODEC_SOURCES
+    ${TETRA_CODEC_AUDIO_DIR}/audio_decoder.cc
+    ${TETRA_CODEC_AUDIO_DIR}/cdecoder/cdecoder.cc
+    ${TETRA_CODEC_AUDIO_DIR}/cdecoder/cdecoder_func.cc
+    ${TETRA_CODEC_AUDIO_DIR}/cdecoder/cdecoder_operators.cc
+    ${TETRA_CODEC_AUDIO_DIR}/sdecoder/sdecoder.cc
+    ${TETRA_CODEC_AUDIO_DIR}/sdecoder/sdecoder_lsp.cc
+    ${TETRA_CODEC_AUDIO_DIR}/sdecoder/sdecoder_operators.cc
+    ${TETRA_CODEC_AUDIO_DIR}/sdecoder/sdecoder_codec.cc
+    ${TETRA_CODEC_AUDIO_DIR}/sdecoder/sdecoder_dsp.cc
+    ${TETRA_CODEC_AUDIO_DIR}/sdecoder/sdecoder_math.cc)
+  foreach(_f IN LISTS TETRA_CODEC_SOURCES)
+    if(NOT EXISTS ${_f})
+      message(FATAL_ERROR "DSD_WITH_TETRA_CODEC: missing codec source ${_f} -- is TETRA_KIT_DIR a full tetra-kit checkout?")
+    endif()
+  endforeach()
+  # Vendored codec is old C-style C++; keep it out of the project's -Wall -Wextra.
+  set_source_files_properties(${TETRA_CODEC_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
+  message(STATUS "DSD_WITH_TETRA_CODEC=ON -- TETRA voice audio enabled (GPLv3 codec from ${TETRA_KIT_DIR})")
+endif()
+
+# Add the codec sources + adapter + includes + define to a server target when
+# the option is on; a no-op otherwise.
+function(dsd_enable_tetra_codec target)
+  if(DSD_WITH_TETRA_CODEC)
+    target_sources(${target} PRIVATE src/tetra_voice_codec.cpp ${TETRA_CODEC_SOURCES})
+    target_include_directories(${target} PRIVATE ${TETRA_CODEC_INCLUDE_DIRS})
+    target_compile_definitions(${target} PRIVATE DSD_WITH_TETRA_CODEC)
+  endif()
+endfunction()
+
+# Codec round-trip test (real captured frame -> ACELP -> PCM). Built only in a
+# codec build; runs in the Dockerfile's TETRA_CODEC=1 test stage.
+if(DSD_WITH_TETRA_CODEC)
+  add_executable(test_tetra_codec EXCLUDE_FROM_ALL
+    tests/test_tetra_codec.cpp
+    src/tetra_voice.cpp src/tetra_kit_json.cpp src/tetra_voice_codec.cpp
+    ${TETRA_CODEC_SOURCES})
+  target_include_directories(test_tetra_codec PRIVATE src ${TETRA_CODEC_INCLUDE_DIRS})
+  target_compile_definitions(test_tetra_codec PRIVATE DSD_WITH_TETRA_CODEC)
+  target_link_libraries(test_tetra_codec PRIVATE ZLIB::ZLIB)
+  target_compile_options(test_tetra_codec PRIVATE -Wall -Wextra)
+  add_test(NAME tetra_codec_test COMMAND test_tetra_codec)
+  set_tests_properties(tetra_codec_test PROPERTIES TIMEOUT 30)
+endif()
+
 add_executable(dsd-server
   src/main.cpp
   src/session.cpp
@@ -84,6 +149,7 @@ add_executable(dsd-server
 target_include_directories(dsd-server PRIVATE src ${Boost_INCLUDE_DIRS})
 target_link_libraries(dsd-server PRIVATE Boost::system Threads::Threads ZLIB::ZLIB m)
 target_compile_options(dsd-server PRIVATE -Wall -Wextra)
+dsd_enable_tetra_codec(dsd-server)
 
 # Standalone sanity test for the DSP core (no Boost/network dependency).
 add_executable(test_fm_demod EXCLUDE_FROM_ALL src/fm_demod.cpp tests/test_fm_demod.cpp)
@@ -298,6 +364,7 @@ if(DSD_BUILD_DSDCC_VARIANT)
     endif()
     target_compile_definitions(dsd-server-dsdcc PRIVATE DSD_USE_DSDCC_BACKEND)
     target_compile_options(dsd-server-dsdcc PRIVATE -Wall -Wextra)
+    dsd_enable_tetra_codec(dsd-server-dsdcc)
 
     # Decoder-level test against a real DMR capture -- see
     # test_dsdcc_decoder.cpp for what it asserts and the ground truth.
