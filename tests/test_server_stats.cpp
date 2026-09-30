@@ -132,6 +132,13 @@ int main() {
         check(contains(lj, "\"session\":2"), "log json carries the session id");
         // The frame text is embedded as an escaped JSON string.
         check(contains(lj, "\\\"type\\\":\\\"event\\\""), "log json escapes the frame text");
+
+        // clear_log empties the ring (the Clear button).
+        st.clear_log();
+        check(st.log_snapshot().empty() && st.snapshot().log_lines == 0,
+              "clear_log empties the log buffer");
+        st.add_log(3, "after clear");
+        check(st.log_snapshot().size() == 1, "logging resumes after a clear");
     }
     {
         // A zero limit disables logging entirely.

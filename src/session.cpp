@@ -154,6 +154,13 @@ void Session::serve_http() {
         res->result(http::status::ok);
         res->set(http::field::content_type, "application/json");
         res->body() = stats_ ? render_log_json(stats_->log_snapshot()) : std::string("{\"log\":[]}");
+    } else if (target == "/log/clear") {
+        // Status-page Clear button: empty the log ring, return the now-empty
+        // log. (A side-effecting GET, kept simple for this local debug page.)
+        if (stats_) stats_->clear_log();
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "application/json");
+        res->body() = std::string("{\"log\":[]}");
     } else {
         res->result(http::status::not_found);
         res->set(http::field::content_type, "text/plain; charset=utf-8");

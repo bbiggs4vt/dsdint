@@ -459,6 +459,7 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
     o << "<div class=\"panel\" id=\"tab-log\" hidden>\n"
       << "<div class=\"logbar\">"
       << "<button id=\"log-pause\" class=\"btn\" type=\"button\">Pause</button>"
+      << "<button id=\"log-clear\" class=\"btn\" type=\"button\">Clear</button>"
       << "<span id=\"log-note\"></span></div>\n"
       << "<table>\n<thead><tr>"
       << "<th>Time (UTC)</th><th>#</th><th>Message</th>"
@@ -539,6 +540,7 @@ function render(d){
 }
 function renderLog(d){
   var log=d.log||[];
+  setText('cnt-log',''+log.length);
   var tb=document.getElementById('lrows');tb.textContent='';
   if(!log.length){emptyRow(tb,'no frames logged yet',3);return;}
   log.forEach(function(e){
@@ -572,6 +574,13 @@ function showTab(id){
     pb.classList.toggle('paused',logPaused);
     if(note)note.textContent=logPaused?'paused — log frozen for inspection':'';
     if(!logPaused)fetchLog();   // catch up immediately on resume
+  });
+  var cb=document.getElementById('log-clear');
+  if(cb)cb.addEventListener('click',function(){
+    // Clear the server's ring buffer (so it stays cleared, not refilled by
+    // the next poll), then render the now-empty log.
+    fetch('/log/clear',{cache:'no-store'}).then(function(r){return r.json();})
+      .then(renderLog).catch(function(){});
   });
   showTab('tab-sessions');})();
 function tick(){

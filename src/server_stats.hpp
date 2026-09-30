@@ -116,6 +116,12 @@ public:
         return out;
     }
 
+    // Empty the log ring buffer (the status page's Clear button).
+    void clear_log() {
+        std::lock_guard<std::mutex> lk(mu_);
+        log_.clear();
+    }
+
     // A WebSocket client connected. Returns its stable id; records it in the
     // live table and bumps the cumulative total.
     std::uint64_t add_session(const std::string& remote) {

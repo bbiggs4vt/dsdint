@@ -530,7 +530,8 @@ request whose pipeline failed to start.
 
 The **Log** tab is a
 live view of the JSON frames the server has sent clients (last 300, newest
-first), with a **Pause** button to freeze the view for inspection. Binary
+first), with **Pause** (freeze the view for inspection) and **Clear**
+(empty the server's log buffer) buttons. Binary
 voice audio, the high-rate `kind:"voice"` events, and the once-per-connect
 `capabilities` greeting are excluded; everything else
 (`started`/`error`/metadata events) is shown. Protocols, History and Log are in-memory only and reset on restart;

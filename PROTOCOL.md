@@ -1015,6 +1015,7 @@ over HTTP and the connection closed:
 | `GET /`, `GET /status` | `text/html` dashboard; live-polls `/status.json` (~1 s) and patches the DOM in place, with a 5 s `<noscript>` meta-refresh fallback |
 | `GET /status.json` | `application/json` (see below) |
 | `GET /log.json` | `application/json` — the recent outbound JSON frames (see below) |
+| `GET /log/clear` | empties the log ring buffer (the page's Clear button); returns `{"log":[]}` |
 | any other path | `404` |
 | non-GET | `405` |
 
