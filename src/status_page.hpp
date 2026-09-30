@@ -132,6 +132,7 @@ inline std::string render_status_json(const ServerStats::Snapshot& s) {
     o << ",\"active_pipelines\":" << s.active_pipelines;
     o << ",\"uptime_seconds\":" << static_cast<long>(s.uptime_s);
     o << ",\"log_lines\":" << s.log_lines;
+    o << ",\"iq_logging\":" << (s.iq_logging ? "true" : "false");
     o << ",\"started\":\"" << json_escape(format_utc(s.started)) << "\"";
 
     o << ",\"by_protocol\":{";
@@ -333,6 +334,16 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
       << "  .btn.paused { background-image: linear-gradient(rgba(255,255,255,.12), rgba(255,255,255,0)),\n"
       << "                                  linear-gradient(#e0a33c, #d38f2a); }\n"
       << "  #log-note { color: var(--muted); font-size: 0.8rem; }\n"
+      // Global IQ-capture control bar (a checkbox + status note).
+      << "  .ctrlbar { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem;\n"
+      << "             margin-bottom: 1.5rem; padding: 0.55rem 0.85rem;\n"
+      << "             background: var(--panel); border: 1px solid var(--comp-bd);\n"
+      << "             border-radius: 4px; box-shadow: inset 0 1px 0 rgba(255,255,255,.05); }\n"
+      << "  .ctrlbar label { display: inline-flex; align-items: center; gap: 0.45rem;\n"
+      << "                   cursor: pointer; color: var(--heading); font-size: 0.85rem; }\n"
+      << "  .ctrlbar input[type=checkbox] { width: 1rem; height: 1rem; accent-color: var(--info);\n"
+      << "                                  cursor: pointer; }\n"
+      << "  #iq-log-note { color: var(--muted); font-size: 0.78rem; }\n"
       << "</style>\n</head>\n<body>\n";
 
     // Header bar.
@@ -355,6 +366,15 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
     card("tot", "Total sessions", std::to_string(s.total_sessions));
     card("act", "Active decodes", std::to_string(s.active_pipelines));
     o << "</div>\n";
+
+    // Global IQ-capture switch. Toggling it flips server-side logging for every
+    // active session (and any that start while it is on) -- see /iq_log/on|off.
+    o << "<div class=\"ctrlbar\">\n"
+      << "  <label><input type=\"checkbox\" id=\"iq-log\"" << (s.iq_logging ? " checked" : "")
+      << "> Log IQ to BLUE file</label>\n"
+      << "  <span id=\"iq-log-note\">" << (s.iq_logging ? "capturing IQ for active &amp; new sessions" : "")
+      << "</span>\n"
+      << "</div>\n";
 
     // Active-pipeline breakdown by protocol. The wrapper is always emitted
     // (hidden when empty) so the live poller has a stable node to fill.
@@ -537,6 +557,10 @@ function render(d){
     tr.appendChild(cell('mono',u.last_requested||'-'));
     ptb.appendChild(tr);});
   if(typeof d.log_lines==='number')setText('cnt-log',''+d.log_lines);
+  if(iqBox && typeof d.iq_logging==='boolean' && Date.now()>iqPendingUntil){
+    iqBox.checked=d.iq_logging;
+    if(iqNote)iqNote.textContent=d.iq_logging?'capturing IQ for active & new sessions':'';
+  }
 }
 function renderLog(d){
   var log=d.log||[];
@@ -550,6 +574,17 @@ function renderLog(d){
     tr.appendChild(cell('logmsg',e.text));
     tb.appendChild(tr);});
 }
+var iqBox=document.getElementById('iq-log');
+var iqNote=document.getElementById('iq-log-note');
+var iqPendingUntil=0;   // suppress poll-reflection briefly after a click
+if(iqBox)iqBox.addEventListener('change',function(){
+  var on=iqBox.checked; iqPendingUntil=Date.now()+2500;
+  if(iqNote)iqNote.textContent=on?'enabling capture…':'stopping capture…';
+  fetch('/iq_log/'+(on?'on':'off'),{cache:'no-store'}).then(function(r){return r.json();})
+    .then(function(d){iqBox.checked=!!d.iq_log_enabled;
+      if(iqNote)iqNote.textContent=iqBox.checked?'capturing IQ for active & new sessions':'';})
+    .catch(function(){if(iqNote)iqNote.textContent='request failed';});
+});
 var logPaused=false;
 function fetchLog(){
   if(logPaused)return;   // frozen for inspection

@@ -501,6 +501,7 @@ session exactly as before; anything else is answered over HTTP:
 |---|---|
 | `/`, `/status` | HTML dashboard (live-updates ~1 s by polling the JSON in place; falls back to a 5 s full-page `<meta>`-refresh if JavaScript is off) |
 | `/status.json` | the same data as JSON, for health checks / scraping |
+| `/iq_log/on`, `/iq_log/off` | flip the global IQ-capture switch (the page's **Log IQ** checkbox); returns `{"iq_log_enabled":…}` |
 
 The live update is a tiny `/status.json` poll that patches the page in
 place — cheap on the server (no decode work, just a mutex-guarded snapshot
@@ -538,9 +539,47 @@ voice audio, the high-rate `kind:"voice"` events, and the once-per-connect
 the JSON exposes them as `protocols` and `history` arrays, and the Log via a
 separate `/log.json` endpoint.
 
+Above the tabs is a **Log IQ to BLUE file** checkbox — a global switch that
+turns raw-IQ capture on or off for every session live (see below).
+
 ```bash
 curl http://localhost:22600/status.json
 # open http://localhost:22600/ in a browser for the live view
+```
+
+## IQ capture (recording the raw stream)
+
+The server can tee a session's raw IQ — the exact interleaved little-endian
+`float32` the client streams — to a **MIDAS BLUE** file (type 1000, format
+`CF`), a bit-exact recording you can replay with
+`tools/midas_ws_client.py` or hand to any BLUE-aware tool. Handy for
+capturing a signal that's misbehaving so it can be reproduced offline.
+
+Two ways to turn it on:
+
+- **Per session:** the client sets `iq_log:true` in its `start` message.
+  The `started` reply then carries `iq_log_file` with the server-side path.
+- **Live, from the status page:** tick the **Log IQ to BLUE file** checkbox
+  (or `GET /iq_log/on`). Every active session starts capturing immediately,
+  mid-stream, and any session that starts while it's on captures too;
+  unticking it (`/iq_log/off`) finalizes every file. This is the quick way
+  to grab a sample of whatever is on the air right now without touching the
+  client.
+
+Files are named `iq_<UTC-timestamp>_s<session>_<protocol>_<rate>Hz.blue`.
+Two environment variables tune capture (server-side):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DSD_IQ_LOG_DIR` | `.` (cwd) | Directory the `.blue` files are written to (created if missing). |
+| `DSD_IQ_LOG_MAX_MB` | `1024` | Per-session size cap in MiB; on reaching it capture stops on a sample boundary (the session keeps running). `0` = unlimited. |
+
+Capture is **off by default** and writes a lot of data at SDR rates, so
+enable it only while grabbing a specific sample. In Docker, point
+`DSD_IQ_LOG_DIR` at a mounted volume to retrieve the files:
+
+```bash
+docker run -e DSD_IQ_LOG_DIR=/caps -v "$PWD/caps:/caps" -p 22600:22600 dsd-server
 ```
 
 ## Test client: MIDAS BLUE files

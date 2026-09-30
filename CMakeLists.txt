@@ -181,6 +181,13 @@ target_compile_options(test_server_stats PRIVATE -Wall -Wextra)
 add_test(NAME server_stats_test COMMAND test_server_stats)
 set_tests_properties(server_stats_test PROPERTIES TIMEOUT 30)
 
+# BLUE IQ-capture writer (header-only, in src/). Pure filesystem I/O.
+add_executable(test_blue_writer EXCLUDE_FROM_ALL tests/test_blue_writer.cpp)
+target_include_directories(test_blue_writer PRIVATE src)
+target_compile_options(test_blue_writer PRIVATE -Wall -Wextra)
+add_test(NAME blue_writer_test COMMAND test_blue_writer)
+set_tests_properties(blue_writer_test PROPERTIES TIMEOUT 30)
+
 # π/4-DQPSK demodulator (TETRA physical layer). Pure DSP with a matching
 # modulator carried in the test as ground truth — no external deps, no
 # capture files, so it always runs.

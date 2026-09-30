@@ -82,6 +82,7 @@
 #include "pager_demod.hpp"
 #include "pager_process.hpp"
 #include "server_stats.hpp"
+#include "blue_writer.hpp"
 
 namespace dsdsrv {
 
@@ -119,7 +120,8 @@ private:
                         const std::string& protocol = "",
                         const std::string& key_type = "", const std::string& key = "",
                         bool matched_filter = false,
-                        const std::string& pocsag_mode = "", bool invert = false);
+                        const std::string& pocsag_mode = "", bool invert = false,
+                        bool iq_log = false);
     void stop_pipeline();
 
     // Thread-safe send of a text/binary frame; queues if a write is
@@ -207,6 +209,25 @@ private:
     bool writing_ = false;
 
     std::atomic<bool> pipeline_active_{false};
+
+    // Optional per-session raw-IQ capture to a MIDAS BLUE file. Enabled either
+    // by the "start" message's iq_log flag or live by the status page's global
+    // "Log IQ" switch (ServerStats::set_iq_logging, applied via set_iq_logging
+    // below). Only touched on the connection's strand (handle_binary_message
+    // writes it; start/stop_pipeline and set_iq_logging open/close it), so it
+    // needs no lock. iq_protocol_/iq_sample_rate_ cache the active pipeline's
+    // params so a live toggle can build the filename and set xdelta.
+    std::unique_ptr<BlueFileWriter> iq_log_;
+    std::string iq_protocol_;
+    double iq_sample_rate_ = 0.0;
+
+    // Open a BLUE capture file for the current pipeline (no-op if one is
+    // already open). Non-fatal on failure (logged). Strand-only.
+    void open_iq_log(const std::string& protocol, double sample_rate);
+    // Apply the global IQ-capture switch to this session: open a capture if the
+    // pipeline is active and none is running, or close the running one. Posted
+    // to this session's strand by ServerStats::set_iq_logging.
+    void set_iq_logging(bool on);
 };
 
 class Server {

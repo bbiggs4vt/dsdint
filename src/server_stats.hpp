@@ -20,6 +20,7 @@
 #include <chrono>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <string>
@@ -122,6 +123,46 @@ public:
         log_.clear();
     }
 
+    // ---- Global IQ-capture toggle (the status page's "Log IQ" checkbox) ----
+    //
+    // A single server-wide switch: when on, every active session captures its
+    // raw IQ to a BLUE file, and any session that starts while it is on begins
+    // capturing too. Each Session registers a control callback (keyed by its
+    // id) that opens/closes its own capture on its strand; set_iq_logging flips
+    // the flag and fans the new state out to all of them. The per-`start`
+    // iq_log flag is independent -- this switch is the operator's live override.
+
+    bool iq_logging() const {
+        std::lock_guard<std::mutex> lk(mu_);
+        return iq_logging_;
+    }
+
+    // Session registers (on connect) a callback that applies the on/off state
+    // to its own capture. The callback is invoked off-lock; it must be cheap
+    // and non-blocking (it posts to the session's strand).
+    void register_iq_control(std::uint64_t id, std::function<void(bool)> fn) {
+        std::lock_guard<std::mutex> lk(mu_);
+        iq_controls_[id] = std::move(fn);
+    }
+    void unregister_iq_control(std::uint64_t id) {
+        std::lock_guard<std::mutex> lk(mu_);
+        iq_controls_.erase(id);
+    }
+
+    // Flip the global switch and push the new state to every live session.
+    // Returns the state now in effect.
+    bool set_iq_logging(bool on) {
+        std::vector<std::function<void(bool)>> controls;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            iq_logging_ = on;
+            controls.reserve(iq_controls_.size());
+            for (const auto& kv : iq_controls_) controls.push_back(kv.second);
+        }
+        for (auto& fn : controls) fn(on); // off-lock: each just posts to a strand
+        return on;
+    }
+
     // A WebSocket client connected. Returns its stable id; records it in the
     // live table and bumps the cumulative total.
     std::uint64_t add_session(const std::string& remote) {
@@ -198,6 +239,7 @@ public:
         auto it = sessions_.find(id);
         if (it == sessions_.end()) return;
         if (it->second.active) close_active_locked(it->second);
+        iq_controls_.erase(id); // session gone: drop its capture control
         FinishedRow f;
         f.id = it->second.id;
         f.remote = it->second.remote;
@@ -219,6 +261,7 @@ public:
         std::size_t current_sessions = 0;   // connected right now
         std::size_t active_pipelines = 0;   // currently decoding
         double uptime_s = 0.0;
+        bool iq_logging = false;            // global IQ-capture switch state
         std::chrono::system_clock::time_point started;
         std::vector<SessionRow> rows;                 // sorted by id
         std::map<std::string, std::size_t> by_protocol; // active-pipeline count per protocol
@@ -234,6 +277,7 @@ public:
         Snapshot s;
         s.total_sessions = total_sessions_;
         s.current_sessions = sessions_.size();
+        s.iq_logging = iq_logging_;
         s.started = started_wall_;
         s.uptime_s = std::chrono::duration<double>(
                          std::chrono::steady_clock::now() - started_mono_).count();
@@ -283,6 +327,8 @@ private:
     std::map<std::uint64_t, SessionRow> sessions_;
     std::deque<FinishedRow> history_;
     std::deque<LogEntry> log_;
+    bool iq_logging_ = false;                                   // global IQ-capture switch
+    std::map<std::uint64_t, std::function<void(bool)>> iq_controls_; // per-session appliers
     std::size_t history_limit_;
     std::size_t log_limit_;
     std::uint64_t last_id_ = 0;

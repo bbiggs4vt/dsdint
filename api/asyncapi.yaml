@@ -382,6 +382,14 @@ components:
           description: |
             Paging chain only. Negate the discriminator for spectrally
             inverted (I/Q-swapped) IQ.
+        iq_log:
+          type: boolean
+          default: false
+          description: |
+            Capture this session's raw IQ to a MIDAS BLUE file (type 1000,
+            "CF") server-side. The resulting path is reported in the
+            `started` reply's `iq_log_file`. Off by default; see PROTOCOL.md
+            "IQ capture" and the DSD_IQ_LOG_DIR / DSD_IQ_LOG_MAX_MB env vars.
 
     SetGainRequest:
       type: object
@@ -451,6 +459,12 @@ components:
             Server-internal UDP port the dsd-fme child streams audio to
             (informational only; client never uses it). `0` on the DSDcc backend
             means "not applicable", not "failed".
+        iq_log_file:
+          type: string
+          description: |
+            Present only when the start had `iq_log:true` and the capture
+            file opened: the server-side path of the MIDAS BLUE file the raw
+            IQ is being written to.
 
     ErrorMessage:
       type: object

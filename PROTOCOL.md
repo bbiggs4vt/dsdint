@@ -36,7 +36,7 @@ back to the defaults shown (see `handle_text_message` in `session.cpp`).
 
 | type | fields | effect |
 |---|---|---|
-| `start` | `sample_rate` (default 2000000), `channel_bandwidth` (12500), `freq_offset` (0), `gain` (26000), `afc` (false), `matched_filter` (false), `protocol` (""), `key_type` (""), `key` (""), `pocsag_mode` (""), `invert` (false) | Builds the demod + decoder pipeline. If a pipeline is already running it is stopped and rebuilt (clean restart). Replies with `started` on success, `error` on failure. |
+| `start` | `sample_rate` (default 2000000), `channel_bandwidth` (12500), `freq_offset` (0), `gain` (26000), `afc` (false), `matched_filter` (false), `protocol` (""), `key_type` (""), `key` (""), `pocsag_mode` (""), `invert` (false), `iq_log` (false) | Builds the demod + decoder pipeline. If a pipeline is already running it is stopped and rebuilt (clean restart). Replies with `started` on success, `error` on failure. `iq_log` (default `false`): capture this session's raw IQ to a MIDAS BLUE file (see below). |
 | `set_gain` | `gain` (26000) | Live-adjusts discriminator gain. No reply. Ignored (silently) if no pipeline is running. |
 | `set_freq_offset` | `hz` (0) | Live-adjusts the NCO shift. No reply. Ignored if no pipeline is running. Also resets any accumulated AFC correction (an explicit retune is a statement of new truth). |
 | `stop` | — | Tears down the pipeline (kills the dsd-fme child / destroys the decoder). No reply. The WebSocket stays open; a new `start` is accepted afterwards. |
@@ -430,6 +430,48 @@ strand and therefore run after it).
 |---|---|---|
 | `type` | string | `"started"` |
 | `udp_audio_port` | number | The **server-internal** UDP port this session's dsd-fme child streams decoded audio to (allocated per session from 40000–59000, collision-free across concurrent sessions). Purely informational/diagnostic — the client never talks to this port; audio arrives over the WebSocket. In the DSDcc backend build (`dsd-server-dsdcc`) there is no subprocess and no UDP, so this is `0`, meaning "not applicable", not "failed". |
+| `iq_log_file` | string | Present **only** when the `start` had `iq_log:true` and the capture file opened. The server-side path of the MIDAS BLUE file this session's raw IQ is being written to. Absent when IQ logging was off or the file could not be opened. |
+
+### IQ capture (`iq_log`)
+
+When a `start` carries `iq_log:true`, the server tees the session's raw
+IQ — the exact interleaved little-endian float32 (I0,Q0,I1,Q1,…) the
+client sends as binary frames — to a **MIDAS BLUE** file (type 1000,
+format `CF`, attached 512-byte header, `xdelta = 1/sample_rate`). The
+bytes are written verbatim, so the capture is a bit-exact record of the
+IQ the demod saw. The file is opened when the pipeline starts and
+finalized (its `data_size` patched) on `stop` or disconnect; the path is
+reported in the `started` reply's `iq_log_file` field.
+
+Two environment variables tune it (server-side):
+
+- `DSD_IQ_LOG_DIR` — directory the `.blue` files are written to (default
+  the server's working directory). Created if missing.
+- `DSD_IQ_LOG_MAX_MB` — per-session cap in mebibytes (default `1024`).
+  On reaching it the capture stops on a sample boundary and a note is
+  logged to stderr; the session itself keeps running.
+
+Filenames are `iq_<YYYYMMDD_HHMMSS>_s<session>_<protocol>_<rate>Hz.blue`.
+The files are readable by the repo's MIDAS tools
+(`tools/midas_ws_client.py` and friends) and any BLUE-aware toolchain.
+IQ logging is off by default; it writes a lot of data, so enable it only
+when capturing a specific sample.
+
+Besides the per-`start` `iq_log` flag, there is a **global switch** an
+operator can flip live from the status page (the "Log IQ to BLUE file"
+checkbox, see below) or over HTTP:
+
+- `GET /iq_log/on` — start capturing on **every active session** (and any
+  that start while it is on). Replies `{"iq_log_enabled":true}`.
+- `GET /iq_log/off` — stop and finalize the capture on every session.
+  Replies `{"iq_log_enabled":false}`.
+
+The current switch state is also reported as `iq_logging` (boolean) in
+`/status.json`. The switch is independent of the per-`start` flag: a
+client can always request its own capture, and the operator switch is a
+live override for whatever is running right now. Flipping it on opens a
+capture file on each active session immediately (mid-stream); flipping it
+off closes them (patching each file's `data_size`).
 
 ### `error` — something was rejected
 
@@ -1016,6 +1058,8 @@ over HTTP and the connection closed:
 | `GET /status.json` | `application/json` (see below) |
 | `GET /log.json` | `application/json` — the recent outbound JSON frames (see below) |
 | `GET /log/clear` | empties the log ring buffer (the page's Clear button); returns `{"log":[]}` |
+| `GET /iq_log/on` | turns the global IQ-capture switch on (every active/new session captures); returns `{"iq_log_enabled":true}` |
+| `GET /iq_log/off` | turns it off (finalizes every session's capture); returns `{"iq_log_enabled":false}` |
 | any other path | `404` |
 | non-GET | `405` |
 
@@ -1027,6 +1071,7 @@ over HTTP and the connection closed:
   "current_sessions": 2,
   "active_pipelines": 1,
   "uptime_seconds": 3600,
+  "iq_logging": false,
   "started": "2026-09-22 17:12:57Z",
   "by_protocol": { "dmr": 1 },
   "sessions": [
@@ -1054,6 +1099,9 @@ over HTTP and the connection closed:
 - `total_sessions` is cumulative since start; `current_sessions` is live
   WebSocket connections right now; `active_pipelines` is how many are
   decoding. HTTP status requests are **not** counted as sessions.
+- `iq_logging` is the global IQ-capture switch state (the status page's
+  "Log IQ" checkbox / `GET /iq_log/on`|`off`). When `true`, every active
+  and newly started session captures its raw IQ to a BLUE file.
 - A session's `protocol`/`chain` are `-`/`""` until it sends `start`;
   `chain` is `fm` (FM + DSD), `tetra` or `pager`. `active` flips to `false`
   on `stop` while the row keeps its last protocol label.

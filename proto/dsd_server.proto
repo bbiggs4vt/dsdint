@@ -86,6 +86,10 @@ message StartRequest {
   // skyper; and discriminator polarity for spectrally inverted IQ.
   string pocsag_mode = 11 [json_name = "pocsag_mode"];
   bool invert = 12;
+  // Capture this session's raw IQ to a MIDAS BLUE file (type 1000, "CF").
+  // Server-side; the resulting path is reported in Started.iq_log_file.
+  // Off by default. See PROTOCOL.md "IQ capture".
+  bool iq_log = 13 [json_name = "iq_log"];
 }
 
 // {"type":"set_gain","gain":N}. Live discriminator-gain adjust. No reply.
@@ -145,6 +149,9 @@ message Capabilities {
 message Started {
   string type = 1;                                        // = "started"
   uint32 udp_audio_port = 2 [json_name = "udp_audio_port"];
+  // Present only when the start had iq_log:true and the capture opened:
+  // the server-side path of the MIDAS BLUE file the raw IQ is written to.
+  string iq_log_file = 3 [json_name = "iq_log_file"];
 }
 
 // {"type":"error","message":"..."}. Something was rejected. The socket

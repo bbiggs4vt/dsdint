@@ -9,9 +9,11 @@
 #include <cstdlib>
 #include <cctype>
 #include <cmath>
+#include <ctime>
 #include <functional>
 #include <random>
 #include <set>
+#include <filesystem>
 
 namespace dsdsrv {
 
@@ -161,6 +163,16 @@ void Session::serve_http() {
         res->result(http::status::ok);
         res->set(http::field::content_type, "application/json");
         res->body() = std::string("{\"log\":[]}");
+    } else if (target == "/iq_log/on" || target == "/iq_log/off") {
+        // Status-page "Log IQ" switch: flip the global IQ-capture toggle. Every
+        // active session opens (on) or closes (off) its BLUE capture, and new
+        // sessions follow the switch at start. Returns the state now in effect.
+        // (A side-effecting GET, matching /log/clear's style for this page.)
+        bool on = (target == "/iq_log/on");
+        bool state = stats_ ? stats_->set_iq_logging(on) : false;
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "application/json");
+        res->body() = std::string("{\"iq_log_enabled\":") + (state ? "true" : "false") + "}";
     } else {
         res->result(http::status::not_found);
         res->set(http::field::content_type, "text/plain; charset=utf-8");
@@ -193,7 +205,19 @@ void Session::on_accept(beast::error_code ec) {
 
     // A WebSocket client is now connected: register it so the status page
     // can count it and show its protocol once a pipeline starts.
-    if (stats_) stats_id_ = stats_->add_session(remote_);
+    if (stats_) {
+        stats_id_ = stats_->add_session(remote_);
+        // Let the status page's global "Log IQ" switch reach this session: the
+        // callback (invoked on whatever thread flips the switch) just posts the
+        // open/close onto this connection's strand. The weak_ptr breaks the
+        // cycle and guards the window between the session dying and its control
+        // being unregistered.
+        std::weak_ptr<Session> wp = weak_from_this();
+        stats_->register_iq_control(stats_id_, [wp](bool on) {
+            if (auto self = wp.lock())
+                net::post(self->ws_.get_executor(), [self, on] { self->set_iq_logging(on); });
+        });
+    }
     // Advertise what this build can emit before the client sends anything,
     // so it can prepare to parse the event kinds and `extra` token keys
     // without hard-coding them from PROTOCOL.md.
@@ -259,8 +283,11 @@ void Session::handle_text_message(const std::string& msg) {
             // POCSAG text interpretation and discriminator polarity.
             std::string pocsag_mode = json::get_string(obj, "pocsag_mode");
             bool invert = json::get_bool(obj, "invert", false);
+            // Optional raw-IQ capture: log the whole session's incoming IQ to a
+            // MIDAS BLUE file (server-side; see DSD_IQ_LOG_DIR). Off by default.
+            bool iq_log = json::get_bool(obj, "iq_log", false);
             start_pipeline(sample_rate, bw, offset, gain, afc, protocol, key_type, key, matched_filter,
-                           pocsag_mode, invert);
+                           pocsag_mode, invert, iq_log);
         } else if (type == "set_gain") {
             // Only the FM discriminator has a gain knob; the TETRA (π/4) modem
             // doesn't, and the paging demod auto-scales PCM by deviation --
@@ -302,6 +329,11 @@ void Session::handle_binary_message(const uint8_t* data, std::size_t len) {
                       .field("message", std::string("binary frame length not a multiple of 8 bytes")).str());
         return;
     }
+    // Capture the raw IQ verbatim (it's already CF data) before backpressure
+    // may drop it downstream, so the BLUE file is a faithful record of what the
+    // client sent. Runs on this connection's strand, same as start/stop.
+    if (iq_log_) iq_log_->write(data, len);
+
     std::size_t n = len / (2 * sizeof(float));
     std::vector<cf32> block(n);
     std::memcpy(block.data(), data, len); // cf32 is {float,float}, same layout as interleaved I,Q
@@ -479,12 +511,81 @@ bool key_value_is_valid(const std::string& v) {
     return saw_digit;
 }
 
+// Where per-session IQ captures are written (DSD_IQ_LOG_DIR, default ".")
+// and the per-file size cap in bytes (DSD_IQ_LOG_MAX_MB, default 1024; 0 =
+// unlimited -- use with care, a high IQ rate fills disk fast).
+std::string iq_log_dir() {
+    const char* d = std::getenv("DSD_IQ_LOG_DIR");
+    return (d && d[0]) ? std::string(d) : std::string(".");
+}
+std::uint64_t iq_log_max_bytes() {
+    const char* m = std::getenv("DSD_IQ_LOG_MAX_MB");
+    unsigned long mb = (m && m[0]) ? std::strtoul(m, nullptr, 10) : 1024;
+    return static_cast<std::uint64_t>(mb) * 1024ull * 1024ull;
+}
+
+// A filesystem-safe token from a free-form protocol string.
+std::string sanitize_token(const std::string& s) {
+    std::string out;
+    for (char c : s) {
+        if (std::isalnum(static_cast<unsigned char>(c))) out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        else if (c == '-' || c == '_') out += c;
+    }
+    if (out.empty()) out = "auto";
+    if (out.size() > 24) out.resize(24);
+    return out;
+}
+
 } // namespace
+
+void Session::open_iq_log(const std::string& protocol, double sample_rate) {
+    if (iq_log_) return; // already capturing
+    std::error_code ec;
+    std::filesystem::create_directories(iq_log_dir(), ec);
+    std::time_t t = std::time(nullptr);
+    std::tm tm{};
+#if defined(_WIN32)
+    gmtime_s(&tm, &t);
+#else
+    gmtime_r(&t, &tm);
+#endif
+    char ts[24];
+    std::strftime(ts, sizeof ts, "%Y%m%d_%H%M%S", &tm);
+    char name[128];
+    std::snprintf(name, sizeof name, "iq_%s_s%llu_%s_%lldHz.blue", ts,
+                  static_cast<unsigned long long>(stats_id_),
+                  sanitize_token(protocol).c_str(),
+                  static_cast<long long>(sample_rate));
+    std::string path = (std::filesystem::path(iq_log_dir()) / name).string();
+    auto w = std::make_unique<BlueFileWriter>();
+    if (w->open(path, sample_rate, iq_log_max_bytes())) {
+        iq_log_ = std::move(w);
+        std::cerr << "iq capture: writing " << path << "\n";
+    } else {
+        std::cerr << "iq capture: could not open " << path << " (check DSD_IQ_LOG_DIR)\n";
+    }
+}
+
+void Session::set_iq_logging(bool on) {
+    // Runs on this session's strand (posted by ServerStats::set_iq_logging).
+    if (on) {
+        // Only an active pipeline has IQ flowing; an idle session will open its
+        // capture when its next start_pipeline sees the global switch on.
+        if (pipeline_active_.load() && !iq_log_)
+            open_iq_log(iq_protocol_, iq_sample_rate_);
+    } else if (iq_log_) {
+        if (iq_log_->truncated())
+            std::cerr << "iq capture: reached size cap at " << iq_log_->bytes()
+                      << " bytes -- " << iq_log_->path() << "\n";
+        iq_log_.reset(); // close() patches data_size
+    }
+}
 
 void Session::start_pipeline(double sample_rate, double channel_bw, double freq_offset,
                              float gain, bool afc, const std::string& protocol,
                              const std::string& key_type, const std::string& key,
-                             bool matched_filter, const std::string& pocsag_mode, bool invert) {
+                             bool matched_filter, const std::string& pocsag_mode, bool invert,
+                             bool iq_log) {
     stop_pipeline(); // clean slate if already running
 
     const ProtocolHint hint = parse_protocol_hint(protocol);
@@ -814,6 +915,18 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         }
     }
 
+    // Remember the pipeline's params so a later live toggle (the status page's
+    // global "Log IQ" switch, via set_iq_logging) can open a capture with the
+    // right filename and xdelta without re-plumbing them.
+    iq_protocol_ = protocol;
+    iq_sample_rate_ = sample_rate;
+    // Optional raw-IQ capture: open a BLUE (CF) file now that the backend
+    // started, so a failed start never leaves an empty file. No IQ is logged
+    // before pipeline_active_ anyway (handle_binary_message gates on it).
+    // Enabled by the client's iq_log flag or the global switch being on.
+    if (iq_log || (stats_ && stats_->iq_logging()))
+        open_iq_log(protocol, sample_rate);
+
     pipeline_active_ = true;
     worker_running_ = true;
     worker_thread_ = std::thread(&Session::demod_worker_loop, this);
@@ -825,8 +938,15 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
                              want_tetra ? "tetra" : want_pager ? "pager" : "fm", /*active=*/true);
     }
 
-    send_text(json::Writer().field("type", std::string("started"))
-                  .field("udp_audio_port", static_cast<double>(udp_audio_port_)).str());
+    {
+        json::Writer w;
+        w.field("type", std::string("started"))
+         .field("udp_audio_port", static_cast<double>(udp_audio_port_));
+        // Tell the client where the IQ capture is being written (server-side
+        // path), so it knows what to retrieve.
+        if (iq_log_ && iq_log_->is_open()) w.field("iq_log_file", iq_log_->path());
+        send_text(w.str());
+    }
 }
 
 void Session::stop_pipeline() {
@@ -869,6 +989,14 @@ void Session::stop_pipeline() {
     {
         std::lock_guard<std::mutex> lock(iq_mutex_);
         iq_queue_.clear();
+    }
+
+    // Finalize the IQ capture, if any (patches the BLUE header's data_size).
+    if (iq_log_) {
+        if (iq_log_->truncated())
+            std::cerr << "iq capture: reached size cap at " << iq_log_->bytes()
+                      << " bytes -- " << iq_log_->path() << "\n";
+        iq_log_.reset();
     }
 }
 
