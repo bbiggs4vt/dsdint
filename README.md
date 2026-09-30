@@ -571,16 +571,24 @@ Two environment variables tune capture (server-side):
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DSD_IQ_LOG_DIR` | `.` (cwd) | Directory the `.blue` files are written to (created if missing). |
+| `DSD_IQ_LOG_DIR` | `.` (cwd); **`/captures` in the Docker image** | Directory the `.blue` files are written to (created if missing). |
 | `DSD_IQ_LOG_MAX_MB` | `1024` | Per-session size cap in MiB; on reaching it capture stops on a sample boundary (the session keeps running). `0` = unlimited. |
 
 Capture is **off by default** and writes a lot of data at SDR rates, so
-enable it only while grabbing a specific sample. In Docker, point
-`DSD_IQ_LOG_DIR` at a mounted volume to retrieve the files:
+enable it only while grabbing a specific sample.
+
+In the Docker image this is pre-wired: `DSD_IQ_LOG_DIR` defaults to
+`/captures`, a writable volume owned by the `dsd` user, so capture works
+without extra env vars — just bind-mount it to get the files on the host:
 
 ```bash
-docker run -e DSD_IQ_LOG_DIR=/caps -v "$PWD/caps:/caps" -p 22600:22600 dsd-server
+docker run -v "$PWD/caps:/captures" -p 22600:22600 dsd-server
+# captured .blue files appear in ./caps on the host
 ```
+
+(If the bind-mounted host dir isn't writable by the container's `dsd`
+uid, `mkdir -p caps && chmod 777 caps` first. To capture somewhere else,
+override `-e DSD_IQ_LOG_DIR=/some/other/mounted/path`.)
 
 ## Test client: MIDAS BLUE files
 

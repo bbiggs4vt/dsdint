@@ -244,6 +244,18 @@ COPY --from=build /opt/dsd-server/build/dsd-server /usr/local/bin/
 COPY --from=build /opt/dsd-server/build/dsd-server-dsdcc /usr/local/bin/
 RUN ldconfig
 
+# Make IQ capture work out of the box. The runtime sets no WORKDIR, so the
+# container's cwd is / -- which the non-root `dsd` user can't write to, so the
+# default capture dir (".") would silently fail to open a file. Ship a writable
+# capture dir owned by dsd and point DSD_IQ_LOG_DIR at it, so enabling capture
+# (the "Log IQ" switch, or a client's iq_log:true) just works. Declared a VOLUME
+# so the files are easy to retrieve: bind-mount it, e.g.
+#   docker run -v "$PWD/caps:/captures" -p 22600:22600 dsd-server
+# (DSD_IQ_LOG_MAX_MB still caps each file; see README.)
+RUN mkdir -p /captures && chown dsd:dsd /captures
+ENV DSD_IQ_LOG_DIR=/captures
+VOLUME ["/captures"]
+
 USER dsd
 EXPOSE 22600
 
