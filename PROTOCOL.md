@@ -1090,14 +1090,17 @@ over HTTP and the connection closed:
 | `GET /iq_log/off` | turns it off (finalizes every session's capture); returns `{"iq_log_enabled":false}` |
 | `GET /net` | `text/html` network explorer (calls / talkgroups / radios / networks and their associations; polls `/net.json`) |
 | `GET /net.json` | `application/json` association model (see below) |
-| `GET /net/clear` | forgets everything the explorer learned; returns `{"ok":true}` |
+| `GET /net/clear` | forgets everything the explorer learned, and its imports; returns `{"ok":true}` |
 | `GET /net/export.json` | `application/json` attachment `net_export_<UTC>.json` — the explorer export (below) |
 | `GET /net/export.graphml` | `application/graphml+xml` attachment — the association graph for graph tools |
 | `GET /net/log/on` | starts recording every input of the explorer's model to `net_<UTC>.jsonl.gz` (`?clear=1` clears the model first so the recording replays exactly); returns the recording status |
 | `GET /net/log/off` | stops recording (the file ends with a snapshot of the model); returns the recording status |
 | `GET /net/log/download` | `application/gzip` — the current or most recent recording; `404` if there is none |
+| `POST /net/import?name=<label>` | body: an explorer export (JSON, or gzip) — added to the live view as an import layer; returns `{"name","status","message","id"}` (below); `400` if it isn't an export |
+| `GET /net/imports/remove?id=N` | removes one import (`404` if no such id); `GET /net/imports/clear` removes all; return `{"ok":…}` |
+| `POST /net/merge` | body `{"files":[{"name":…,"text":…}]}` (each export's text verbatim) — merges them without touching the live data; returns `{"report":[{"name","status","message"}],"export":{…merged export…}}` |
 | any other path | `404` |
-| non-GET | `405` |
+| other methods | `405` (request bodies up to 128 MB) |
 
 `GET /status.json` returns a single object:
 
@@ -1175,8 +1178,12 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
 
 ```json
 {"version": 812, "now": 1790000000000,
+ "instance": "3f9a0c1d22b4e871", "name": "rx-north", "since": 1789999000000,
  "rec": {"on": false, "truncated": false, "file": "net_20261001_214359.jsonl.gz",
          "path": "/captures/net_20261001_214359.jsonl.gz", "bytes": 86317, "file_bytes": 9466},
+ "imports": [{"id": 1, "label": "south.json", "exported": 1789998000000,
+              "sources": [{"instance": "a71e…", "name": "rx-south", "since": 1789990000000, "through": 1789998000000}],
+              "networks": 2, "talkgroups": 14, "radios": 40, "calls": 120}],
  "families": {
   "p25": {
     "networks":   [{"key": "wacn:BEE00/sys:3A1", "label": "WACN BEE00 · SYS 3A1", "confidence": "strong",
@@ -1194,6 +1201,11 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
   }}}
 ```
 
+- `instance` identifies this server run (random per process), `name` is
+  `DSD_SERVER_NAME` or the host name, `since` is when the live data's span
+  began (server start or the last Clear). `imports` lists the exports imported
+  into the view (see *Merging* below); `families` shows the live data and the
+  imports merged.
 - `rec` is the recording status: `on`, the current / most recent `file`
   (and full `path`), uncompressed `bytes` written, compressed `file_bytes` on
   disk, and `truncated` once the size cap was hit. The file format is
@@ -1219,8 +1231,16 @@ header, so the explorer (and other tools) can open it later:
 
 ```json
 {"format": "dsd-net-export", "format_version": 1, "source": "dsd-server",
- "exported": 1790000000000, "now": 1790000000000, "families": { ... as /net.json ... }}
+ "instance": "3f9a0c1d22b4e871", "name": "rx-north",
+ "exported": 1790000000000, "now": 1790000000000,
+ "sources": [{"instance": "3f9a0c1d22b4e871", "name": "rx-north", "since": 1789999000000, "through": 1790000000000}],
+ "families": { ... as /net.json ... }}
 ```
+
+`sources` is the export's provenance: for each server run whose data it holds
+(this run's live data, plus anything it had imported), the span covered. A
+merge of several files has `"instance": ""` and lists every source. Exports
+from before provenance existed (no `sources`) are still read.
 
 `format_version` increases only on incompatible changes; readers should
 ignore keys they don't know. `GET /net/export.graphml` serves the same
@@ -1230,6 +1250,31 @@ talkgroup, network); node attributes `type`, `protocol`, `label`, `calls`,
 `confidence`, `identifiers`, `sites`, `first_seen`, `last_seen` (ISO 8601);
 edge attributes `type` (`talkgroup` | `private` | `member`), `weight` and
 `calls`.
+
+**Merging** (the explorer's *Open...* with several files, *Import...*,
+`POST /net/merge`, `POST /net/import`, and the `net-merge` tool all use the
+same merge, `src/assoc_merge.hpp`):
+
+- Per protocol, talkgroups and radios with the same id are joined, as are
+  networks with the same *strong* key -- that is how receivers link up. A weak
+  or unidentified network key is only meaningful within the server run that
+  made it, so an imported one is qualified with the run
+  (`cc:1@s3~3f9a0c1d`) and its label gets ` · <name>`.
+- Counts add up, sets are unioned, first / last span both. Calls are listed
+  newest first (at most 1000 per protocol in a merge); a call two sources both
+  heard -- same network, source, target and kind, no more than 4 s apart -- is
+  kept once with `streams` summed and counted once (only calls still in the
+  lists can be matched this way).
+- Nothing is counted twice: a file whose sources are all already included is
+  `skipped`; one that contains an earlier import of the same run (a newer
+  export) `replaced` it; one that partly overlaps (same run, overlapping time,
+  neither containing the other) is `refused`; this server's own live data is
+  `skipped` on import, and a file overlapping it is `refused` (Clear first).
+  Data from different runs, or from before and after a Clear, merges freely.
+  Other statuses: `imported` / `merged`, and `invalid` (not an export -- e.g.
+  a recording -- with the reason).
+- Imported calls get ids `<import id> × 10⁹ + n`, apart from live call ids.
+  Imports last until removed or Clear; recordings never include them.
 
 `GET /log.json` returns the recent JSON frames the server has sent clients
 — for the status page's **Log** tab — as a bounded, in-memory ring (last

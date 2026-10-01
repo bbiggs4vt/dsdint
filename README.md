@@ -503,8 +503,9 @@ session exactly as before; anything else is answered over HTTP:
 | `/status.json` | the same data as JSON, for health checks / scraping |
 | `/iq_log/on`, `/iq_log/off` | flip the global IQ-capture switch (the page's **Log IQ** checkbox); returns `{"iq_log_enabled":…}` |
 | `/net` | the network explorer page (see [Network explorer](#network-explorer)) |
-| `/net.json`, `/net/clear` | the explorer's association model as JSON; forget it |
+| `/net.json`, `/net/clear` | the explorer's association model as JSON; forget it (and its imports) |
 | `/net/export.json`, `/net/export.graphml` | export what the explorer shows: native (re-openable) / GraphML |
+| `POST /net/import`, `/net/imports/remove`, `/net/imports/clear`, `POST /net/merge` | add exports to the live view, remove them; merge exports without the live data |
 | `/net/log/on`, `/net/log/off`, `/net/log/download` | record the explorer's inputs (`?clear=1` clears first); stop; download the current / last recording |
 
 The live update is a tiny `/status.json` poll that patches the page in
@@ -636,6 +637,39 @@ out.graphml` (add `--at +N` for the state N seconds in). Exports carry the
 bounded recent-calls list (last 400 per protocol) but the full associations
 and counts. `GET /net/export.json` and `GET /net/export.graphml` serve them
 directly.
+
+### Combining receivers: merging and importing exports
+
+Exports from several receivers (or from one receiver at different times)
+can be combined:
+
+- **Open...** with several files (or drop several on the page) shows them
+  merged, read-only, with what happened to each file and a **Save merged**
+  link. The live data is not touched.
+- **Import...** adds exports to the *live* view: the page shows the live
+  data and the imports together, with a bar listing the imports (each
+  removable). New traffic keeps arriving on top. Export then saves the
+  combined view; Clear also drops the imports.
+- `net-merge a.json b.json.gz ... -o merged.json [--graphml merged.graphml]`
+  does the same from the command line (built alongside the server).
+
+Talkgroups and radios are joined by id within a protocol, and networks by
+their strong id (P25 WACN/SysID, DMR network id, NXDN system code, TETRA
+MCC/MNC) -- so two receivers on the same system become one network with both
+receivers' radios. A weak id (a DMR color code, a bare NAC or RAN) can't tell
+systems apart, so each receiver's stays its own network, labelled with the
+receiver's name (`Color Code 1 · stream 3 · rx-north`), and shared talkgroups
+and radios show the link under **Links**. A call both receivers heard on the
+same system is shown and counted once (`2 RX`).
+
+Each export records which server run it came from and the time span it
+covers, so the merge never counts the same calls twice: the same file twice,
+or an older export of a run next to a newer one, is merged once (the newer
+replaces the older); a file that only partly overlaps another is refused,
+with the reason; importing a server's own export into it is skipped. Data
+from before and after a Clear are separate spans and merge fine. Name each
+receiver with `DSD_SERVER_NAME` (default: the host name) so its networks are
+easy to tell apart.
 
 ### Recording explorer data for analysis
 

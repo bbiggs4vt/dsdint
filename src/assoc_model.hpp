@@ -36,6 +36,7 @@
 #pragma once
 
 #include "assoc_log.hpp"
+#include "assoc_merge.hpp"
 #include "dsd_backend_types.hpp"
 
 #include <algorithm>
@@ -43,14 +44,18 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <deque>
 #include <map>
 #include <mutex>
+#include <random>
 #include <set>
 #include <sstream>
 #include <string>
 #include <vector>
+
+#include <unistd.h>
 
 namespace dsdsrv {
 
@@ -75,6 +80,7 @@ class AssocModel {
 public:
     // ---- tunables -------------------------------------------------------
     static constexpr std::int64_t kContinueMs = 4000; // gap that still continues a call
+    static_assert(kContinueMs == kTwinGapMs, "merged twins follow the live rule");
     static constexpr std::size_t kMaxCalls = 400;      // per family
     static constexpr std::size_t kMaxRadios = 3000;    // per family
     static constexpr std::size_t kMaxTalkgroups = 1500;
@@ -85,6 +91,19 @@ public:
     static std::int64_t now_ms() {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
                    std::chrono::system_clock::now().time_since_epoch()).count();
+    }
+    static std::string random_instance() {
+        std::random_device rd;
+        std::mt19937_64 g((static_cast<std::uint64_t>(rd()) << 32) ^ rd() ^ static_cast<std::uint64_t>(now_ms()));
+        char b[24];
+        std::snprintf(b, sizeof b, "%016llx", static_cast<unsigned long long>(g()));
+        return b;
+    }
+    static std::string default_name() {
+        if (const char* n = std::getenv("DSD_SERVER_NAME"); n && *n) return n;
+        char h[256] = {0};
+        if (gethostname(h, sizeof h - 1) == 0 && h[0]) return h;
+        return "dsd-server";
     }
 
     // A session started a decode pipeline with this protocol label. Resets the
@@ -131,12 +150,13 @@ public:
         ++version_;
     }
 
-    // Drop everything learned so far (the page's Clear button). Live stream
-    // contexts are kept (their family) but forget their identity and calls.
+    // Drop everything learned so far, and any imports (the page's Clear
+    // button). Live stream contexts are kept (their family) but forget their
+    // identity and calls.
     void clear(std::int64_t now = now_ms()) {
         std::lock_guard<std::mutex> lk(mu_);
         if (rec_.on()) rec_.write("{\"op\":\"clear\",\"t\":" + std::to_string(now) + "}", now);
-        clear_locked();
+        clear_locked(now);
     }
 
     // ---- recording (see assoc_log.hpp) ------------------------------------
@@ -153,11 +173,12 @@ public:
                          std::int64_t now = now_ms()) {
         std::lock_guard<std::mutex> lk(mu_);
         if (rec_.on()) return true;
-        if (clear_first) clear_locked();
+        if (clear_first) clear_locked(now);
         if (!rec_.start(dir, max_bytes, now)) return false;
         const bool fresh = fam_.empty() && next_call_ == 0;
         rec_.write("{\"op\":\"header\",\"v\":1,\"t\":" + std::to_string(now) +
-                   ",\"fresh\":" + (fresh ? "true" : "false") + "}", now);
+                   ",\"fresh\":" + (fresh ? "true" : "false") + ",\"instance\":" + assoclog::q(instance_) +
+                   ",\"name\":" + assoclog::q(name_) + ",\"since\":" + std::to_string(since_) + "}", now);
         for (const auto& kv : sess_) {
             if (!kv.second.running) continue;
             rec_.write("{\"op\":\"begin\",\"t\":" + std::to_string(now) + ",\"s\":" + std::to_string(kv.first) +
@@ -165,7 +186,7 @@ public:
                        ",\"resumed\":true}", now);
         }
         rec_.write("{\"op\":\"snapshot\",\"t\":" + std::to_string(now) + ",\"why\":\"start\",\"model\":" +
-                   to_json_locked(now) + "}", now);
+                   snapshot_json_locked(now) + "}", now);
         rec_.flush();
         ++version_;
         return true;
@@ -175,7 +196,7 @@ public:
         std::lock_guard<std::mutex> lk(mu_);
         if (!rec_.on()) return;
         rec_.write("{\"op\":\"snapshot\",\"t\":" + std::to_string(now) + ",\"why\":\"stop\",\"model\":" +
-                   to_json_locked(now) + "}", now);
+                   snapshot_json_locked(now) + "}", now);
         rec_.stop();
         ++version_;
     }
@@ -355,20 +376,29 @@ public:
     }
 
     // Serialize the whole model for /net.json. Calls come newest first.
+    // Only the copy is made under the lock (decoder threads wait on it); the
+    // serializing happens after.
     std::string to_json(std::int64_t now = now_ms()) const {
-        std::lock_guard<std::mutex> lk(mu_);
-        return to_json_locked(now);
+        std::string head;
+        Dataset view;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            head = json_head_locked(now);
+            view = view_locked(now);
+        }
+        return head + families_json(view) + "}";
     }
 
-    // ---- export -----------------------------------------------------------
-    // What the explorer shows, as a self-describing file that the explorer can
-    // open again ("Open..." on /net) -- format "dsd-net-export", version 1. The
-    // "families" object is exactly /net.json's (see PROTOCOL.md).
+    // ---- export / import ----------------------------------------------------
+    // What the explorer shows (live data plus imports), as a self-describing
+    // file that the explorer can open or import again -- format
+    // "dsd-net-export", version 1 (see PROTOCOL.md and assoc_merge.hpp).
     std::string to_export_json(std::int64_t now = now_ms()) const {
-        std::lock_guard<std::mutex> lk(mu_);
-        return "{\"format\":\"dsd-net-export\",\"format_version\":1,\"source\":\"dsd-server\",\"exported\":" +
-               std::to_string(now) + ",\"now\":" + std::to_string(now) + ",\"families\":" +
-               families_json_locked(now) + "}";
+        std::unique_lock<std::mutex> lk(mu_);
+        const Dataset view = view_locked(now);
+        const std::string instance = instance_, name = name_;
+        lk.unlock();
+        return export_json(view, now, instance, name);
     }
 
     // The association graph as GraphML (Gephi, Cytoscape, yEd, networkx...).
@@ -377,171 +407,173 @@ public:
     // radio-radio ("private", weight = calls), and talkgroup/radio-network
     // membership ("member").
     std::string to_graphml(std::int64_t now = now_ms()) const {
+        std::unique_lock<std::mutex> lk(mu_);
+        const Dataset view = view_locked(now);
+        lk.unlock();
+        return graphml(view, now);
+    }
+
+    // Import an export (or a merge of exports) as a layer shown on top of the
+    // live data. Refuses anything that would count calls twice: this server's
+    // own live data, or a partial overlap with an earlier import; a newer
+    // export of an already-imported run replaces the older import. Imports
+    // are kept until removed or Clear.
+    struct ImportResult {
+        std::string status;          // imported | replaced | skipped | refused | invalid
+        std::string message;
+        std::uint64_t id = 0;
+    };
+    ImportResult import_export(std::string text, const std::string& label, std::int64_t now = now_ms()) {
+        ImportResult r;
+        Dataset x;
+        std::string err;
+        if (!dataset_from_export_text(std::move(text), label, x, &err)) { r.status = "invalid"; r.message = err; return r; }
         std::lock_guard<std::mutex> lk(mu_);
-        std::ostringstream o;
-        o << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-             "<graphml xmlns=\"http://graphml.graphdrawing.org/xmlns\" "
-             "xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" "
-             "xsi:schemaLocation=\"http://graphml.graphdrawing.org/xmlns "
-             "http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd\">\n"
-             "  <!-- dsd-server network explorer export, " << iso(now) << " -->\n";
-        const char* nkeys[][3] = {{"type", "type", "string"}, {"protocol", "protocol", "string"},
-                                  {"label", "label", "string"}, {"calls", "calls", "long"},
-                                  {"aliases", "aliases", "string"}, {"networks", "networks", "string"},
-                                  {"radios", "radios", "long"}, {"talkgroups", "talkgroups", "long"},
-                                  {"emergencies", "emergencies", "long"}, {"encrypted", "encrypted", "long"},
-                                  {"confidence", "confidence", "string"}, {"identifiers", "identifiers", "string"},
-                                  {"sites", "sites", "string"}, {"first_seen", "first_seen", "string"},
-                                  {"last_seen", "last_seen", "string"}};
-        for (const auto& k : nkeys)
-            o << "  <key id=\"" << k[0] << "\" for=\"node\" attr.name=\"" << k[1] << "\" attr.type=\"" << k[2] << "\"/>\n";
-        o << "  <key id=\"etype\" for=\"edge\" attr.name=\"type\" attr.type=\"string\"/>\n"
-             "  <key id=\"weight\" for=\"edge\" attr.name=\"weight\" attr.type=\"double\"/>\n"
-             "  <key id=\"ecalls\" for=\"edge\" attr.name=\"calls\" attr.type=\"long\"/>\n"
-             "  <graph id=\"dsd-net\" edgedefault=\"undirected\">\n";
-        auto d = [&](const char* k, const std::string& v) { o << "      <data key=\"" << k << "\">" << xesc(v) << "</data>\n"; };
-        auto dn = [&](const char* k, std::uint64_t v) { o << "      <data key=\"" << k << "\">" << v << "</data>\n"; };
-        std::uint64_t eid = 0;
-        auto edge = [&](const std::string& a, const std::string& z, const char* type, std::uint64_t calls) {
-            o << "    <edge id=\"e" << ++eid << "\" source=\"" << xesc(a) << "\" target=\"" << xesc(z) << "\">\n";
-            d("etype", type);
-            o << "      <data key=\"weight\">" << (calls ? calls : 1) << "</data>\n";
-            if (calls) dn("ecalls", calls);
-            o << "    </edge>\n";
-        };
+        const std::vector<DsSource> live{live_source_locked(now)};
+        Verdict v = judge(x, imports_, &live);
+        if (v.kind != Verdict::Add) {
+            r.status = v.kind == Verdict::Skip ? "skipped" : "refused";
+            r.message = v.why;
+            return r;
+        }
+        std::string replaced;
+        for (auto it = v.replaces.rbegin(); it != v.replaces.rend(); ++it) {
+            replaced = imports_[*it].label + (replaced.empty() ? "" : ", ") + replaced;
+            imports_.erase(imports_.begin() + static_cast<std::ptrdiff_t>(*it));
+        }
+        x.id = ++next_import_;
+        x.exported = x.exported ? x.exported : now;
+        // Stable call ids for the layer, apart from live ones (and each other).
+        for (auto& fk : x.fams) {
+            auto& C = fk.second.calls;
+            std::stable_sort(C.begin(), C.end(), [](const DsCall& p, const DsCall& q) { return p.start > q.start; });
+            if (C.size() > kMergedCallsPerFamily) C.resize(kMergedCallsPerFamily);
+            for (std::size_t i = 0; i < C.size(); ++i) C[i].id = x.id * kImportIdStride + (C.size() - i);
+        }
+        r.id = x.id;
+        r.status = replaced.empty() ? "imported" : "replaced";
+        r.message = replaced.empty() ? std::string("imported") : "imported (replaces " + replaced + ", an older export of the same run)";
+        imports_.push_back(std::move(x));
+        ++version_;
+        return r;
+    }
+    bool remove_import(std::uint64_t id) {
+        std::lock_guard<std::mutex> lk(mu_);
+        for (auto it = imports_.begin(); it != imports_.end(); ++it)
+            if (it->id == id) { imports_.erase(it); ++version_; return true; }
+        return false;
+    }
+    void clear_imports() {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (!imports_.empty()) { imports_.clear(); ++version_; }
+    }
+    std::size_t import_count() const {
+        std::lock_guard<std::mutex> lk(mu_);
+        return imports_.size();
+    }
+
+    // This server run's identity in exports (see assoc_merge.hpp). The
+    // instance is random per process; the name is DSD_SERVER_NAME or the
+    // host name. Tests and replays set them explicitly.
+    void set_identity(const std::string& instance, const std::string& name) {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (!instance.empty()) instance_ = instance;
+        name_ = name;
+    }
+    // Start of the live data's time span (process start, or the last Clear).
+    void set_since(std::int64_t since) {
+        std::lock_guard<std::mutex> lk(mu_);
+        since_ = since;
+    }
+    std::string instance() const { std::lock_guard<std::mutex> lk(mu_); return instance_; }
+    std::string name() const { std::lock_guard<std::mutex> lk(mu_); return name_; }
+    std::int64_t since() const { std::lock_guard<std::mutex> lk(mu_); return since_; }
+
+private:
+    static constexpr std::uint64_t kImportIdStride = 1000000000ull;
+
+    // /net.json up to its "families" (the view: live + imports): this run's
+    // identity and the import list. Recording snapshots use the live-only
+    // form, which replays can reproduce exactly.
+    std::string json_head_locked(std::int64_t now) const {
+        std::string im = "[";
+        for (std::size_t i = 0; i < imports_.size(); ++i) {
+            const Dataset& d = imports_[i];
+            std::uint64_t nn = 0, nt = 0, nr = 0, nc = 0;
+            for (const auto& fk : d.fams) {
+                nn += fk.second.networks.size(); nt += fk.second.tgs.size();
+                nr += fk.second.radios.size(); nc += fk.second.calls.size();
+            }
+            if (i) im += ",";
+            im += "{\"id\":" + std::to_string(d.id) + ",\"label\":" + assocjson::q(d.label) +
+                  ",\"exported\":" + std::to_string(d.exported) + ",\"sources\":" + sources_json(d.sources) +
+                  ",\"networks\":" + std::to_string(nn) + ",\"talkgroups\":" + std::to_string(nt) +
+                  ",\"radios\":" + std::to_string(nr) + ",\"calls\":" + std::to_string(nc) + "}";
+        }
+        im += "]";
+        return "{\"version\":" + std::to_string(version_) + ",\"now\":" + std::to_string(now) +
+               ",\"instance\":" + assocjson::q(instance_) + ",\"name\":" + assocjson::q(name_) +
+               ",\"since\":" + std::to_string(since_) + ",\"rec\":" + rec_json_locked() + ",\"imports\":" + im +
+               ",\"families\":";
+    }
+    std::string snapshot_json_locked(std::int64_t now) const {
+        return "{\"version\":" + std::to_string(version_) + ",\"now\":" + std::to_string(now) +
+               ",\"rec\":" + rec_json_locked() + ",\"families\":" + families_json(dataset_locked(now)) + "}";
+    }
+    DsSource live_source_locked(std::int64_t now) const { return DsSource{instance_, name_, since_, now}; }
+
+    // The live model in plain form. Calls newest first.
+    Dataset dataset_locked(std::int64_t now) const {
+        Dataset d;
+        d.label = "live";
+        d.exported = now;
+        d.sources.push_back(live_source_locked(now));
         for (const auto& fk : fam_) {
-            const std::string& fam = fk.first;
             const Family& F = fk.second;
-            auto nid = [&](const char* t, const std::string& id) { return fam + ":" + t + ":" + id; };
-            auto netlabels = [&](const std::set<std::string>& keys) {
-                std::string out;
-                for (const auto& k : keys) {
-                    auto it = F.networks.find(k);
-                    out += (out.empty() ? "" : "; ") + (it == F.networks.end() ? k : it->second.label);
-                }
-                return out;
-            };
+            DsFamily& D = d.fams[fk.first];
             for (const auto& kv : F.networks) {
                 const Network& n = kv.second;
-                std::string ids, sites;
-                for (const auto& i : n.ids) ids += (ids.empty() ? "" : "; ") + i.first + "=" + i.second;
-                for (const auto& st : n.sites) sites += (sites.empty() ? "" : "; ") + st;
-                o << "    <node id=\"" << xesc(nid("n", n.key)) << "\">\n";
-                d("type", "network"); d("protocol", fam); d("label", n.label); dn("calls", n.calls);
-                d("confidence", n.confidence); d("identifiers", ids); d("sites", sites);
-                d("first_seen", iso(n.first_ms)); d("last_seen", iso(n.last_ms));
-                o << "    </node>\n";
+                DsNetwork& o = D.networks[kv.first];
+                o.key = n.key; o.label = n.label; o.confidence = n.confidence; o.ids = n.ids; o.sites = n.sites;
+                o.sessions = n.sessions.size(); o.calls = n.calls; o.first = n.first_ms; o.last = n.last_ms;
             }
             for (const auto& kv : F.tgs) {
                 const Talkgroup& t = kv.second;
-                o << "    <node id=\"" << xesc(nid("t", t.id)) << "\">\n";
-                d("type", "talkgroup"); d("protocol", fam); d("label", "TG " + t.id); dn("calls", t.calls);
-                dn("radios", t.radios.size()); dn("emergencies", t.emergencies); dn("encrypted", t.encrypted);
-                d("networks", netlabels(t.networks)); d("first_seen", iso(t.first_ms)); d("last_seen", iso(t.last_ms));
-                o << "    </node>\n";
+                DsTalkgroup& o = D.tgs[kv.first];
+                o.id = t.id; o.networks = t.networks; o.radios.insert(t.radios.begin(), t.radios.end());
+                o.calls = t.calls; o.emerg = t.emergencies; o.enc = t.encrypted; o.first = t.first_ms; o.last = t.last_ms;
             }
             for (const auto& kv : F.radios) {
                 const Radio& r = kv.second;
-                std::string al;
-                for (const auto& a : r.aliases) al += (al.empty() ? "" : " / ") + a;
-                o << "    <node id=\"" << xesc(nid("r", r.id)) << "\">\n";
-                d("type", "radio"); d("protocol", fam); d("label", al.empty() ? r.id : r.id + " (" + al + ")");
-                dn("calls", r.calls); d("aliases", al); dn("talkgroups", r.tgs.size());
-                d("networks", netlabels(r.networks)); d("first_seen", iso(r.first_ms)); d("last_seen", iso(r.last_ms));
-                o << "    </node>\n";
+                DsRadio& o = D.radios[kv.first];
+                o.id = r.id; o.aliases = r.aliases; o.networks = r.networks;
+                o.tgs.insert(r.tgs.begin(), r.tgs.end()); o.peers.insert(r.peers.begin(), r.peers.end());
+                o.calls = r.calls; o.first = r.first_ms; o.last = r.last_ms;
             }
-            for (const auto& kv : F.radios) {
-                const Radio& r = kv.second;
-                for (const auto& t : r.tgs)
-                    if (F.tgs.count(t.first)) edge(nid("r", r.id), nid("t", t.first), "talkgroup", t.second);
-                for (const auto& pr : r.peers)
-                    if (r.id < pr.first && F.radios.count(pr.first)) edge(nid("r", r.id), nid("r", pr.first), "private", pr.second);
-                for (const auto& k : r.networks)
-                    if (F.networks.count(k)) edge(nid("r", r.id), nid("n", k), "member", 0);
-            }
-            for (const auto& kv : F.tgs)
-                for (const auto& k : kv.second.networks)
-                    if (F.networks.count(k)) edge(nid("t", kv.first), nid("n", k), "member", 0);
-        }
-        o << "  </graph>\n</graphml>\n";
-        return o.str();
-    }
-
-private:
-    std::string to_json_locked(std::int64_t now) const {
-        return "{\"version\":" + std::to_string(version_) + ",\"now\":" + std::to_string(now) +
-               ",\"rec\":" + rec_json_locked() + ",\"families\":" + families_json_locked(now) + "}";
-    }
-    // The per-protocol model -- the part the explorer renders, shared by
-    // /net.json, the recording snapshots and the export.
-    std::string families_json_locked(std::int64_t now) const {
-        std::ostringstream o;
-        o << "{";
-        bool firstf = true;
-        for (const auto& fk : fam_) {
-            const Family& F = fk.second;
-            if (!firstf) o << ",";
-            firstf = false;
-            o << q(fk.first) << ":{";
-
-            o << "\"networks\":[";
-            bool first = true;
-            for (const auto& nk : F.networks) {
-                const Network& n = nk.second;
-                if (!first) o << ",";
-                first = false;
-                o << "{\"key\":" << q(n.key) << ",\"label\":" << q(n.label)
-                  << ",\"confidence\":" << q(n.confidence) << ",\"ids\":" << obj(n.ids)
-                  << ",\"sites\":" << arr(n.sites) << ",\"sessions\":" << n.sessions.size()
-                  << ",\"calls\":" << n.calls << ",\"first\":" << n.first_ms
-                  << ",\"last\":" << n.last_ms << "}";
-            }
-            o << "],\"talkgroups\":[";
-            first = true;
-            for (const auto& tk : F.tgs) {
-                const Talkgroup& t = tk.second;
-                if (!first) o << ",";
-                first = false;
-                o << "{\"id\":" << q(t.id) << ",\"networks\":" << arr(t.networks)
-                  << ",\"radios\":" << counts(t.radios) << ",\"calls\":" << t.calls
-                  << ",\"emerg\":" << t.emergencies << ",\"enc\":" << t.encrypted
-                  << ",\"first\":" << t.first_ms << ",\"last\":" << t.last_ms << "}";
-            }
-            o << "],\"radios\":[";
-            first = true;
-            for (const auto& rk : F.radios) {
-                const Radio& r = rk.second;
-                if (!first) o << ",";
-                first = false;
-                o << "{\"id\":" << q(r.id) << ",\"aliases\":" << arr(r.aliases)
-                  << ",\"tgs\":" << counts(r.tgs) << ",\"peers\":" << counts(r.peers)
-                  << ",\"networks\":" << arr(r.networks) << ",\"calls\":" << r.calls
-                  << ",\"first\":" << r.first_ms << ",\"last\":" << r.last_ms << "}";
-            }
-            o << "],\"calls\":[";
-            first = true;
+            D.calls.reserve(F.calls.size());
             for (auto it = F.calls.rbegin(); it != F.calls.rend(); ++it) {
                 const Call& k = *it;
-                if (!first) o << ",";
-                first = false;
-                const bool open = k.open && now - k.last_ms <= kContinueMs;
-                o << "{\"id\":" << k.id << ",\"session\":" << k.session << ",\"net\":" << q(k.net)
-                  << ",\"site\":" << q(k.site) << ",\"slot\":" << q(k.slot)
-                  << ",\"src\":" << q(k.src) << ",\"tgt\":" << q(k.tgt)
-                  << ",\"alias\":" << q(k.alias) << ",\"text\":" << q(k.text)
-                  << ",\"priv\":" << b(k.priv) << ",\"voice\":" << b(k.voice)
-                  << ",\"data\":" << b(k.data) << ",\"emerg\":" << b(k.emergency)
-                  << ",\"enc\":" << b(k.encrypted) << ",\"open\":" << b(open)
-                  << ",\"streams\":" << k.streams
-                  << ",\"start\":" << k.start_ms << ",\"last\":" << k.last_ms << "}";
+                DsCall c;
+                c.id = k.id; c.session = k.session; c.streams = k.streams;
+                c.net = k.net; c.site = k.site; c.slot = k.slot; c.src = k.src; c.tgt = k.tgt;
+                c.alias = k.alias; c.text = k.text;
+                c.priv = k.priv; c.voice = k.voice; c.data = k.data; c.emerg = k.emergency; c.enc = k.encrypted;
+                c.open = k.open && now - k.last_ms <= kContinueMs;
+                c.start = k.start_ms; c.last = k.last_ms;
+                D.calls.push_back(std::move(c));
             }
-            o << "]}";
         }
-        o << "}";
-        return o.str();
+        return d;
+    }
+    // Live data with the imports merged in.
+    Dataset view_locked(std::int64_t now) const {
+        Dataset d = dataset_locked(now);
+        if (imports_.empty()) return d;
+        for (const auto& x : imports_) merge_into(d, x);
+        finalize_merge(d, false);
+        return d;
     }
 
-private:
     RecStatus rec_status_locked() const {
         RecStatus r;
         r.on = rec_.on();
@@ -556,15 +588,19 @@ private:
         const RecStatus r = rec_status_locked();
         const std::string file = r.last_path.empty() ? std::string()
                                                      : std::filesystem::path(r.last_path).filename().string();
+        using assocjson::b;
+        using assocjson::q;
         return std::string("{\"on\":") + b(r.on) + ",\"truncated\":" + b(r.truncated) + ",\"file\":" + q(file) +
                ",\"path\":" + q(r.last_path) + ",\"bytes\":" + std::to_string(r.bytes) +
                ",\"file_bytes\":" + std::to_string(r.file_bytes) + "}";
     }
-    // Forget everything learned; live stream contexts keep their protocol and
-    // running state. Call ids restart, so a recording begun after a clear
+    // Forget everything learned (and imported); live stream contexts keep their
+    // protocol and running state. The live data's span restarts at `now`. Call ids restart, so a recording begun after a clear
     // replays to identical output.
-    void clear_locked() {
+    void clear_locked(std::int64_t now) {
         fam_.clear();
+        imports_.clear();
+        since_ = now;
         for (auto& kv : sess_) {
             Ctx& c = kv.second;
             const std::string f = c.family, l = c.label;
@@ -1213,96 +1249,17 @@ private:
             if (k.session == sid) close_call(fit->second, k);
     }
 
-    // ---- JSON helpers ---------------------------------------------------
-    static std::string q(const std::string& s) {
-        std::string o = "\"";
-        for (unsigned char ch : s) {
-            switch (ch) {
-                case '"': o += "\\\""; break;
-                case '\\': o += "\\\\"; break;
-                case '\n': o += "\\n"; break;
-                case '\r': o += "\\r"; break;
-                case '\t': o += "\\t"; break;
-                default:
-                    if (ch < 0x20) {
-                        char u[8];
-                        std::snprintf(u, sizeof u, "\\u%04x", ch);
-                        o += u;
-                    } else {
-                        o += static_cast<char>(ch);
-                    }
-            }
-        }
-        return o + "\"";
-    }
-    static const char* b(bool v) { return v ? "true" : "false"; }
-    static std::string iso(std::int64_t ms) {
-        if (!ms) return std::string();
-        std::time_t t = static_cast<std::time_t>(ms / 1000);
-        std::tm tm{};
-        gmtime_r(&t, &tm);
-        char buf[32];
-        std::strftime(buf, sizeof buf, "%Y-%m-%dT%H:%M:%SZ", &tm);
-        return buf;
-    }
-    // XML text/attribute escaping that also guarantees well-formed UTF-8:
-    // decoder output can hold control bytes and invalid UTF-8 (e.g. Latin-1
-    // aliases), which strict XML readers reject -- each such byte becomes '?'.
-    static std::string xesc(const std::string& s) {
-        std::string o;
-        o.reserve(s.size());
-        for (std::size_t i = 0; i < s.size();) {
-            unsigned char c = static_cast<unsigned char>(s[i]);
-            if (c < 0x80) {
-                switch (c) {
-                    case '&': o += "&amp;"; break;
-                    case '<': o += "&lt;"; break;
-                    case '>': o += "&gt;"; break;
-                    case '"': o += "&quot;"; break;
-                    case '\'': o += "&apos;"; break;
-                    default: o += (c < 0x20 && c != '\t' && c != '\n' && c != '\r') ? '?' : static_cast<char>(c);
-                }
-                ++i;
-                continue;
-            }
-            int n = (c & 0xe0) == 0xc0 ? 2 : (c & 0xf0) == 0xe0 ? 3 : (c & 0xf8) == 0xf0 ? 4 : 0;
-            bool ok = n && c >= 0xc2 && i + n <= s.size();
-            for (int k = 1; ok && k < n; ++k) ok = (static_cast<unsigned char>(s[i + k]) & 0xc0) == 0x80;
-            if (ok) { o.append(s, i, n); i += n; }
-            else { o += '?'; ++i; }
-        }
-        return o;
-    }
-    template <class C>
-    static std::string arr(const C& c) {
-        std::string o = "[";
-        bool first = true;
-        for (const auto& s : c) { if (!first) o += ","; first = false; o += q(s); }
-        return o + "]";
-    }
-    static std::string obj(const std::map<std::string, std::string>& m) {
-        std::string o = "{";
-        bool first = true;
-        for (const auto& kv : m) { if (!first) o += ","; first = false; o += q(kv.first) + ":" + q(kv.second); }
-        return o + "}";
-    }
-    static std::string counts(const std::map<std::string, std::uint32_t>& m) {
-        std::string o = "{";
-        bool first = true;
-        for (const auto& kv : m) {
-            if (!first) o += ",";
-            first = false;
-            o += q(kv.first) + ":" + std::to_string(kv.second);
-        }
-        return o + "}";
-    }
-
     mutable std::mutex mu_;
     std::map<std::string, Family> fam_;
     std::map<std::uint64_t, Ctx> sess_;
     std::uint64_t version_ = 0;
     std::uint64_t next_call_ = 0;
     AssocRecorder rec_;
+    // identity / provenance (see assoc_merge.hpp) and imported layers
+    std::string instance_ = random_instance(), name_ = default_name();
+    std::int64_t since_ = now_ms();
+    std::vector<Dataset> imports_;
+    std::uint64_t next_import_ = 0;
 };
 
 } // namespace dsdsrv

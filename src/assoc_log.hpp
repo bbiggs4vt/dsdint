@@ -8,7 +8,7 @@
 // File format: gzip-compressed JSON Lines ("net_<UTC>.jsonl.gz"). Every line
 // is one flat object whose first key is "op":
 //
-//   {"op":"header","v":1,"t":<ms>,"fresh":true|false}
+//   {"op":"header","v":1,"t":<ms>,"fresh":true|false,"instance":..,"name":..,"since":<ms>}
 //   {"op":"begin","t":<ms>,"s":<session>,"label":"p25p1"[,"family":"p25","resumed":true]}
 //   {"op":"ev","t":<ms>,"s":<session>,"kind":..,"tg":..,"src":..,"slot":..,"cc":..,
 //        "ran":..,"nac":..,"em":..,"alias":..,"crc":..,"msg":..,"extra":..,"raw":..}
@@ -21,6 +21,8 @@
 // The file is flushed about once a second, so even an abrupt server stop
 // leaves a readable file. "fresh" means the model was empty when recording
 // began, so a replay of the file must reproduce the "stop" snapshot exactly.
+// "instance" / "name" / "since" identify the server run (see assoc_merge.hpp),
+// so an export of a replay is recognised as that run's data when merged.
 
 #pragma once
 

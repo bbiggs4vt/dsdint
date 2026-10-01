@@ -63,6 +63,7 @@
 #include <atomic>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <condition_variable>
 
 // The server carries two signal chains and picks one per session at run time
@@ -139,6 +140,8 @@ private:
     // The first HTTP request on the connection, parsed before we know
     // whether this is a WebSocket upgrade or a browser hitting /status.
     http::request<http::string_body> http_req_;
+    // Its parser (owns the body limit: explorer imports are large POSTs).
+    std::optional<http::request_parser<http::string_body>> http_parser_;
     // Shared session registry + this session's row id in it (0 until the
     // WebSocket upgrade succeeds, so HTTP status requests never register).
     std::shared_ptr<ServerStats> stats_;

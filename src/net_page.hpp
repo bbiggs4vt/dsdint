@@ -66,6 +66,16 @@ inline std::string render_net_page_html() {
              padding: .5rem .8rem; margin-bottom: .9rem; display: flex; flex-wrap: wrap; gap: .4rem .8rem;
              align-items: center; }
   .filebar .m { color: #b9d7e1; font-size: .82rem; }
+  .filebar.imp { background: #45402f; border-color: #c9a243; }
+  .filebar.imp .m { color: #e3d3a6; }
+  .filebar .imp-item { background: rgba(0,0,0,.25); border-radius: 3px; padding: .1rem .45rem; font-size: .8rem; }
+  .filebar .imp-item a { margin-left: .35rem; }
+  .filebar .x { cursor: pointer; color: var(--muted); margin-left: auto; }
+  .report { width: 100%; margin: .2rem 0 0; padding: 0; list-style: none; font-size: .8rem; }
+  .report li { padding: .1rem 0; }
+  .report .st { display: inline-block; min-width: 4.8rem; font-weight: 600; text-transform: uppercase; font-size: .7rem; letter-spacing: .04em; }
+  .report .st.ok { color: var(--success); } .report .st.skip { color: var(--muted); }
+  .report .st.bad { color: var(--danger); }
   body.filemode .live-only { display: none !important; }
   body.dragging { outline: 3px dashed var(--info); outline-offset: -6px; }
   .recst { color: var(--muted); font-size: .78rem; max-width: 26rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -209,12 +219,16 @@ inline std::string render_net_page_html() {
         <a href="/net/export.graphml" download>Association graph (.graphml)<small>Gephi &middot; Cytoscape &middot; yEd &middot; networkx</small></a>
       </div>
     </span>
-    <button id="open" class="btn" type="button" title="View a saved explorer export (or drop one on the page)">Open&hellip;</button>
-    <input type="file" id="openfile" accept=".json,.gz,application/json" hidden>
+    <button id="import" class="btn live-only" type="button" title="Add saved exports (e.g. from other receivers) to the live view">Import&hellip;</button>
+    <input type="file" id="importfile" accept=".json,.gz,application/json" multiple hidden>
+    <button id="open" class="btn" type="button" title="View saved explorer exports -- several are merged into one view (or drop them on the page)">Open&hellip;</button>
+    <input type="file" id="openfile" accept=".json,.gz,application/json" multiple hidden>
   </div>
 </div></header>
 <div class="wrap">
   <div id="filebar" class="filebar" hidden></div>
+  <div id="impbar" class="filebar imp live-only" hidden></div>
+  <div id="impnote" class="filebar imp live-only" hidden></div>
   <div class="tabs famtabs" id="famtabs"></div>
   <div id="empty" class="emptybig"><b>Waiting for digital-voice traffic</b>
     Start a decode session (DMR, P25, NXDN, dPMR, D-STAR, YSF, TETRA, EDACS) and its calls, talkgroups,
@@ -986,6 +1000,17 @@ function render() {
 // ---------- export / open ----------
 $('exp').addEventListener('click', function (e) { e.stopPropagation(); $('expmenu').hidden = !$('expmenu').hidden; });
 document.addEventListener('click', function () { $('expmenu').hidden = true; });
+function srcText(s) {
+  function t(ms) { return ms ? dt(ms).slice(5, 16) : 'start'; }
+  return (s.name || (s.instance || '').slice(0, 8) || '?') + ' ' + t(s.since) + '–' + t(s.through).slice(6) + 'Z';
+}
+function reportList(rep) {
+  return h('ul', { class: 'report' }, rep.map(function (r) {
+    var cls = /^(merged|imported|replaced)$/.test(r.status) ? 'ok' : r.status === 'skipped' ? 'skip' : 'bad';
+    return h('li', null, [h('span', { class: 'st ' + cls, text: r.status }), h('b', { text: r.name }),
+      r.message && r.message !== r.status ? ' — ' + r.message : '']);
+  }));
+}
 function openText(text, name) {
   if (/^\s*\{"op":"header"/.test(text)) {
     alert('"' + name + '" is a recording (the raw decoder input), not an export.\n\n' +
@@ -994,30 +1019,60 @@ function openText(text, name) {
   }
   var d;
   try { d = JSON.parse(text); } catch (e) { alert('"' + name + '" is not valid JSON.'); return; }
+  openData(d, name);
+}
+// Show an export (or a merge of several) read-only. `report` = what happened
+// to each file of a merge.
+function openData(d, name, report) {
   var ok = d && typeof d.families === 'object' && (d.format === 'dsd-net-export' || typeof d.now === 'number');
   if (!ok) { alert('"' + name + '" is not a dsd-server explorer export (expected format "dsd-net-export").'); return; }
   if (d.format === 'dsd-net-export' && d.format_version > 1)
     alert('This export uses a newer format (v' + d.format_version + '); some details may not show.');
-  S.file = { name: name, exported: d.exported || d.now, source: d.source || '' };
+  S.file = { name: name, exported: d.exported || d.now, source: d.name || d.source || '' };
   S.d = { version: -Date.now(), now: d.now || d.exported, families: d.families, rec: {} };
   S.fam = null; S.net = '*'; S.sel = null; S.q = ''; $('q').value = ''; GR.sig = ''; GR.fitted = false;
   document.body.classList.add('filemode');
-  var fb = $('filebar');
+  var fb = $('filebar'), srcs = d.sources || [];
   fb.textContent = '';
-  fb.appendChild(h('span', null, ['Viewing export ', h('b', { text: name })]));
-  fb.appendChild(h('span', { class: 'm', text: 'exported ' + dt(S.file.exported) + (S.file.source ? ' by ' + S.file.source : '') +
-                                               ' \u00B7 times are relative to the export' }));
+  fb.appendChild(h('span', null, [report ? 'Viewing a merge of ' : 'Viewing export ', h('b', { text: name })]));
+  fb.appendChild(h('span', { class: 'm', text: (report ? 'merged ' : 'exported ') + dt(S.file.exported) +
+    (!report && S.file.source ? ' by ' + S.file.source : '') + ' · times are relative to the export' }));
+  if (srcs.length > 1 || report)
+    fb.appendChild(h('span', { class: 'm', text: 'sources: ' + srcs.map(srcText).join(', ') }));
+  if (report) {
+    var blob = new Blob([JSON.stringify(d)], { type: 'application/json' });
+    fb.appendChild(h('a', { href: URL.createObjectURL(blob), download: 'net_merged.json' }, 'Save merged (.json)'));
+  }
   fb.appendChild(h('a', { href: '#', onclick: function (e) { e.preventDefault(); backToLive(); } }, 'Back to live'));
+  if (report) fb.appendChild(reportList(report));
   fb.hidden = false;
   $('live').textContent = 'file view';
   render();
 }
+function readFile(f) {
+  var gz = /\.gz$/i.test(f.name) && typeof DecompressionStream !== 'undefined';
+  return gz ? new Response(f.stream().pipeThrough(new DecompressionStream('gzip'))).text() : f.text();
+}
 function openFile(f) {
   if (!f) return;
-  var p = /\.gz$/i.test(f.name) && typeof DecompressionStream !== 'undefined'
-    ? new Response(f.stream().pipeThrough(new DecompressionStream('gzip'))).text()
-    : f.text();
-  p.then(function (t) { openText(t, f.name); }).catch(function () { alert('Could not read "' + f.name + '".'); });
+  readFile(f).then(function (t) { openText(t, f.name); }).catch(function () { alert('Could not read "' + f.name + '".'); });
+}
+// Several files: merged by the server (the same merge as Import and
+// net-merge), without touching the live data.
+function openFiles(fl) {
+  var files = Array.prototype.slice.call(fl || []);
+  if (files.length < 2) { openFile(files[0]); return; }
+  Promise.all(files.map(function (f) {
+    return readFile(f).then(function (t) { return { name: f.name, text: t }; });
+  })).then(function (list) {
+    return fetch('/net/merge', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+                                 body: JSON.stringify({ files: list }) });
+  }).then(function (r) { return r.json(); }).then(function (res) {
+    if (res.error) { alert('Merge failed: ' + res.error); return; }
+    var n = res.report.filter(function (r) { return /^(merged|replaced)$/.test(r.status); }).length;
+    openData(res.export, files.length + ' files', res.report);
+    if (!n) alert('None of the files could be merged:\n\n' + res.report.map(function (r) { return r.name + ': ' + r.message; }).join('\n'));
+  }).catch(function (e) { alert('Could not merge the files (' + e + ').'); });
 }
 function backToLive() {
   S.file = null; S.d = null; IX = null; S.fam = load('fam'); S.net = '*'; S.sel = null; GR.sig = ''; GR.fitted = false;
@@ -1026,13 +1081,61 @@ function backToLive() {
   $('live').textContent = 'connecting\u2026';
 }
 $('open').addEventListener('click', function () { $('openfile').value = ''; $('openfile').click(); });
-$('openfile').addEventListener('change', function () { openFile(this.files[0]); });
+$('openfile').addEventListener('change', function () { openFiles(this.files); });
 document.addEventListener('dragover', function (e) { e.preventDefault(); document.body.classList.add('dragging'); });
 document.addEventListener('dragleave', function (e) { if (!e.relatedTarget) document.body.classList.remove('dragging'); });
 document.addEventListener('drop', function (e) {
   e.preventDefault(); document.body.classList.remove('dragging');
-  if (e.dataTransfer && e.dataTransfer.files.length) openFile(e.dataTransfer.files[0]);
+  if (e.dataTransfer && e.dataTransfer.files.length) openFiles(e.dataTransfer.files);
 });
+
+// ---------- import (exports added to the live view) ----------
+// Each file is posted as is (JSON or gzip); the server decides whether it
+// can join without counting anything twice and says why not.
+function importFiles(fl) {
+  var files = Array.prototype.slice.call(fl || []), out = [];
+  var note = $('impnote');
+  note.textContent = '';
+  note.appendChild(h('span', { class: 'm', text: 'Importing ' + files.length + ' file' + (files.length > 1 ? 's' : '') + '…' }));
+  note.hidden = false;
+  files.reduce(function (p, f) {
+    return p.then(function () {
+      return fetch('/net/import?name=' + encodeURIComponent(f.name), { method: 'POST', cache: 'no-store', body: f })
+        .then(function (r) { return r.json(); })
+        .then(function (r) { out.push(r); }, function (e) { out.push({ name: f.name, status: 'failed', message: String(e) }); });
+    });
+  }, Promise.resolve()).then(function () {
+    note.textContent = '';
+    note.appendChild(h('span', null, h('b', { text: 'Import' })));
+    note.appendChild(h('span', { class: 'x', title: 'Dismiss', onclick: function () { note.hidden = true; } }, '✕'));
+    note.appendChild(reportList(out));
+    S.impsig = null;
+  });
+}
+function updateImports(list) {
+  list = list || [];
+  var sig = JSON.stringify(list.map(function (x) { return [x.id, x.calls]; }));
+  if (sig === S.impsig) return;
+  S.impsig = sig;
+  var bar = $('impbar');
+  bar.textContent = '';
+  bar.hidden = !list.length;
+  if (!list.length) return;
+  bar.appendChild(h('span', null, ['Including ', h('b', { text: list.length + ' import' + (list.length > 1 ? 's' : '') }), ':']));
+  list.forEach(function (x) {
+    bar.appendChild(h('span', { class: 'imp-item', title: x.networks + ' networks · ' + x.talkgroups + ' talkgroups · ' +
+        x.radios + ' radios · ' + x.calls + ' calls\n' + (x.sources || []).map(srcText).join('\n') }, [
+      x.label, h('span', { class: 'm', text: ' (' + (x.sources || []).map(function (s) { return s.name || '?'; }).join(', ') + ')' }),
+      h('a', { href: '#', title: 'Remove this import', onclick: function (e) {
+        e.preventDefault(); fetch('/net/imports/remove?id=' + x.id, { cache: 'no-store' }).then(function () { S.impsig = null; });
+      } }, '✕')]));
+  });
+  bar.appendChild(h('a', { href: '#', onclick: function (e) {
+    e.preventDefault(); fetch('/net/imports/clear', { cache: 'no-store' }).then(function () { S.impsig = null; });
+  } }, 'Remove all'));
+}
+$('import').addEventListener('click', function () { $('importfile').value = ''; $('importfile').click(); });
+$('importfile').addEventListener('change', function () { importFiles(this.files); });
 
 // ---------- recording (Record button) ----------
 function mb(n) { return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
@@ -1070,6 +1173,7 @@ function poll() {
   fetch('/net.json', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
     S.skew = d.now - Date.now();
     updateRec(d.rec);
+    updateImports(d.imports);
     var changed = !S.d || d.version !== S.d.version;
     S.d = d;
     $('live').textContent = 'live · updated ' + hms(d.now) + 'Z';
@@ -1093,7 +1197,8 @@ $('pause').addEventListener('click', function () {
   $('live').textContent = S.paused ? 'paused — view frozen' : 'live';
 });
 $('clear').addEventListener('click', function () {
-  if (!confirm('Forget all calls, talkgroups, radios and networks learned so far?')) return;
+  if (!confirm('Forget all calls, talkgroups, radios and networks learned so far' +
+               (S.d && S.d.imports && S.d.imports.length ? ', and the imports' : '') + '?')) return;
   fetch('/net/clear', { cache: 'no-store' }).then(function () { S.sel = null; S.net = '*'; GR.sig = ''; });
 });
 S.fam = load('fam');

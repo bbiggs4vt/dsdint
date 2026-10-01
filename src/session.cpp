@@ -43,6 +43,63 @@ std::string net_rec_json(const AssocModel::RecStatus& r) {
         .field("file_bytes", static_cast<double>(r.file_bytes)).str();
 }
 
+// Largest HTTP request body accepted (explorer imports / merges of exports).
+constexpr std::uint64_t kMaxHttpBody = 128ull << 20;
+
+// "a%20b+c" -> "a b c" (query-string values).
+std::string url_decode(const std::string& s) {
+    std::string o;
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '+') { o += ' '; continue; }
+        if (s[i] == '%' && i + 2 < s.size() && std::isxdigit(static_cast<unsigned char>(s[i + 1])) &&
+            std::isxdigit(static_cast<unsigned char>(s[i + 2]))) {
+            o += static_cast<char>(std::stoi(s.substr(i + 1, 2), nullptr, 16));
+            i += 2;
+            continue;
+        }
+        o += s[i];
+    }
+    return o;
+}
+// The value of `key` in a query string, decoded ("" if absent).
+std::string query_param(const std::string& query, const std::string& key) {
+    std::size_t p = 0;
+    while (p <= query.size()) {
+        std::size_t e = query.find('&', p);
+        if (e == std::string::npos) e = query.size();
+        const std::string kv = query.substr(p, e - p);
+        const std::size_t eq = kv.find('=');
+        if (kv.substr(0, eq) == key) return eq == std::string::npos ? std::string() : url_decode(kv.substr(eq + 1));
+        p = e + 1;
+    }
+    return std::string();
+}
+
+// /net/merge: several exports, merged without touching the live model (the
+// explorer's Open... with several files). Body: {"files":[{"name":..,"text":..}]}
+// with each file's text verbatim. Returns {"report":[..],"export":{..}}.
+std::string net_merge_response(const std::string& body) {
+    mjson::V root;
+    std::string err;
+    if (!mjson::parse(body, root, &err) || !root.get("files") || root.get("files")->t != mjson::V::Arr)
+        return "{\"error\":" + assocjson::q("expected {\"files\":[{\"name\":..,\"text\":..}]}" +
+                                              (err.empty() ? std::string() : " (" + err + ")")) + "}";
+    std::vector<std::pair<std::string, std::string>> files;
+    for (auto& f : root.get("files")->a) {
+        if (f.t != mjson::V::Obj) continue;
+        files.emplace_back(f.str("name"), f.str("text"));
+    }
+    std::vector<MergeReport> report;
+    const Dataset merged = merge_exports(files, report);
+    std::string rep = "[";
+    for (std::size_t i = 0; i < report.size(); ++i)
+        rep += (i ? "," : "") + std::string("{\"name\":") + assocjson::q(report[i].label) + ",\"status\":" +
+               assocjson::q(report[i].status) + ",\"message\":" + assocjson::q(report[i].message) + "}";
+    rep += "]";
+    const std::int64_t now = AssocModel::now_ms();
+    return "{\"report\":" + rep + ",\"export\":" + export_json(merged, now, "", "merged") + "}";
+}
+
 // Allocate a local UDP port per session for dsd-fme's decoded audio
 // output, avoiding collisions between concurrent client sessions -- a
 // collision would mean one session receiving another's audio.
@@ -112,8 +169,14 @@ void Session::run() {
     // read with a timeout so a silent client can't tie up the socket.
     beast::get_lowest_layer(ws_).expires_after(std::chrono::seconds(30));
     auto self = shared_from_this();
-    http::async_read(ws_.next_layer(), read_buffer_, http_req_,
-        [self](beast::error_code ec, std::size_t) { self->on_http_read(ec); });
+    http_parser_.emplace();
+    http_parser_->body_limit(kMaxHttpBody);     // /net/import, /net/merge uploads
+    http::async_read(ws_.next_layer(), read_buffer_, *http_parser_,
+        [self](beast::error_code ec, std::size_t) {
+            if (!ec) self->http_req_ = self->http_parser_->release();
+            self->http_parser_.reset();
+            self->on_http_read(ec);
+        });
 }
 
 void Session::on_http_read(beast::error_code ec) {
@@ -203,7 +266,30 @@ void Session::serve_http() {
         return;
     }
 
-    if (http_req_.method() != http::verb::get) {
+    const bool post = http_req_.method() == http::verb::post;
+    if (post && target == "/net/import") {
+        // Explorer Import...: add an export (body, JSON or gzip) as a layer on
+        // top of the live data. ?name= labels it. 200 with the outcome --
+        // imported / replaced / skipped / refused / invalid -- and a reason.
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "application/json");
+        if (stats_) {
+            std::string name = query_param(query, "name");
+            if (name.empty()) name = "import";
+            const auto r = stats_->assoc().import_export(std::move(http_req_.body()), name);
+            if (r.status == "invalid") res->result(http::status::bad_request);
+            std::cerr << "net import: " << name << ": " << r.status << " (" << r.message << ")\n";
+            res->body() = "{\"name\":" + assocjson::q(name) + ",\"status\":" + assocjson::q(r.status) +
+                          ",\"message\":" + assocjson::q(r.message) + ",\"id\":" + std::to_string(r.id) + "}";
+        } else {
+            res->body() = "{}";
+        }
+    } else if (post && target == "/net/merge") {
+        const std::string out = net_merge_response(http_req_.body());
+        res->result(out.compare(0, 9, "{\"error\":") == 0 ? http::status::bad_request : http::status::ok);
+        res->set(http::field::content_type, "application/json");
+        res->body() = out;
+    } else if (http_req_.method() != http::verb::get) {
         res->result(http::status::method_not_allowed);
         res->set(http::field::content_type, "text/plain; charset=utf-8");
         res->body() = "405 method not allowed\n";
@@ -263,9 +349,20 @@ void Session::serve_http() {
         res->result(ok ? http::status::ok : http::status::internal_server_error);
         res->set(http::field::content_type, "application/json");
         res->body() = stats_ ? net_rec_json(stats_->assoc().recording()) : std::string("{}");
+    } else if (target == "/net/imports/remove" || target == "/net/imports/clear") {
+        // Remove one import (?id=N) or all of them; the live data stays.
+        bool ok = true;
+        if (stats_) {
+            if (target == "/net/imports/clear") stats_->assoc().clear_imports();
+            else ok = stats_->assoc().remove_import(std::strtoull(query_param(query, "id").c_str(), nullptr, 10));
+        }
+        res->result(ok ? http::status::ok : http::status::not_found);
+        res->set(http::field::content_type, "application/json");
+        res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
     } else if (target == "/net/clear") {
-        // Explorer Clear button: forget everything learned so far (a
-        // side-effecting GET, matching /log/clear's style for these pages).
+        // Explorer Clear button: forget everything learned so far, and the
+        // imports (a side-effecting GET, matching /log/clear's style for
+        // these pages).
         if (stats_) stats_->assoc().clear();
         res->result(http::status::ok);
         res->set(http::field::content_type, "application/json");

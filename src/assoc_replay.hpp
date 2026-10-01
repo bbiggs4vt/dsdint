@@ -80,7 +80,15 @@ inline bool replay_log(const std::string& path, AssocModel& m, ReplayResult& r,
             const std::string& op = k["op"];
             if (op == "truncated") { r.truncated = true; return; }
             const std::int64_t t = k.count("t") ? std::stoll(k["t"]) : 0;
-            if (op == "header") { r.header = true; r.fresh = k["fresh"] == "true"; return; }
+            if (op == "header") {
+                r.header = true;
+                r.fresh = k["fresh"] == "true";
+                // The replayed model is that server run's data: same identity
+                // and span, so its export is recognised as such when merged.
+                if (k.count("instance")) m.set_identity(k["instance"], k["name"]);
+                m.set_since(k.count("since") ? std::stoll(k["since"]) : t);
+                return;
+            }
             if (t > until) { stop = true; return; }
             if (!r.t_first) r.t_first = t;
             r.t_last = t;

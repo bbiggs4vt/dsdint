@@ -114,6 +114,8 @@ int main() {
     std::string path;
     {
         AssocModel live;
+        live.set_identity("1234abcd5678ef90", "bench");
+        live.set_since(500);
         check(live.start_recording(dir.string(), 0, false, 1000), "record: start_recording on an empty model");
         const auto rs = live.recording();
         path = rs.path;
@@ -129,7 +131,9 @@ int main() {
         check(!live.recording().on && live.recording().last_path == path, "record: stopped; last file remembered");
 
         const std::string text = slurp_gz(path);
-        check(text.rfind("{\"op\":\"header\",\"v\":1,\"t\":1000,\"fresh\":true}", 0) == 0, "file: starts with a fresh header");
+        check(text.rfind("{\"op\":\"header\",\"v\":1,\"t\":1000,\"fresh\":true,\"instance\":\"1234abcd5678ef90\","
+                         "\"name\":\"bench\",\"since\":500}", 0) == 0,
+              "file: starts with a fresh header naming the server run");
         check(text.find("\"why\":\"start\"") != std::string::npos && text.find("\"why\":\"stop\"") != std::string::npos,
               "file: start and stop snapshots present");
         check(text.find("Build Version") != std::string::npos, "file: even inputs the model ignores are recorded");
@@ -145,6 +149,11 @@ int main() {
         check(families_of(rep_json) == families_of(r.stop_model),
               "replay: explorer output matches the recorded 'stop' snapshot byte for byte");
         check(families_of(rep_json) == families_of(live_json), "replay: ...and the live model itself");
+        check(replay.instance() == live.instance() && replay.name() == "bench" && replay.since() == 9000 &&
+              live.since() == 9000,
+              "replay: takes on the recorded run's identity; the span restarts at the Clear, as live");
+        check(live.import_export(replay.to_export_json(r.stop_t), "replay.json", 10000).status == "skipped",
+              "replay: an export of the replay, imported into the server it recorded, is recognised as its own data");
         AssocModel before_clear;                                // the SMS was wiped by the Clear at t=9000
         ReplayResult bc;
         replay_log(path, before_clear, bc, 8999);

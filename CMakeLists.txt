@@ -213,11 +213,28 @@ target_compile_options(test_assoc_log PRIVATE -Wall -Wextra)
 add_test(NAME assoc_log_test COMMAND test_assoc_log)
 set_tests_properties(assoc_log_test PROPERTIES TIMEOUT 30)
 
+# Merging explorer exports / importing them into the live model (assoc_merge.hpp).
+add_executable(test_assoc_merge EXCLUDE_FROM_ALL
+  src/dsd_process.cpp
+  tests/test_assoc_merge.cpp
+)
+target_include_directories(test_assoc_merge PRIVATE src)
+target_link_libraries(test_assoc_merge PRIVATE Threads::Threads ZLIB::ZLIB)
+target_compile_options(test_assoc_merge PRIVATE -Wall -Wextra)
+add_test(NAME assoc_merge_test COMMAND test_assoc_merge)
+set_tests_properties(assoc_merge_test PROPERTIES TIMEOUT 30)
+
 # net-replay: replay a network-explorer recording offline (tools/net_replay.cpp).
 add_executable(net-replay tools/net_replay.cpp)
 target_include_directories(net-replay PRIVATE src)
 target_link_libraries(net-replay PRIVATE ZLIB::ZLIB)
 target_compile_options(net-replay PRIVATE -Wall -Wextra)
+
+# net-merge: merge explorer exports into one (tools/net_merge.cpp).
+add_executable(net-merge tools/net_merge.cpp)
+target_include_directories(net-merge PRIVATE src)
+target_link_libraries(net-merge PRIVATE ZLIB::ZLIB)
+target_compile_options(net-merge PRIVATE -Wall -Wextra)
 
 # π/4-DQPSK demodulator (TETRA physical layer). Pure DSP with a matching
 # modulator carried in the test as ground truth — no external deps, no
