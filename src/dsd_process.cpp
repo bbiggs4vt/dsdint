@@ -12,6 +12,7 @@
 #include <cstring>
 #include <cerrno>
 #include <csignal>
+#include <locale>
 #include <regex>
 #include <sstream>
 #include <iostream>
@@ -19,6 +20,17 @@
 namespace dsdsrv {
 
 namespace {
+// libstdc++ fills std::ctype<char>::narrow()'s per-char cache lazily, and
+// std::regex's \b handling narrows through it -- so the first \b match on two
+// dsd-fme reader threads at once races on that fill (benign, both write the
+// same byte, but ThreadSanitizer reports it). Fill the cache once during
+// static initialization, before any thread exists.
+[[maybe_unused]] const bool g_ctype_narrow_warm = [] {
+    const auto& ct = std::use_facet<std::ctype<char>>(std::locale());
+    for (int c = 1; c < 256; ++c) ct.narrow(static_cast<char>(c), '\0');
+    return true;
+}();
+
 // Removes ANSI escape sequences (CSI "\x1b[...<letter>" -- real dsd-fme
 // colorizes its log with these) plus stray carriage returns, so parsing
 // and the raw_line clients receive see clean text.
