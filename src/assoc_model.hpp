@@ -146,14 +146,29 @@ public:
             c.family = f;
         }
         if (ev.crc_error == "1") return;         // failed FEC/CRC: ids are unreliable
-        Family& F = fam_[c.family];
-        ++version_;
 
         const std::string up = upper(ev.raw_line);
         const auto extra = parse_extra(ev.extra);
 
+        // A stream enters the model only once it decodes real traffic (a sync,
+        // call, voice, data...). Until then it creates nothing -- no protocol
+        // tab, no "Unidentified" network -- so an empty channel, noise, or the
+        // wrong protocol leaves no trace (dsd-fme's startup banner alone would
+        // otherwise register the stream). Identity broadcasts heard before the
+        // first traffic are kept on the stream, so its network comes out
+        // already identified.
+        if (!c.live) {
+            if (ev.kind == "unknown") {
+                absorb_identity(c, ev, extra, up, nullptr);
+                return;
+            }
+            c.live = true;
+        }
+        Family& F = fam_[c.family];
+        ++version_;
+
         // 1. Network identity for this stream.
-        if (absorb_identity(c, ev, extra, up, F) || c.net.empty() || !F.networks.count(c.net))
+        if (absorb_identity(c, ev, extra, up, &F) || c.net.empty() || !F.networks.count(c.net))
             resolve_network(c, sid, F, now);
         Network& N = F.networks[c.net];
         N.last_ms = now;
@@ -392,6 +407,7 @@ private:
         std::map<std::string, std::string> ids;        // identity tokens seen
         std::string net, site;
         bool strong = false;
+        bool live = false;                              // has decoded real traffic yet
         std::map<std::string, std::uint64_t> active;   // "slot|tgt" -> call id
         std::map<std::string, std::uint64_t> last_slot_call; // slot -> latest call id
         // Weak-anchor values seen but not yet believed: key -> (value, times in a row).
@@ -510,7 +526,7 @@ private:
 
     // Returns true when the stream's identity changed.
     bool absorb_identity(Ctx& c, const DsdEvent& ev, const std::map<std::string, std::string>& x,
-                         const std::string& up, Family& F) {
+                         const std::string& up, Family* F) {
         std::map<std::string, std::string> got;
         const std::string& fam = c.family;
         if (!ev.color_code.empty() && (fam == "dmr" || fam == "dpmr" || fam == "tetra"))
@@ -530,9 +546,9 @@ private:
         // absorb nothing -- it must not move this stream's identity or site.
         if (has(up, "ADJ") || has(up, "NEIGHB")) {
             std::string s = site_label(fam, got);
-            if (!s.empty() && !c.net.empty()) {
-                auto nit = F.networks.find(c.net);
-                if (nit != F.networks.end()) nit->second.sites.insert(s);
+            if (!s.empty() && !c.net.empty() && F) {
+                auto nit = F->networks.find(c.net);
+                if (nit != F->networks.end()) nit->second.sites.insert(s);
             }
             return false;
         }

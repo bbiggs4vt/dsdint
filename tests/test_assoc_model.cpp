@@ -449,6 +449,48 @@ int main() {
         check(j["families"].has("p25") && !j["families"].has("dmr"), "auto: inferred P25 from the sync line, not the DMR banner");
     }
 
+    // ---- streams that never decode anything leave no trace ----
+    {
+        AssocModel m;
+        m.begin_stream(1, "dmr", 0);
+        // dsd-fme's startup banner reaches the model via on_suppressed...
+        for (const char* b : {"Build Version: AW -128-NOTFOUND ", "MBElib Version: 1.3.0",
+                              "Decoding DMR BS/MS Simplex", "Audio In Device: -"})
+            line(m, 1, b, 1000);
+        // ...and noise yields at most CRC-failed garbage.
+        line(m, 1, " SLOT 1 TGT=999 SRC=888 Group Call (CRC ERR)", 1100);
+        check(snap(m, 1200)["families"].size() == 0,
+              "dead stream: banner + CRC-failed noise create no tab, network or radio");
+        m.end_stream(1);
+        m.remove_session(1);
+        check(snap(m, 1300)["families"].size() == 0, "dead stream: still nothing after it ends");
+    }
+    {
+        // Identity heard before the first traffic is kept, so the network comes
+        // out identified -- with no "Unidentified" bucket ever created.
+        AssocModel m;
+        m.begin_stream(1, "p25p1", 0);
+        m.ingest(1, classify_dsd_fme_line(" LRA [00] CFVA [3] RFSS[004] SITE [012] SYSID [3A1]"), 900);
+        m.ingest(1, classify_dsd_fme_line(" CHAN-T [52E6] CHAN-R [50D7] SSC [70] WACN [BEE00]"), 950);
+        check(snap(m, 950)["families"].size() == 0, "pre-traffic: identity broadcasts alone don't register the stream");
+        line(m, 1, "17:30:46 Sync: +P25p1 NAC/CC: 293; RFSS: 004; Site: 012;  TSBK", 1000);
+        J j = snap(m, 1000);
+        const J& N = j["families"]["p25"]["networks"];
+        check(N.size() == 1 && N.at(0)["key"].s == "wacn:BEE00/sys:3A1",
+              "pre-traffic: first sync registers the stream already identified as WACN/SYS");
+    }
+    {
+        // After Clear, a still-running stream re-enters on its next real traffic.
+        AssocModel m;
+        m.begin_stream(1, "dmr", 0);
+        line(m, 1, " SLOT 1 TGT=5 SRC=6 Group Call ", 1000);
+        m.clear();
+        line(m, 1, "Decoding DMR BS/MS Simplex", 1100);
+        check(snap(m, 1100)["families"].size() == 0, "clear: banner-type lines don't re-register a cleared stream");
+        line(m, 1, " SLOT 1 TGT=5 SRC=6 Group Call ", 1200);
+        check(snap(m, 1200)["families"].has("dmr"), "clear: real traffic does");
+    }
+
     // ---- paging and streams without begin_stream are ignored ----
     {
         AssocModel m;
