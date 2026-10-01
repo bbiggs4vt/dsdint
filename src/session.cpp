@@ -19,6 +19,30 @@
 namespace dsdsrv {
 
 namespace {
+// Network-explorer recordings (assoc_log.hpp): where they go and how big one
+// may get. DSD_NET_LOG_DIR, else the IQ-capture dir (DSD_IQ_LOG_DIR -- in the
+// Docker image /captures), else the working directory. DSD_NET_LOG_MAX_MB is
+// the uncompressed cap per file (default 1024; the gzip file is ~10x smaller).
+std::string net_log_dir() {
+    for (const char* v : {"DSD_NET_LOG_DIR", "DSD_IQ_LOG_DIR"}) {
+        const char* d = std::getenv(v);
+        if (d && d[0]) return d;
+    }
+    return ".";
+}
+std::uint64_t net_log_max_bytes() {
+    const char* m = std::getenv("DSD_NET_LOG_MAX_MB");
+    unsigned long mb = (m && m[0]) ? std::strtoul(m, nullptr, 10) : 1024;
+    return static_cast<std::uint64_t>(mb) * 1024ull * 1024ull;
+}
+std::string net_rec_json(const AssocModel::RecStatus& r) {
+    const std::string file = r.last_path.empty() ? std::string()
+                                                 : std::filesystem::path(r.last_path).filename().string();
+    return json::Writer().field("on", r.on).field("truncated", r.truncated).field("file", file)
+        .field("path", r.last_path).field("bytes", static_cast<double>(r.bytes))
+        .field("file_bytes", static_cast<double>(r.file_bytes)).str();
+}
+
 // Allocate a local UDP port per session for dsd-fme's decoded audio
 // output, avoiding collisions between concurrent client sessions -- a
 // collision would mean one session receiving another's audio.
@@ -139,7 +163,45 @@ void Session::serve_http() {
     res->set(http::field::server, "dsd-server/1.0");
 
     std::string target(http_req_.target());
-    if (auto q = target.find('?'); q != std::string::npos) target = target.substr(0, q);
+    std::string query;
+    if (auto q = target.find('?'); q != std::string::npos) { query = target.substr(q + 1); target = target.substr(0, q); }
+
+    // Download the current (or most recent) network-explorer recording,
+    // streamed from disk. Only the file the server itself wrote is served.
+    if (target == "/net/log/download" && http_req_.method() == http::verb::get && stats_) {
+        stats_->assoc().flush_recording();               // make everything so far readable
+        const auto rs = stats_->assoc().recording();
+        http::file_body::value_type body;
+        beast::error_code fec;
+        if (!rs.last_path.empty()) body.open(rs.last_path.c_str(), beast::file_mode::scan, fec);
+        if (!rs.last_path.empty() && !fec) {
+            auto fres = std::make_shared<http::response<http::file_body>>(
+                std::piecewise_construct, std::make_tuple(std::move(body)),
+                std::make_tuple(http::status::ok, http_req_.version()));
+            fres->set(http::field::server, "dsd-server/1.0");
+            fres->set(http::field::content_type, "application/gzip");
+            fres->set(http::field::content_disposition,
+                      "attachment; filename=\"" + std::filesystem::path(rs.last_path).filename().string() + "\"");
+            fres->keep_alive(false);
+            fres->prepare_payload();
+            auto self = shared_from_this();
+            http::async_write(ws_.next_layer(), *fres, [self, fres](beast::error_code, std::size_t) {
+                beast::error_code ig;
+                beast::get_lowest_layer(self->ws_).socket().shutdown(tcp::socket::shutdown_send, ig);
+            });
+            return;
+        }
+        res->result(http::status::not_found);
+        res->set(http::field::content_type, "application/json");
+        res->body() = "{\"error\":\"no recording yet\"}";
+        res->prepare_payload();
+        auto self = shared_from_this();
+        http::async_write(ws_.next_layer(), *res, [self, res](beast::error_code, std::size_t) {
+            beast::error_code ig;
+            beast::get_lowest_layer(self->ws_).socket().shutdown(tcp::socket::shutdown_send, ig);
+        });
+        return;
+    }
 
     if (http_req_.method() != http::verb::get) {
         res->result(http::status::method_not_allowed);
@@ -173,6 +235,24 @@ void Session::serve_http() {
         res->result(http::status::ok);
         res->set(http::field::content_type, "application/json");
         res->body() = stats_ ? stats_->assoc().to_json() : std::string("{\"families\":{}}");
+    } else if (target == "/net/log/on" || target == "/net/log/off") {
+        // Explorer Record button: record every input to the association model
+        // (assoc_log.hpp) for offline replay. "?clear=1" wipes the model first
+        // so the recording starts fresh and replays exactly.
+        bool ok = true;
+        if (stats_) {
+            if (target == "/net/log/on") {
+                const bool clear = query.find("clear=1") != std::string::npos;
+                ok = stats_->assoc().start_recording(net_log_dir(), net_log_max_bytes(), clear);
+                if (ok) std::cerr << "net recording: writing " << stats_->assoc().recording().path << "\n";
+                else std::cerr << "net recording: could not create a file in " << net_log_dir() << "\n";
+            } else {
+                stats_->assoc().stop_recording();
+            }
+        }
+        res->result(ok ? http::status::ok : http::status::internal_server_error);
+        res->set(http::field::content_type, "application/json");
+        res->body() = stats_ ? net_rec_json(stats_->assoc().recording()) : std::string("{}");
     } else if (target == "/net/clear") {
         // Explorer Clear button: forget everything learned so far (a
         // side-effecting GET, matching /log/clear's style for these pages).
@@ -1161,6 +1241,17 @@ void Session::on_write(beast::error_code ec, std::size_t /*bytes_transferred*/) 
 Server::Server(net::io_context& ioc, const tcp::endpoint& endpoint)
     : ioc_(ioc), acceptor_(ioc) {
     beast::error_code ec;
+
+    // DSD_NET_LOG=1: record the network explorer's inputs from startup (the
+    // model is empty, so the recording replays exactly). Stop/download it from
+    // the explorer page or /net/log/off and /net/log/download.
+    if (const char* nl = std::getenv("DSD_NET_LOG"); nl && (nl[0] == '1' || nl[0] == 'y' || nl[0] == 'Y' ||
+                                                           nl[0] == 't' || nl[0] == 'T' || std::string(nl) == "on")) {
+        if (stats_->assoc().start_recording(net_log_dir(), net_log_max_bytes(), false))
+            std::cerr << "net recording: writing " << stats_->assoc().recording().path << "\n";
+        else
+            std::cerr << "net recording: could not create a file in " << net_log_dir() << "\n";
+    }
 
     acceptor_.open(endpoint.protocol(), ec);
     acceptor_.set_option(net::socket_base::reuse_address(true), ec);

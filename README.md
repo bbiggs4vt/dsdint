@@ -504,6 +504,7 @@ session exactly as before; anything else is answered over HTTP:
 | `/iq_log/on`, `/iq_log/off` | flip the global IQ-capture switch (the page's **Log IQ** checkbox); returns `{"iq_log_enabled":…}` |
 | `/net` | the network explorer page (see [Network explorer](#network-explorer)) |
 | `/net.json`, `/net/clear` | the explorer's association model as JSON; forget it |
+| `/net/log/on`, `/net/log/off`, `/net/log/download` | record the explorer's inputs (`?clear=1` clears first); stop; download the current / last recording |
 
 The live update is a tiny `/status.json` poll that patches the page in
 place — cheap on the server (no decode work, just a mutex-guarded snapshot
@@ -608,6 +609,40 @@ it -- unless another running session is still on that network.
 Everything is in memory, bounded (last 400 calls per protocol; capped
 radios / talkgroups / networks), and resets on restart or with the page's
 **Clear** button. `GET /net.json` serves the same model for tooling.
+
+### Recording explorer data for analysis
+
+The explorer can record **everything its association model receives** -- every
+decoded event (including the lines clients never see), every session start /
+stop, with the exact timestamps the model used -- so a live test can be
+replayed offline and reproduce precisely what the explorer showed.
+
+- **From the page:** click **Record** in the explorer header (if the explorer
+  already has data it offers to clear first -- recommended, so the replay is
+  exact). The header shows `REC net_<UTC>.jsonl.gz` and its size; click
+  **Stop recording**, then **Download** to save the file from your browser.
+- **From startup:** run the server with `DSD_NET_LOG=1` to record from the very
+  first event. Stop / download with the page or `GET /net/log/off` and
+  `GET /net/log/download`.
+- **Where:** `DSD_NET_LOG_DIR`, else the IQ-capture directory (`DSD_IQ_LOG_DIR`
+  -- `/captures` in the Docker image), else the working directory. Files are
+  gzip-compressed JSON Lines (roughly 10x smaller than the raw data); each is
+  capped by `DSD_NET_LOG_MAX_MB` (default 1024 MB uncompressed) and flushed
+  about once a second, so even an abrupt server stop leaves a readable file.
+
+To analyse a recording, replay it with the `net-replay` tool (built alongside
+the server):
+
+```bash
+./build/net-replay net_20261001_214359.jsonl.gz            # summary + exactness check
+./build/net-replay net_20261001_214359.jsonl.gz --at +42   # state 42 s into the recording
+./build/net-replay net_20261001_214359.jsonl.gz --json out.json   # the replayed /net.json
+```
+
+A recording that started with an empty (or cleared) explorer is checked
+against the snapshot taken when it stopped; `check OK` means the replay
+reproduced the explorer exactly, so a fix to the model can be re-run on the
+same data and compared.
 
 ## IQ capture (recording the raw stream)
 

@@ -1091,6 +1091,9 @@ over HTTP and the connection closed:
 | `GET /net` | `text/html` network explorer (calls / talkgroups / radios / networks and their associations; polls `/net.json`) |
 | `GET /net.json` | `application/json` association model (see below) |
 | `GET /net/clear` | forgets everything the explorer learned; returns `{"ok":true}` |
+| `GET /net/log/on` | starts recording every input of the explorer's model to `net_<UTC>.jsonl.gz` (`?clear=1` clears the model first so the recording replays exactly); returns the recording status |
+| `GET /net/log/off` | stops recording (the file ends with a snapshot of the model); returns the recording status |
+| `GET /net/log/download` | `application/gzip` — the current or most recent recording; `404` if there is none |
 | any other path | `404` |
 | non-GET | `405` |
 
@@ -1169,7 +1172,10 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
 `now` is the server's clock so a client can compute ages without skew:
 
 ```json
-{"version": 812, "now": 1790000000000, "families": {
+{"version": 812, "now": 1790000000000,
+ "rec": {"on": false, "truncated": false, "file": "net_20261001_214359.jsonl.gz",
+         "path": "/captures/net_20261001_214359.jsonl.gz", "bytes": 86317, "file_bytes": 9466},
+ "families": {
   "p25": {
     "networks":   [{"key": "wacn:BEE00/sys:3A1", "label": "WACN BEE00 · SYS 3A1", "confidence": "strong",
                     "ids": {"nac": "293", "rfss": "4", "site_id": "12", "system_id": "3A1", "wacn": "BEE00"},
@@ -1186,6 +1192,10 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
   }}}
 ```
 
+- `rec` is the recording status: `on`, the current / most recent `file`
+  (and full `path`), uncompressed `bytes` written, compressed `file_bytes` on
+  disk, and `truncated` once the size cap was hit. The file format is
+  documented in `src/assoc_log.hpp`; replay it with `net-replay`.
 - `confidence` is `strong` (a system identity: P25 WACN+SysID, DMR network
   id, NXDN system code, TETRA MCC+MNC), `weak` (only a short code -- DMR color
   code, NAC, RAN -- seen; scoped to one stream, key suffixed `@s<session>`) or

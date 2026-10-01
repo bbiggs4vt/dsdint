@@ -177,6 +177,8 @@ set_tests_properties(dmr_slot_aggregator_test PROPERTIES TIMEOUT 30)
 # (header-only, in src/). Pure in-process logic -- no sockets, always runs.
 add_executable(test_server_stats EXCLUDE_FROM_ALL tests/test_server_stats.cpp)
 target_include_directories(test_server_stats PRIVATE src)
+# server_stats.hpp -> assoc_model.hpp -> assoc_log.hpp writes gzip recordings.
+target_link_libraries(test_server_stats PRIVATE ZLIB::ZLIB)
 target_compile_options(test_server_stats PRIVATE -Wall -Wextra)
 add_test(NAME server_stats_test COMMAND test_server_stats)
 set_tests_properties(server_stats_test PROPERTIES TIMEOUT 30)
@@ -195,10 +197,27 @@ add_executable(test_assoc_model EXCLUDE_FROM_ALL
   tests/test_assoc_model.cpp
 )
 target_include_directories(test_assoc_model PRIVATE src)
-target_link_libraries(test_assoc_model PRIVATE Threads::Threads)
+target_link_libraries(test_assoc_model PRIVATE Threads::Threads ZLIB::ZLIB)
 target_compile_options(test_assoc_model PRIVATE -Wall -Wextra)
 add_test(NAME assoc_model_test COMMAND test_assoc_model)
 set_tests_properties(assoc_model_test PROPERTIES TIMEOUT 30)
+
+# Network explorer recording + replay (assoc_log.hpp / assoc_replay.hpp).
+add_executable(test_assoc_log EXCLUDE_FROM_ALL
+  src/dsd_process.cpp
+  tests/test_assoc_log.cpp
+)
+target_include_directories(test_assoc_log PRIVATE src)
+target_link_libraries(test_assoc_log PRIVATE Threads::Threads ZLIB::ZLIB)
+target_compile_options(test_assoc_log PRIVATE -Wall -Wextra)
+add_test(NAME assoc_log_test COMMAND test_assoc_log)
+set_tests_properties(assoc_log_test PROPERTIES TIMEOUT 30)
+
+# net-replay: replay a network-explorer recording offline (tools/net_replay.cpp).
+add_executable(net-replay tools/net_replay.cpp)
+target_include_directories(net-replay PRIVATE src)
+target_link_libraries(net-replay PRIVATE ZLIB::ZLIB)
+target_compile_options(net-replay PRIVATE -Wall -Wextra)
 
 # π/4-DQPSK demodulator (TETRA physical layer). Pure DSP with a matching
 # modulator carried in the test as ground truth — no external deps, no

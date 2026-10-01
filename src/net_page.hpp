@@ -54,6 +54,9 @@ inline std::string render_net_page_html() {
          border: 1px solid var(--comp-bd); border-radius: 4px; padding: .3rem .8rem; font: inherit; font-size: .8rem;
          text-shadow: 0 -1px 0 rgba(0,0,0,.3); }
   .btn:hover { background-image: linear-gradient(rgba(255,255,255,.18), rgba(255,255,255,.03)), linear-gradient(#7a8288, #7a8288); }
+  .btn.recon { background-image: linear-gradient(rgba(255,255,255,.12), rgba(255,255,255,0)), linear-gradient(#d9534f, #c9302c); }
+  .recst { color: var(--muted); font-size: .78rem; max-width: 26rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .recst .live { color: var(--danger); font-weight: 600; }
   .btn.on { background-image: linear-gradient(rgba(255,255,255,.12), rgba(255,255,255,0)), linear-gradient(#e0a33c, #d38f2a); }
   .tabs { display: flex; gap: .3rem; margin-bottom: .7rem; border-bottom: 1px solid var(--table-bd); flex-wrap: wrap; }
   .tab { appearance: none; cursor: pointer; color: var(--muted); background: transparent;
@@ -182,6 +185,8 @@ inline std::string render_net_page_html() {
   </div>
   <div class="hdr-actions">
     <input id="q" type="search" placeholder="Find radio, talkgroup, alias, text&hellip;" autocomplete="off">
+    <span id="recst" class="recst"></span>
+    <button id="rec" class="btn" type="button" title="Record everything the explorer receives, to replay and analyse offline">&#9679; Record</button>
     <button id="pause" class="btn" type="button">Pause</button>
     <button id="clear" class="btn" type="button" title="Forget everything learned so far">Clear</button>
   </div>
@@ -953,10 +958,42 @@ function render() {
   renderDetail();
 }
 
+// ---------- recording (Record button) ----------
+function mb(n) { return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
+function updateRec(r) {
+  S.rec = r || {};
+  var b = $('rec'), st = $('recst');
+  b.textContent = S.rec.on ? '\u25A0 Stop recording' : '\u25CF Record';
+  b.classList.toggle('recon', !!S.rec.on);
+  st.textContent = '';
+  if (!S.rec.file) return;
+  st.title = S.rec.path || '';
+  var dl = h('a', { href: '/net/log/download', download: S.rec.file }, 'Download');
+  if (S.rec.on) st.appendChild(h('span', null, [h('span', { class: 'live', text: 'REC ' }),
+    S.rec.file + ' \u00B7 ' + mb(S.rec.file_bytes || 0) + (S.rec.truncated ? ' \u00B7 size cap reached' : '') + ' \u00B7 ', dl]));
+  else st.appendChild(h('span', null, ['Last recording: ' + S.rec.file + ' \u00B7 ', dl]));
+}
+$('rec').addEventListener('click', function () {
+  var url;
+  if (S.rec && S.rec.on) {
+    url = '/net/log/off';
+  } else {
+    var hasData = S.d && Object.keys(S.d.families).length > 0;
+    var clear = hasData && confirm('Clear the explorer first so the recording replays exactly?\n\n' +
+      'OK = clear, then record (recommended)\nCancel = record on top of the current data');
+    url = '/net/log/on' + (clear ? '?clear=1' : '');
+  }
+  fetch(url, { cache: 'no-store' }).then(function (r) {
+    if (!r.ok) alert('Could not start recording \u2014 check that DSD_NET_LOG_DIR (or DSD_IQ_LOG_DIR) is writable.');
+    return r.json();
+  }).then(updateRec).catch(function () {});
+});
+
 function poll() {
   if (S.paused || document.hidden) { setTimeout(poll, POLL); return; }
   fetch('/net.json', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
     S.skew = d.now - Date.now();
+    updateRec(d.rec);
     var changed = !S.d || d.version !== S.d.version;
     S.d = d;
     $('live').textContent = 'live · updated ' + hms(d.now) + 'Z';

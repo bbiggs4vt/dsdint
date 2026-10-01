@@ -35,6 +35,7 @@
 
 #pragma once
 
+#include "assoc_log.hpp"
 #include "dsd_backend_types.hpp"
 
 #include <algorithm>
@@ -87,21 +88,30 @@ public:
 
     // A session started a decode pipeline with this protocol label. Resets the
     // stream context (a restart may be a different channel/protocol).
-    void begin_stream(std::uint64_t sid, const std::string& label, std::int64_t now = now_ms()) {
+    // `family` overrides the family derived from the label; only a replay of a
+    // recording passes it (a stream recorded mid-run may already have resolved
+    // "auto" to a concrete family).
+    void begin_stream(std::uint64_t sid, const std::string& label, std::int64_t now = now_ms(),
+                      const std::string& family = std::string()) {
         std::lock_guard<std::mutex> lk(mu_);
+        if (rec_.on())
+            rec_.write("{\"op\":\"begin\",\"t\":" + std::to_string(now) + ",\"s\":" + std::to_string(sid) +
+                       ",\"label\":" + assoclog::q(label) + "}", now);
         close_session_calls_locked(sid);
         prune_session_locked(sid);      // a restart ends the previous stream
         Ctx& c = sess_[sid];
         c = Ctx{};
-        c.family = assoc_family(label);
+        c.label = label;
+        c.family = family.empty() ? assoc_family(label) : family;
         c.running = true;
-        (void)now;
         ++version_;
     }
 
     // The session's pipeline stopped: close its open calls (keep nothing open).
-    void end_stream(std::uint64_t sid) {
+    void end_stream(std::uint64_t sid, std::int64_t now = now_ms()) {
         std::lock_guard<std::mutex> lk(mu_);
+        if (rec_.on())
+            rec_.write("{\"op\":\"end\",\"t\":" + std::to_string(now) + ",\"s\":" + std::to_string(sid) + "}", now);
         close_session_calls_locked(sid);
         auto it = sess_.find(sid);
         if (it != sess_.end()) { it->second.running = false; it->second.active.clear(); }
@@ -110,8 +120,10 @@ public:
     }
 
     // The session disconnected.
-    void remove_session(std::uint64_t sid) {
+    void remove_session(std::uint64_t sid, std::int64_t now = now_ms()) {
         std::lock_guard<std::mutex> lk(mu_);
+        if (rec_.on())
+            rec_.write("{\"op\":\"remove\",\"t\":" + std::to_string(now) + ",\"s\":" + std::to_string(sid) + "}", now);
         close_session_calls_locked(sid);
         prune_session_locked(sid);
         sess_.erase(sid);
@@ -120,17 +132,59 @@ public:
 
     // Drop everything learned so far (the page's Clear button). Live stream
     // contexts are kept (their family) but forget their identity and calls.
-    void clear() {
+    void clear(std::int64_t now = now_ms()) {
         std::lock_guard<std::mutex> lk(mu_);
-        fam_.clear();
-        for (auto& kv : sess_) {
-            std::string f = kv.second.family;
-            const bool running = kv.second.running;
-            kv.second = Ctx{};
-            kv.second.family = f;
-            kv.second.running = running;
+        if (rec_.on()) rec_.write("{\"op\":\"clear\",\"t\":" + std::to_string(now) + "}", now);
+        clear_locked();
+    }
+
+    // ---- recording (see assoc_log.hpp) ------------------------------------
+    struct RecStatus {
+        bool on = false, truncated = false;
+        std::string path, last_path;            // current file ("" when off); current or most recent
+        std::uint64_t bytes = 0, file_bytes = 0; // uncompressed written; compressed size on disk
+    };
+    // Start recording every input to a new file in `dir`. clear_first wipes
+    // the model first so the recording starts "fresh" and replays exactly.
+    // Streams already running are written as resumed "begin" lines. Returns
+    // false if the file can't be created. No-op if already recording.
+    bool start_recording(const std::string& dir, std::uint64_t max_bytes, bool clear_first,
+                         std::int64_t now = now_ms()) {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (rec_.on()) return true;
+        if (clear_first) clear_locked();
+        if (!rec_.start(dir, max_bytes, now)) return false;
+        const bool fresh = fam_.empty() && next_call_ == 0;
+        rec_.write("{\"op\":\"header\",\"v\":1,\"t\":" + std::to_string(now) +
+                   ",\"fresh\":" + (fresh ? "true" : "false") + "}", now);
+        for (const auto& kv : sess_) {
+            if (!kv.second.running) continue;
+            rec_.write("{\"op\":\"begin\",\"t\":" + std::to_string(now) + ",\"s\":" + std::to_string(kv.first) +
+                       ",\"label\":" + assoclog::q(kv.second.label) + ",\"family\":" + assoclog::q(kv.second.family) +
+                       ",\"resumed\":true}", now);
         }
+        rec_.write("{\"op\":\"snapshot\",\"t\":" + std::to_string(now) + ",\"why\":\"start\",\"model\":" +
+                   to_json_locked(now) + "}", now);
+        rec_.flush();
         ++version_;
+        return true;
+    }
+    // Stop recording; the file ends with a "stop" snapshot of the model.
+    void stop_recording(std::int64_t now = now_ms()) {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (!rec_.on()) return;
+        rec_.write("{\"op\":\"snapshot\",\"t\":" + std::to_string(now) + ",\"why\":\"stop\",\"model\":" +
+                   to_json_locked(now) + "}", now);
+        rec_.stop();
+        ++version_;
+    }
+    void flush_recording() {
+        std::lock_guard<std::mutex> lk(mu_);
+        rec_.flush();
+    }
+    RecStatus recording() const {
+        std::lock_guard<std::mutex> lk(mu_);
+        return rec_status_locked();
     }
 
     std::uint64_t version() const {
@@ -141,6 +195,7 @@ public:
     // Feed one decoded event from session `sid`.
     void ingest(std::uint64_t sid, const DsdEvent& ev, std::int64_t now = now_ms()) {
         std::lock_guard<std::mutex> lk(mu_);
+        if (rec_.on()) rec_.write(assoclog::event_line(now, sid, ev), now);  // every input, before any filtering
         auto sit = sess_.find(sid);
         if (sit == sess_.end()) return;          // no begin_stream (e.g. pager) -> ignore
         Ctx& c = sit->second;
@@ -301,8 +356,14 @@ public:
     // Serialize the whole model for /net.json. Calls come newest first.
     std::string to_json(std::int64_t now = now_ms()) const {
         std::lock_guard<std::mutex> lk(mu_);
+        return to_json_locked(now);
+    }
+
+private:
+    std::string to_json_locked(std::int64_t now) const {
         std::ostringstream o;
-        o << "{\"version\":" << version_ << ",\"now\":" << now << ",\"families\":{";
+        o << "{\"version\":" << version_ << ",\"now\":" << now << ",\"rec\":" << rec_json_locked()
+          << ",\"families\":{";
         bool firstf = true;
         for (const auto& fk : fam_) {
             const Family& F = fk.second;
@@ -368,6 +429,42 @@ public:
     }
 
 private:
+    RecStatus rec_status_locked() const {
+        RecStatus r;
+        r.on = rec_.on();
+        r.truncated = rec_.truncated();
+        r.path = rec_.path();
+        r.last_path = rec_.last_path();
+        r.bytes = rec_.bytes();
+        r.file_bytes = rec_.file_bytes();
+        return r;
+    }
+    std::string rec_json_locked() const {
+        const RecStatus r = rec_status_locked();
+        const std::string file = r.last_path.empty() ? std::string()
+                                                     : std::filesystem::path(r.last_path).filename().string();
+        return std::string("{\"on\":") + b(r.on) + ",\"truncated\":" + b(r.truncated) + ",\"file\":" + q(file) +
+               ",\"path\":" + q(r.last_path) + ",\"bytes\":" + std::to_string(r.bytes) +
+               ",\"file_bytes\":" + std::to_string(r.file_bytes) + "}";
+    }
+    // Forget everything learned; live stream contexts keep their protocol and
+    // running state. Call ids restart, so a recording begun after a clear
+    // replays to identical output.
+    void clear_locked() {
+        fam_.clear();
+        for (auto& kv : sess_) {
+            Ctx& c = kv.second;
+            const std::string f = c.family, l = c.label;
+            const bool running = c.running;
+            c = Ctx{};
+            c.family = f;
+            c.label = l;
+            c.running = running;
+        }
+        next_call_ = 0;
+        ++version_;
+    }
+
     struct Call {
         std::uint64_t id = 0, session = 0;
         std::string net, site, slot, src, tgt, alias, text;
@@ -410,6 +507,7 @@ private:
     };
     struct Ctx {                                       // one per session stream
         std::string family;
+        std::string label;                             // protocol label from begin_stream
         std::map<std::string, std::string> ids;        // identity tokens seen
         std::string net, site;
         bool strong = false;
@@ -1054,6 +1152,7 @@ private:
     std::map<std::uint64_t, Ctx> sess_;
     std::uint64_t version_ = 0;
     std::uint64_t next_call_ = 0;
+    AssocRecorder rec_;
 };
 
 } // namespace dsdsrv
