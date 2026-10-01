@@ -1,7 +1,7 @@
 // assoc_replay.hpp
 //
 // Replays a network-explorer recording (assoc_log.hpp) into an AssocModel:
-// every begin / event / end / remove / clear is re-applied with its recorded
+// every begin / tune / event / end / remove / clear is re-applied with its recorded
 // timestamp, so the model ends up exactly where the live one was. Shared by
 // tools/net_replay.cpp and tests/test_assoc_log.cpp.
 
@@ -94,7 +94,11 @@ inline bool replay_log(const std::string& path, AssocModel& m, ReplayResult& r,
             r.t_last = t;
             const std::uint64_t sid = k.count("s") ? std::stoull(k["s"]) : 0;
             if (op == "ev") { m.ingest(sid, assoclog::line_event(k), t); ++r.events; }
-            else if (op == "begin") { m.begin_stream(sid, k["label"], t, k["family"]); ++r.begins; }
+            else if (op == "begin") {
+                m.begin_stream(sid, k["label"], t, k["family"], k.count("freq") ? std::stoll(k["freq"]) : 0);
+                ++r.begins;
+            }
+            else if (op == "tune") m.retune_stream(sid, std::stoll(k["freq"]), t);
             else if (op == "end") { m.end_stream(sid, t); ++r.ends; }
             else if (op == "remove") { m.remove_session(sid, t); ++r.removes; }
             else if (op == "clear") { m.clear(t); ++r.clears; }

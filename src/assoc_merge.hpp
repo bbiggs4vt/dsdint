@@ -26,10 +26,15 @@
 // Identities. Talkgroup and radio ids are global within a protocol, and strong
 // network keys (P25 WACN/SysID, DMR network id, NXDN system code, TETRA
 // MCC/MNC) name the same system everywhere -- those merge across sources,
-// which is how sources link up. Weak / unidentified network keys
-// ("cc:1@s3": color code 1 heard on stream 3) are only unique within one
-// server run, so an imported one is qualified with its run ("cc:1@s3~1a2b3c4d")
-// and labelled with the source's name.
+// which is how sources link up. "Channel" keys -- a short code on a known
+// frequency ("cc:1@434425000": color code 1 on 434.425 MHz) -- name a
+// conventional channel: they merge across runs and, by default, across
+// receivers too (ChannelMerge::per_receiver keeps each receiver's apart, for
+// receivers far enough apart to hear different systems on one frequency).
+// Weak / unidentified keys without a frequency ("cc:1@s3": color code 1 on
+// stream 3) are only unique within one server run, so an imported one is
+// qualified with its run ("cc:1@s3~1a2b3c4d") and labelled with the source's
+// name.
 
 #pragma once
 
@@ -75,6 +80,13 @@ inline std::string q(const std::string& s) {
     return o + "\"";
 }
 inline const char* b(bool v) { return v ? "true" : "false"; }
+template <class C>
+inline std::string nums(const C& c) {
+    std::string o = "[";
+    bool first = true;
+    for (const auto& n : c) { if (!first) o += ","; first = false; o += std::to_string(n); }
+    return o + "]";
+}
 template <class C>
 inline std::string arr(const C& c) {
     std::string o = "[";
@@ -134,6 +146,17 @@ inline std::string xesc(const std::string& s) {
 }
 
 } // namespace assocjson
+
+// "434.4250 MHz" / "451.00625 MHz": at least four decimals, more only when the
+// channel needs them.
+inline std::string freq_text(std::int64_t hz) {
+    if (hz <= 0) return std::string();
+    char b[40];
+    std::snprintf(b, sizeof b, "%lld.%06lld", static_cast<long long>(hz / 1000000), static_cast<long long>(hz % 1000000));
+    std::string t(b);
+    while (t.size() > t.find('.') + 5 && t.back() == '0') t.pop_back();
+    return t + " MHz";
+}
 
 // ---- minimal nested JSON reader (for uploaded exports) --------------------
 namespace mjson {
@@ -298,6 +321,7 @@ struct DsNetwork {
     std::string key, label, confidence;
     std::map<std::string, std::string> ids;
     std::set<std::string> sites;
+    std::set<std::int64_t> freqs;
     std::uint64_t sessions = 0, calls = 0;
     std::int64_t first = 0, last = 0;
 };
@@ -321,6 +345,7 @@ struct DsCall {
     std::string net, site, slot, src, tgt, alias, text;
     bool priv = false, voice = false, data = false, emerg = false, enc = false, open = false;
     std::int64_t start = 0, last = 0;
+    std::int64_t freq = 0;
 };
 struct DsFamily {
     std::map<std::string, DsNetwork> networks;
@@ -365,7 +390,8 @@ inline std::string families_json(const Dataset& d) {
             if (!first) o << ",";
             first = false;
             o << "{\"key\":" << q(n.key) << ",\"label\":" << q(n.label) << ",\"confidence\":" << q(n.confidence)
-              << ",\"ids\":" << obj(n.ids) << ",\"sites\":" << arr(n.sites) << ",\"sessions\":" << n.sessions
+              << ",\"ids\":" << obj(n.ids) << ",\"sites\":" << arr(n.sites) << ",\"freqs\":" << nums(n.freqs)
+              << ",\"sessions\":" << n.sessions
               << ",\"calls\":" << n.calls << ",\"first\":" << n.first << ",\"last\":" << n.last << "}";
         }
         o << "],\"talkgroups\":[";
@@ -394,7 +420,8 @@ inline std::string families_json(const Dataset& d) {
             if (!first) o << ",";
             first = false;
             o << "{\"id\":" << k.id << ",\"session\":" << k.session << ",\"net\":" << q(k.net)
-              << ",\"site\":" << q(k.site) << ",\"slot\":" << q(k.slot) << ",\"src\":" << q(k.src)
+              << ",\"site\":" << q(k.site) << ",\"freq\":" << k.freq << ",\"slot\":" << q(k.slot)
+              << ",\"src\":" << q(k.src)
               << ",\"tgt\":" << q(k.tgt) << ",\"alias\":" << q(k.alias) << ",\"text\":" << q(k.text)
               << ",\"priv\":" << b(k.priv) << ",\"voice\":" << b(k.voice) << ",\"data\":" << b(k.data)
               << ",\"emerg\":" << b(k.emerg) << ",\"enc\":" << b(k.enc) << ",\"open\":" << b(k.open)
@@ -473,13 +500,25 @@ inline void countmap(const mjson::V* o, std::map<std::string, std::uint64_t>& ou
     if (o && o->t == mjson::V::Obj)
         for (const auto& kv : o->o) if (kv.second.t == mjson::V::Num && kv.second.n > 0) out[kv.first] += static_cast<std::uint64_t>(kv.second.n);
 }
-inline int rank(const std::string& conf) { return conf == "strong" ? 2 : conf == "weak" ? 1 : 0; }
+inline int rank(const std::string& conf) {
+    return conf == "strong" ? 3 : conf == "channel" ? 2 : conf == "weak" ? 1 : 0;
+}
 } // namespace detail
+
+// How channel-keyed networks (a short code on a known frequency) from
+// different receivers merge: joined (default), or kept per receiver -- then
+// they are qualified with the receiver's name, except the `home` receiver's
+// own (the live server importing its own earlier data).
+struct ChannelMerge {
+    bool per_receiver = false;
+    std::string home;
+};
 
 // Build a dataset from a parsed export. Local (weak / unidentified) network
 // keys of the export's own run are qualified with that run, so they can never
 // collide with another run's. Returns false with *err on a non-export.
-inline bool dataset_from_export(const mjson::V& root, const std::string& label, Dataset& d, std::string* err) {
+inline bool dataset_from_export(const mjson::V& root, const std::string& label, Dataset& d, std::string* err,
+                                const ChannelMerge& cm = ChannelMerge()) {
     using detail::u;
     using detail::i64;
     if (root.t != mjson::V::Obj) { if (err) *err = "not a JSON object"; return false; }
@@ -507,6 +546,8 @@ inline bool dataset_from_export(const mjson::V& root, const std::string& label, 
                 if (const mjson::V* ids = e.get("ids"); ids && ids->t == mjson::V::Obj)
                     for (const auto& kv : ids->o) if (kv.second.t == mjson::V::Str) n.ids[kv.first] = kv.second.s;
                 detail::strset(e.get("sites"), n.sites);
+                if (const mjson::V* fq = e.get("freqs"); fq && fq->t == mjson::V::Arr)
+                    for (const auto& x : fq->a) if (x.t == mjson::V::Num && x.n > 0) n.freqs.insert(static_cast<std::int64_t>(x.n));
                 n.sessions = u(e, "sessions"); n.calls = u(e, "calls"); n.first = i64(e, "first"); n.last = i64(e, "last");
                 df.networks[n.key] = std::move(n);
             }
@@ -543,7 +584,7 @@ inline bool dataset_from_export(const mjson::V& root, const std::string& label, 
                 c.priv = e.boolean("priv"); c.voice = e.boolean("voice"); c.data = e.boolean("data");
                 c.emerg = e.boolean("emerg"); c.enc = e.boolean("enc");
                 c.open = false;                                  // history, not live
-                c.start = i64(e, "start"); c.last = i64(e, "last");
+                c.start = i64(e, "start"); c.last = i64(e, "last"); c.freq = i64(e, "freq");
                 df.calls.push_back(std::move(c));
             }
     }
@@ -567,7 +608,9 @@ inline bool dataset_from_export(const mjson::V& root, const std::string& label, 
         d.sources.push_back(DsSource{instance, name, 0, d.exported});
     }
 
-    // Qualify this run's local network keys (already-qualified ones contain '~').
+    // Qualify this run's local network keys (already-qualified ones contain
+    // '~'): stream-scoped ones with the run, channel ones with the receiver
+    // when channels are kept per receiver.
     if (!instance.empty()) {
         const std::string tag = instance.substr(0, std::min<std::size_t>(8, instance.size()));
         const std::string who = name.empty() ? tag : name;
@@ -577,12 +620,19 @@ inline bool dataset_from_export(const mjson::V& root, const std::string& label, 
             std::map<std::string, DsNetwork> nets;
             for (auto& nk : F.networks) {
                 DsNetwork n = nk.second;
-                if (n.confidence != "strong" && n.key.find('~') == std::string::npos) {
+                const bool local = n.key.find('~') == std::string::npos;
+                if (local && n.confidence == "channel") {
+                    if (cm.per_receiver && who != cm.home) {
+                        remap[n.key] = n.key + "~" + who;
+                        n.key += "~" + who;
+                        n.label += " \xC2\xB7 " + who;
+                    }
+                } else if (local && n.confidence != "strong") {
                     remap[n.key] = n.key + "~" + tag;
                     n.key += "~" + tag;
                     n.label += " \xC2\xB7 " + who;
                 }
-                nets[n.key] = std::move(n);
+                nets.emplace(n.key, std::move(n));
             }
             F.networks = std::move(nets);
             if (remap.empty()) continue;
@@ -599,7 +649,8 @@ inline bool dataset_from_export(const mjson::V& root, const std::string& label, 
     return true;
 }
 
-inline bool dataset_from_export_text(std::string text, const std::string& label, Dataset& d, std::string* err) {
+inline bool dataset_from_export_text(std::string text, const std::string& label, Dataset& d, std::string* err,
+                                     const ChannelMerge& cm = ChannelMerge()) {
     if (!gunzip_if_needed(text)) { if (err) *err = "corrupt gzip data"; return false; }
     if (text.compare(0, 16, "{\"op\":\"header\",") == 0) {
         if (err) *err = "this is a recording (raw decoder input), not an export -- convert it with net-replay --export";
@@ -608,7 +659,7 @@ inline bool dataset_from_export_text(std::string text, const std::string& label,
     mjson::V root;
     std::string e;
     if (!mjson::parse(text, root, &e)) { if (err) *err = "not valid JSON (" + e + ")"; return false; }
-    return dataset_from_export(root, label, d, err);
+    return dataset_from_export(root, label, d, err, cm);
 }
 
 namespace detail {
@@ -673,6 +724,7 @@ inline void merge_into(Dataset& into, const Dataset& from) {
             if (detail::rank(m.confidence) > detail::rank(n.confidence)) { n.confidence = m.confidence; n.label = m.label; }
             for (const auto& i : m.ids) n.ids.insert(i);
             n.sites.insert(m.sites.begin(), m.sites.end());
+            n.freqs.insert(m.freqs.begin(), m.freqs.end());
             n.sessions += m.sessions; n.calls += m.calls;
             n.first = lo(n.first, m.first); n.last = std::max(n.last, m.last);
         }
@@ -820,12 +872,12 @@ struct MergeReport {
 // Merge several export files (no live model): the stateless "Open..." of
 // several files and tools/net_merge.cpp. Inputs are taken in order.
 inline Dataset merge_exports(const std::vector<std::pair<std::string, std::string>>& files,
-                             std::vector<MergeReport>& report) {
+                             std::vector<MergeReport>& report, const ChannelMerge& cm = ChannelMerge()) {
     std::vector<Dataset> layers;
     for (const auto& f : files) {
         Dataset x;
         std::string err;
-        if (!dataset_from_export_text(f.second, f.first, x, &err)) {
+        if (!dataset_from_export_text(f.second, f.first, x, &err, cm)) {
             report.push_back({f.first, "invalid", err});
             continue;
         }
@@ -867,8 +919,8 @@ inline std::string graphml(const Dataset& d, std::int64_t now) {
                               {"radios", "radios", "long"}, {"talkgroups", "talkgroups", "long"},
                               {"emergencies", "emergencies", "long"}, {"encrypted", "encrypted", "long"},
                               {"confidence", "confidence", "string"}, {"identifiers", "identifiers", "string"},
-                              {"sites", "sites", "string"}, {"first_seen", "first_seen", "string"},
-                              {"last_seen", "last_seen", "string"}};
+                              {"sites", "sites", "string"}, {"frequencies", "frequencies", "string"},
+                              {"first_seen", "first_seen", "string"}, {"last_seen", "last_seen", "string"}};
     for (const auto& k : nkeys)
         o << "  <key id=\"" << k[0] << "\" for=\"node\" attr.name=\"" << k[1] << "\" attr.type=\"" << k[2] << "\"/>\n";
     o << "  <key id=\"etype\" for=\"edge\" attr.name=\"type\" attr.type=\"string\"/>\n"
@@ -899,12 +951,14 @@ inline std::string graphml(const Dataset& d, std::int64_t now) {
         };
         for (const auto& kv : F.networks) {
             const DsNetwork& n = kv.second;
-            std::string ids, sites;
+            std::string ids, sites, freqs;
             for (const auto& i : n.ids) ids += (ids.empty() ? "" : "; ") + i.first + "=" + i.second;
             for (const auto& st : n.sites) sites += (sites.empty() ? "" : "; ") + st;
+            for (std::int64_t f : n.freqs) freqs += (freqs.empty() ? "" : "; ") + freq_text(f);
             o << "    <node id=\"" << xesc(nid("n", n.key)) << "\">\n";
             dt("type", "network"); dt("protocol", fam); dt("label", n.label); dn("calls", n.calls);
             dt("confidence", n.confidence); dt("identifiers", ids); dt("sites", sites);
+            if (!freqs.empty()) dt("frequencies", freqs);
             dt("first_seen", iso(n.first)); dt("last_seen", iso(n.last));
             o << "    </node>\n";
         }

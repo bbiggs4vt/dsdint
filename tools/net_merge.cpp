@@ -1,11 +1,14 @@
 // net_merge.cpp -- merge network-explorer exports into one.
 //
 //   net-merge <export.json[.gz]> [more exports...] -o <merged.json> [--graphml <merged.graphml>]
+//             [--per-receiver]
 //
 // The same merge as the explorer's "Open..." with several files (and its
 // "Import..." into a live server): talkgroups, radios and strong network ids
-// (P25 WACN/SysID, DMR network id, ...) join across files; weak network ids
-// (a bare color code / NAC / RAN) stay apart per server run. A file whose data
+// (P25 WACN/SysID, DMR network id, ...) join across files, and so do channel
+// ids (a short code on a known frequency: one conventional channel) unless
+// --per-receiver keeps each receiver's apart; weak network ids (a short code
+// on an unknown frequency) stay apart per server run. A file whose data
 // is already in the merge (the same export twice, or an older export of a run
 // a newer file covers) is skipped or replaced instead of counted twice; one
 // that only partly overlaps another is refused. Prints what happened to each
@@ -51,15 +54,18 @@ std::string base(const std::string& p) {
 int main(int argc, char** argv) {
     std::vector<std::string> inputs;
     std::string out, gml;
+    ChannelMerge cm;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if ((a == "-o" || a == "--out") && i + 1 < argc) out = argv[++i];
         else if (a == "--graphml" && i + 1 < argc) gml = argv[++i];
+        else if (a == "--per-receiver") cm.per_receiver = true;
         else if (a == "-h" || a == "--help") { inputs.clear(); out.clear(); break; }
         else inputs.push_back(a);
     }
     if (inputs.empty() || (out.empty() && gml.empty())) {
-        std::cerr << "usage: net-merge <export.json[.gz]> [more...] -o <merged.json> [--graphml <merged.graphml>]\n";
+        std::cerr << "usage: net-merge <export.json[.gz]> [more...] -o <merged.json> [--graphml <merged.graphml>]"
+                     " [--per-receiver]\n";
         return 1;
     }
     std::vector<std::pair<std::string, std::string>> files;
@@ -69,7 +75,7 @@ int main(int argc, char** argv) {
         files.emplace_back(base(p), std::move(text));
     }
     std::vector<MergeReport> report;
-    const Dataset d = merge_exports(files, report);
+    const Dataset d = merge_exports(files, report, cm);
     bool all = true;
     for (const auto& r : report) {
         std::cout << "  " << r.label << ": " << r.status << (r.message.empty() || r.message == r.status ? "" : " -- " + r.message) << "\n";

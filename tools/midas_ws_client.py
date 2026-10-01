@@ -40,6 +40,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import socket
 import struct
 import sys
@@ -253,6 +254,26 @@ class WSClient:
 
 # -------------------------------------------------------------- main
 
+def parse_freq(text):
+    """'434.425M' / '434425k' / '434425000' -> Hz (float)."""
+    t = text.strip().lower().rstrip("hz").strip()
+    mult = {"g": 1e9, "m": 1e6, "k": 1e3}.get(t[-1:], 1.0)
+    if mult != 1.0:
+        t = t[:-1]
+    return float(t) * mult
+
+
+def freqs_from_name(path):
+    """Frequencies in a capture's file name: the server's own captures carry
+    the tuner centre as "_c<Hz>Hz"; names like "..._f434.425_DMR..." carry the
+    channel frequency in MHz. Returns (center_hz, channel_hz), either None."""
+    name = os.path.basename(path)
+    c = re.search(r"_c(\d+)Hz", name)
+    f = re.search(r"(?:^|[_-])f(\d{2,5}\.\d+)(?=[_.-]|$)", name)
+    return (float(c.group(1)) if c else None,
+            float(f.group(1)) * 1e6 if f else None)
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Stream IQ from a MIDAS BLUE file to dsd-server; print "
@@ -266,6 +287,12 @@ def main():
     ap.add_argument("--channel-bandwidth", type=float, default=12500.0)
     ap.add_argument("--freq-offset", type=float, default=0.0,
                     help="channel offset in Hz (positive = channel above 0 Hz)")
+    ap.add_argument("--center-freq", default=None,
+                    help="absolute tuner centre frequency (e.g. 434.4M, 434400000); sent as "
+                         "center_freq so the server's network explorer knows the channel "
+                         "(= centre + offset). Default: from the file name, if it has one")
+    ap.add_argument("--channel-freq", default=None,
+                    help="absolute channel frequency instead (centre = channel - offset)")
     ap.add_argument("--gain", type=float, default=26000.0)
     ap.add_argument("--afc", action="store_true", help="enable server-side AFC")
     ap.add_argument("--matched-filter", action="store_true",
@@ -293,6 +320,18 @@ def main():
     if not sample_rate:
         print("error: BLUE header has no usable xdelta; pass --sample-rate", file=sys.stderr)
         return 2
+
+    center = None
+    if args.center_freq:
+        center = parse_freq(args.center_freq)
+    elif args.channel_freq:
+        center = parse_freq(args.channel_freq) - args.freq_offset
+    else:
+        c, f = freqs_from_name(args.bluefile)
+        center = c if c else (f - args.freq_offset if f else None)
+    if center:
+        print(f"channel {(center + args.freq_offset) / 1e6:.5f} MHz "
+              f"(centre {center / 1e6:.5f} MHz, offset {args.freq_offset:+.0f} Hz)")
 
     ws = WSClient(args.host, args.port)
     print(f"connected to ws://{args.host}:{args.port}/")
@@ -362,6 +401,8 @@ def main():
         start_msg["protocol"] = args.protocol
     if args.matched_filter:
         start_msg["matched_filter"] = True
+    if center:
+        start_msg["center_freq"] = center
     ws.send_text(json.dumps(start_msg))
 
     block_seconds = args.block / sample_rate

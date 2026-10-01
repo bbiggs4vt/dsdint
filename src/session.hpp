@@ -13,7 +13,9 @@
 //   Client -> Server:
 //     - Text frame, JSON: {"type":"start","sample_rate":2000000,
 //         "channel_bandwidth":12500,"freq_offset":0,"gain":26000,
-//         "afc":false}
+//         "afc":false[,"center_freq":434400000]}
+//       (center_freq: optional absolute tuner centre in Hz; the channel is
+//       then center_freq + freq_offset -- used by the network explorer.)
 //       Starts the demod + dsd-fme pipeline for this connection. "afc"
 //       (default false) enables automatic frequency control: the demod
 //       measures the residual carrier offset in its own discriminator
@@ -147,6 +149,7 @@ private:
     std::shared_ptr<ServerStats> stats_;
     std::uint64_t stats_id_ = 0;
     std::string remote_; // peer "ip:port", captured at accept for the status table
+    double center_freq_ = 0; // tuner centre from "start" (Hz; 0 = not given)
     // NOTE: ws_'s executor is a per-connection strand, bound at accept
     // time in Server::do_accept() via net::make_strand(). That's what
     // makes it safe to call net::post(ws_.get_executor(), ...) from other

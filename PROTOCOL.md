@@ -36,9 +36,9 @@ back to the defaults shown (see `handle_text_message` in `session.cpp`).
 
 | type | fields | effect |
 |---|---|---|
-| `start` | `sample_rate` (default 2000000), `channel_bandwidth` (12500), `freq_offset` (0), `gain` (26000), `afc` (false), `matched_filter` (false), `protocol` (""), `key_type` (""), `key` (""), `pocsag_mode` (""), `invert` (false), `iq_log` (false) | Builds the demod + decoder pipeline. If a pipeline is already running it is stopped and rebuilt (clean restart). Replies with `started` on success, `error` on failure. `iq_log` (default `false`): capture this session's raw IQ to a MIDAS BLUE file (see below). |
+| `start` | `sample_rate` (default 2000000), `channel_bandwidth` (12500), `freq_offset` (0), `gain` (26000), `afc` (false), `matched_filter` (false), `protocol` (""), `key_type` (""), `key` (""), `pocsag_mode` (""), `invert` (false), `iq_log` (false), `center_freq` (0) | Builds the demod + decoder pipeline. If a pipeline is already running it is stopped and rebuilt (clean restart). Replies with `started` on success, `error` on failure. `iq_log` (default `false`): capture this session's raw IQ to a MIDAS BLUE file (see below). `center_freq` (optional): the absolute tuner centre frequency in Hz, so the channel's frequency is known (`center_freq + freq_offset`); the network explorer labels and keys what it hears by it (see `/net.json`). Nothing else uses it. |
 | `set_gain` | `gain` (26000) | Live-adjusts discriminator gain. No reply. Ignored (silently) if no pipeline is running. |
-| `set_freq_offset` | `hz` (0) | Live-adjusts the NCO shift. No reply. Ignored if no pipeline is running. Also resets any accumulated AFC correction (an explicit retune is a statement of new truth). |
+| `set_freq_offset` | `hz` (0) | Live-adjusts the NCO shift. No reply. Ignored if no pipeline is running. Also resets any accumulated AFC correction (an explicit retune is a statement of new truth). With a `center_freq`, the network explorer treats it as a move to another channel. |
 | `stop` | — | Tears down the pipeline (kills the dsd-fme child / destroys the decoder). No reply. The WebSocket stays open; a new `start` is accepted afterwards. |
 
 `freq_offset` / `hz` sign convention: **positive means the channel of
@@ -451,7 +451,9 @@ Two environment variables tune it (server-side):
   On reaching it the capture stops on a sample boundary and a note is
   logged to stderr; the session itself keeps running.
 
-Filenames are `iq_<YYYYMMDD_HHMMSS>_s<session>_<protocol>_<rate>Hz.blue`.
+Filenames are `iq_<YYYYMMDD_HHMMSS>_s<session>_<protocol>_<rate>Hz.blue`,
+with `_c<centre>Hz` before `.blue` when the `start` carried a `center_freq`
+(`tools/midas_ws_client.py` sends it again when replaying the file).
 The files are readable by the repo's MIDAS tools
 (`tools/midas_ws_client.py` and friends) and any BLUE-aware toolchain.
 IQ logging is off by default; it writes a lot of data, so enable it only
@@ -1188,13 +1190,15 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
   "p25": {
     "networks":   [{"key": "wacn:BEE00/sys:3A1", "label": "WACN BEE00 · SYS 3A1", "confidence": "strong",
                     "ids": {"nac": "293", "rfss": "4", "site_id": "12", "system_id": "3A1", "wacn": "BEE00"},
-                    "sites": ["RFSS 4 · Site 12", "RFSS 4 · Site 13"], "sessions": 2, "calls": 22,
+                    "sites": ["RFSS 4 · Site 12", "RFSS 4 · Site 13"], "freqs": [851012500, 852137500],
+                    "sessions": 2, "calls": 22,
                     "first": 1789999970000, "last": 1789999990000}],
     "talkgroups": [{"id": "100", "networks": ["wacn:BEE00/sys:3A1"], "radios": {"10001": 2, "12001": 1},
                     "calls": 3, "emerg": 0, "enc": 0, "first": 1789999971000, "last": 1789999989000}],
     "radios":     [{"id": "10001", "aliases": [], "tgs": {"100": 2, "200": 1}, "peers": {},
                     "networks": ["wacn:BEE00/sys:3A1"], "calls": 3, "first": 1789999971000, "last": 1789999989000}],
-    "calls":      [{"id": 41, "session": 3, "net": "wacn:BEE00/sys:3A1", "site": "RFSS 4 · Site 12", "slot": "",
+    "calls":      [{"id": 41, "session": 3, "net": "wacn:BEE00/sys:3A1", "site": "RFSS 4 · Site 12",
+                    "freq": 851012500, "slot": "",
                     "src": "10001", "tgt": "100", "alias": "", "text": "", "priv": false, "voice": true,
                     "data": false, "emerg": false, "enc": false, "open": false, "streams": 1,
                     "start": 1789999988000, "last": 1789999989000}]
@@ -1211,9 +1215,18 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
   disk, and `truncated` once the size cap was hit. The file format is
   documented in `src/assoc_log.hpp`; replay it with `net-replay`.
 - `confidence` is `strong` (a system identity: P25 WACN+SysID, DMR network
-  id, NXDN system code, TETRA MCC+MNC), `weak` (only a short code -- DMR color
-  code, NAC, RAN -- seen; scoped to one stream, key suffixed `@s<session>`) or
-  `none` (`unknown:s<session>`: nothing decoded yet).
+  id, NXDN system code, TETRA MCC+MNC); `channel` (a short code -- DMR color
+  code, NAC, RAN -- or nothing, on a known channel frequency: key suffixed
+  `@<Hz>`, e.g. `cc:1@434425000`, or `ch@<Hz>` when unidentified; every
+  stream on that channel with that code shares it); `weak` (a short code on
+  an unknown frequency; scoped to one stream, key suffixed `@s<session>`) or
+  `none` (`unknown:s<session>`: nothing decoded, frequency unknown).
+- `freqs` on a network are the channels (Hz) it was heard on; `freq` on a
+  call is its channel (0 = unknown). Channel frequencies are the `start`'s
+  `center_freq + freq_offset`, snapped to `DSD_NET_FREQ_STEP_HZ` (default
+  1250 Hz: the 6.25 kHz and 2.5 kHz channel plans are unchanged, and an
+  offset up to ±625 Hz off still lands on its channel). A `set_freq_offset`
+  moves the stream to the new channel (its identity starts over).
 - `radios` on a talkgroup / `tgs` on a radio are call counts per association;
   `peers` are private (unit-to-unit) calls in either direction.
 - A session appears only once it decodes real traffic, and when it ends any
@@ -1259,10 +1272,16 @@ same merge, `src/assoc_merge.hpp`):
   networks with the same *strong* key -- that is how receivers link up. A weak
   or unidentified network key is only meaningful within the server run that
   made it, so an imported one is qualified with the run
-  (`cc:1@s3~3f9a0c1d`) and its label gets ` · <name>`.
+  (`cc:1@s3~3f9a0c1d`) and its label gets ` · <name>`. A `channel` key names
+  a conventional channel and joins across runs and receivers too -- unless
+  the server runs with `DSD_NET_CHANNEL_MERGE=receiver` (or `net-merge
+  --per-receiver`), for receivers far enough apart to hear different systems
+  on one frequency: then each receiver's is qualified with its name
+  (`cc:1@434425000~south`), except the live server's own.
 - Counts add up, sets are unioned, first / last span both. Calls are listed
   newest first (at most 1000 per protocol in a merge); a call two sources both
-  heard -- same network, source, target and kind, no more than 4 s apart -- is
+  heard -- same network (so a strong or channel key), source, target and
+  kind, no more than 4 s apart -- is
   kept once with `streams` summed and counted once (only calls still in the
   lists can be matched this way).
 - Nothing is counted twice: a file whose sources are all already included is

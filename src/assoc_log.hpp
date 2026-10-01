@@ -9,7 +9,8 @@
 // is one flat object whose first key is "op":
 //
 //   {"op":"header","v":1,"t":<ms>,"fresh":true|false,"instance":..,"name":..,"since":<ms>}
-//   {"op":"begin","t":<ms>,"s":<session>,"label":"p25p1"[,"family":"p25","resumed":true]}
+//   {"op":"begin","t":<ms>,"s":<session>,"label":"p25p1"[,"freq":<Hz>][,"family":"p25","resumed":true]}
+//   {"op":"tune","t":<ms>,"s":<session>,"freq":<Hz>}   (the session's channel moved)
 //   {"op":"ev","t":<ms>,"s":<session>,"kind":..,"tg":..,"src":..,"slot":..,"cc":..,
 //        "ran":..,"nac":..,"em":..,"alias":..,"crc":..,"msg":..,"extra":..,"raw":..}
 //   {"op":"end","t":<ms>,"s":<session>}        {"op":"remove","t":<ms>,"s":<session>}

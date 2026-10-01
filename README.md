@@ -583,7 +583,7 @@ unrelated numbers.
 calls, so each stream keeps the identity it has decoded and its calls are
 attributed to it:
 
-| Protocol | Strong identity | Weak identity | Site |
+| Protocol | Strong identity | Weak identity (short code) | Site |
 |---|---|---|---|
 | P25 | WACN + System ID | NAC | RFSS + Site |
 | DMR | Network ID (Tier III / Capacity Max) | color code | Site ID |
@@ -594,7 +594,20 @@ A weak id is a short code that unrelated systems routinely share (a DMR color
 code has 16 values), so a weakly identified stream gets its own bucket
 (`Color Code 1 · stream 3`) instead of being merged with other streams on
 the same code; talkgroups and radios it shares with other buckets show up
-under **Links** as evidence instead. P25's NAC is the exception: a stream
+under **Links** as evidence instead. **Unless the channel frequency is
+known:** when the client's `start` carries `center_freq` (the tuner centre;
+the channel is `center_freq + freq_offset`), a short code on a channel is in
+practice one conventional channel or repeater, so the bucket is the channel's
+(`Color Code 1 · 434.4250 MHz`, identity `channel`). Every session on that
+frequency with that code -- a reconnect, a restart, a second receiver --
+lands in the same network, and a call two sessions heard there is one call.
+Calls show their frequency (the Calls view's **MHz** column; the search box
+matches it) and networks list the channels they were heard on. A stream with
+no code decoded yet is `Unidentified · 434.4250 MHz`. The status page still
+lists sessions by session number. Frequencies are snapped to
+`DSD_NET_FREQ_STEP_HZ` (default 1250 Hz -- the 6.25 kHz and 2.5 kHz channel
+plans stay exact and an offset up to ±625 Hz off still lands on its channel);
+a `set_freq_offset` moves the stream to the new channel. P25's NAC is the exception: a stream
 that only hears a NAC is resolved to the known WACN/SysID network carrying
 that NAC, if exactly one does. Neighbour-site broadcasts are recorded as
 sites without moving the stream's identity, and a short code must be seen
@@ -656,11 +669,16 @@ can be combined:
 Talkgroups and radios are joined by id within a protocol, and networks by
 their strong id (P25 WACN/SysID, DMR network id, NXDN system code, TETRA
 MCC/MNC) -- so two receivers on the same system become one network with both
-receivers' radios. A weak id (a DMR color code, a bare NAC or RAN) can't tell
-systems apart, so each receiver's stays its own network, labelled with the
-receiver's name (`Color Code 1 · stream 3 · rx-north`), and shared talkgroups
-and radios show the link under **Links**. A call both receivers heard on the
-same system is shown and counted once (`2 RX`).
+receivers' radios. Channel networks (a short code on a known frequency) join
+too: `Color Code 1 · 434.4250 MHz` from two receivers is one network. If your
+receivers are far enough apart to hear *different* systems on one frequency,
+run with `DSD_NET_CHANNEL_MERGE=receiver` (`net-merge --per-receiver`) to keep
+each receiver's apart (its runs still join). A weak id with no frequency (a
+DMR color code, a bare NAC or RAN) can't tell systems apart, so each
+receiver's stays its own network, labelled with the receiver's name
+(`Color Code 1 · stream 3 · rx-north`), and shared talkgroups and radios show
+the link under **Links**. A call both receivers heard on the same system or
+channel is shown and counted once (`2 RX`).
 
 Each export records which server run it came from and the time span it
 covers, so the merge never counts the same calls twice: the same file twice,
@@ -724,7 +742,8 @@ Two ways to turn it on:
   to grab a sample of whatever is on the air right now without touching the
   client.
 
-Files are named `iq_<UTC-timestamp>_s<session>_<protocol>_<rate>Hz.blue`.
+Files are named `iq_<UTC-timestamp>_s<session>_<protocol>_<rate>Hz.blue`
+(plus `_c<centre>Hz` when the client sent a `center_freq`).
 Two environment variables tune capture (server-side):
 
 | Variable | Default | Meaning |
@@ -765,7 +784,11 @@ python3 tools/midas_ws_client.py capture.tmp --info   # just dump the header
 
 Useful knobs: `--speed N` (streaming pace as a multiple of realtime,
 default 4; 0 = unpaced), `--freq-offset`, `--gain`, `--sample-rate`
-(override the header), `--channels` (override the WAV inference).
+(override the header), `--channels` (override the WAV inference), and
+`--center-freq 434.4M` / `--channel-freq 434.425M` to tell the server the
+absolute frequency (for the network explorer). Without them the client takes
+it from the file name: the server's own captures carry the tuner centre as
+`_c<Hz>Hz`, and a name like `s6_f434.425_DMR.blue` gives the channel in MHz.
 Verified end to end against both server backends with a real DMR
 signal wrapped as CI and big-endian CF BLUE files — the WAV comes out
 sample-exact in both cases.

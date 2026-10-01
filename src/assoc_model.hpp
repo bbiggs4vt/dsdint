@@ -87,6 +87,7 @@ public:
     static constexpr std::size_t kMaxNetworks = 200;
     static constexpr std::size_t kMaxEdgesPerNode = 300;
     static constexpr std::size_t kMaxAliases = 5;
+    static constexpr std::size_t kMaxFreqs = 64;       // channels listed per network
 
     static std::int64_t now_ms() {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -99,6 +100,10 @@ public:
         std::snprintf(b, sizeof b, "%016llx", static_cast<unsigned long long>(g()));
         return b;
     }
+    static bool default_per_receiver() {
+        const char* v = std::getenv("DSD_NET_CHANNEL_MERGE");
+        return v && std::string(v) == "receiver";
+    }
     static std::string default_name() {
         if (const char* n = std::getenv("DSD_SERVER_NAME"); n && *n) return n;
         char h[256] = {0};
@@ -110,21 +115,66 @@ public:
     // stream context (a restart may be a different channel/protocol).
     // `family` overrides the family derived from the label; only a replay of a
     // recording passes it (a stream recorded mid-run may already have resolved
-    // "auto" to a concrete family).
+    // "auto" to a concrete family). `freq_hz` is the channel's absolute
+    // frequency when the client told us (0 = unknown; see channel_hz()): it
+    // keys weak networks by channel instead of by stream.
     void begin_stream(std::uint64_t sid, const std::string& label, std::int64_t now = now_ms(),
-                      const std::string& family = std::string()) {
+                      const std::string& family = std::string(), std::int64_t freq_hz = 0) {
         std::lock_guard<std::mutex> lk(mu_);
         if (rec_.on())
             rec_.write("{\"op\":\"begin\",\"t\":" + std::to_string(now) + ",\"s\":" + std::to_string(sid) +
-                       ",\"label\":" + assoclog::q(label) + "}", now);
+                       ",\"label\":" + assoclog::q(label) +
+                       (freq_hz ? ",\"freq\":" + std::to_string(freq_hz) : std::string()) + "}", now);
         close_session_calls_locked(sid);
         prune_session_locked(sid);      // a restart ends the previous stream
         Ctx& c = sess_[sid];
         c = Ctx{};
         c.label = label;
         c.family = family.empty() ? assoc_family(label) : family;
+        c.freq = freq_hz;
         c.running = true;
         ++version_;
+    }
+
+    // The session's channel moved (the client changed its offset): what it
+    // hears from now on is another channel, so its identity starts over (and,
+    // as at a stream start, it registers nothing until it decodes traffic).
+    void retune_stream(std::uint64_t sid, std::int64_t freq_hz, std::int64_t now = now_ms()) {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto it = sess_.find(sid);
+        if (it == sess_.end() || it->second.freq == freq_hz) return;
+        if (rec_.on())
+            rec_.write("{\"op\":\"tune\",\"t\":" + std::to_string(now) + ",\"s\":" + std::to_string(sid) +
+                       ",\"freq\":" + std::to_string(freq_hz) + "}", now);
+        close_session_calls_locked(sid);
+        prune_session_locked(sid);
+        Ctx& c = sess_[sid];
+        const std::string f = c.family, l = c.label;
+        const bool running = c.running;
+        c = Ctx{};
+        c.family = f;
+        c.label = l;
+        c.running = running;
+        c.freq = freq_hz;
+        ++version_;
+    }
+
+    // A channel frequency as the explorer keys it: snapped to `step_hz`
+    // (default 1250 Hz -- the finest raster that holds both the 6.25 kHz and
+    // the 2.5 kHz channel plans, so a nominal channel frequency is unchanged
+    // and an offset up to +-625 Hz off still lands on its channel). 0 = unknown.
+    static std::int64_t channel_hz(double hz, std::int64_t step_hz = 1250) {
+        if (!(hz > 0)) return 0;
+        if (step_hz <= 1) return static_cast<std::int64_t>(hz + 0.5);
+        return static_cast<std::int64_t>(hz / static_cast<double>(step_hz) + 0.5) * step_hz;
+    }
+    // Channels-per-receiver merging (see assoc_merge.hpp ChannelMerge): imports
+    // keep another receiver's channel-keyed networks apart instead of joining
+    // the same frequency + code. Default: join (DSD_NET_CHANNEL_MERGE=receiver
+    // to keep apart).
+    void set_channels_per_receiver(bool on) {
+        std::lock_guard<std::mutex> lk(mu_);
+        per_receiver_ = on;
     }
 
     // The session's pipeline stopped: close its open calls (keep nothing open).
@@ -183,6 +233,7 @@ public:
             if (!kv.second.running) continue;
             rec_.write("{\"op\":\"begin\",\"t\":" + std::to_string(now) + ",\"s\":" + std::to_string(kv.first) +
                        ",\"label\":" + assoclog::q(kv.second.label) + ",\"family\":" + assoclog::q(kv.second.family) +
+                       (kv.second.freq ? ",\"freq\":" + std::to_string(kv.second.freq) : std::string()) +
                        ",\"resumed\":true}", now);
         }
         rec_.write("{\"op\":\"snapshot\",\"t\":" + std::to_string(now) + ",\"why\":\"start\",\"model\":" +
@@ -258,6 +309,7 @@ public:
         if (!N.first_ms) N.first_ms = now;
         N.sessions.insert(sid);
         if (!c.site.empty()) N.sites.insert(c.site);
+        if (c.freq && N.freqs.size() < kMaxFreqs) N.freqs.insert(c.freq);
 
         // 2. Close this stream's calls that went quiet.
         expire_locked(c, F, now);
@@ -427,7 +479,13 @@ public:
         ImportResult r;
         Dataset x;
         std::string err;
-        if (!dataset_from_export_text(std::move(text), label, x, &err)) { r.status = "invalid"; r.message = err; return r; }
+        ChannelMerge cm;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            cm.per_receiver = per_receiver_;
+            cm.home = name_;
+        }
+        if (!dataset_from_export_text(std::move(text), label, x, &err, cm)) { r.status = "invalid"; r.message = err; return r; }
         std::lock_guard<std::mutex> lk(mu_);
         const std::vector<DsSource> live{live_source_locked(now)};
         Verdict v = judge(x, imports_, &live);
@@ -535,6 +593,7 @@ private:
                 const Network& n = kv.second;
                 DsNetwork& o = D.networks[kv.first];
                 o.key = n.key; o.label = n.label; o.confidence = n.confidence; o.ids = n.ids; o.sites = n.sites;
+                o.freqs = n.freqs;
                 o.sessions = n.sessions.size(); o.calls = n.calls; o.first = n.first_ms; o.last = n.last_ms;
             }
             for (const auto& kv : F.tgs) {
@@ -554,7 +613,7 @@ private:
             for (auto it = F.calls.rbegin(); it != F.calls.rend(); ++it) {
                 const Call& k = *it;
                 DsCall c;
-                c.id = k.id; c.session = k.session; c.streams = k.streams;
+                c.id = k.id; c.session = k.session; c.streams = k.streams; c.freq = k.freq;
                 c.net = k.net; c.site = k.site; c.slot = k.slot; c.src = k.src; c.tgt = k.tgt;
                 c.alias = k.alias; c.text = k.text;
                 c.priv = k.priv; c.voice = k.voice; c.data = k.data; c.emerg = k.emergency; c.enc = k.encrypted;
@@ -605,10 +664,12 @@ private:
             Ctx& c = kv.second;
             const std::string f = c.family, l = c.label;
             const bool running = c.running;
+            const std::int64_t freq = c.freq;
             c = Ctx{};
             c.family = f;
             c.label = l;
             c.running = running;
+            c.freq = freq;
         }
         next_call_ = 0;
         ++version_;
@@ -622,11 +683,13 @@ private:
         std::int64_t start_ms = 0, last_ms = 0;
         std::uint32_t frames = 0;
         std::uint32_t streams = 1;                      // receivers that heard it (see adopt_twin)
+        std::int64_t freq = 0;                          // channel, Hz (0 = unknown)
     };
     struct Network {
-        std::string key, label, confidence;            // confidence: strong | weak | none
+        std::string key, label, confidence;            // confidence: strong | channel | weak | none
         std::map<std::string, std::string> ids;
         std::set<std::string> sites;
+        std::set<std::int64_t> freqs;                  // channels it was heard on, Hz
         std::set<std::uint64_t> sessions;
         std::uint64_t calls = 0;
         std::int64_t first_ms = 0, last_ms = 0;
@@ -662,6 +725,7 @@ private:
         bool strong = false;
         bool live = false;                              // has decoded real traffic yet
         bool running = false;                           // pipeline up (begin_stream .. end_stream)
+        std::int64_t freq = 0;                          // channel frequency, Hz (0 = unknown)
         std::map<std::string, std::uint64_t> active;   // "slot|tgt" -> call id
         std::map<std::string, std::uint64_t> last_slot_call; // slot -> latest call id
         // Weak-anchor values seen but not yet believed: key -> (value, times in a row).
@@ -854,6 +918,8 @@ private:
         return changed;
     }
 
+    static std::string mhz(std::int64_t hz) { return freq_text(hz); }
+
     static std::string site_label(const std::string& fam, const std::map<std::string, std::string>& ids) {
         auto g = [&](const char* k) { auto it = ids.find(k); return it == ids.end() ? std::string() : it->second; };
         if (fam == "p25") {
@@ -914,7 +980,13 @@ private:
         NetId id = derive(c.family, c.ids);
         const std::string prev = c.net;
         bool strong = id.conf == "strong";
-        if (id.key.empty()) {
+        if (id.key.empty() && c.freq) {
+            // Nothing decoded but the channel is known: the channel is the
+            // best identity there is (and the same one for every stream on it).
+            id.key = "ch@" + std::to_string(c.freq);
+            id.label = "Unidentified \xC2\xB7 " + mhz(c.freq);
+            id.conf = "channel";
+        } else if (id.key.empty()) {
             id.key = "unknown:s" + std::to_string(sid);
             id.label = "Unidentified \xC2\xB7 stream " + std::to_string(sid);
             id.conf = "none";
@@ -926,7 +998,9 @@ private:
             // link (the explorer's Links view) instead of being silently merged.
             // Only P25's 12-bit NAC is distinctive enough to resolve to a known
             // strong (WACN/SysID) network carrying the same NAC, when exactly
-            // one does.
+            // one does. With the channel frequency known, a short code on one
+            // channel is as good as a conventional repeater's identity: every
+            // stream on that frequency hearing that code shares one network.
             std::string match;
             int hits = 0;
             if (c.family == "p25") {
@@ -939,6 +1013,10 @@ private:
             }
             if (hits == 1) {
                 id.key = match;
+            } else if (c.freq) {
+                id.key += "@" + std::to_string(c.freq);
+                id.label += " \xC2\xB7 " + mhz(c.freq);
+                id.conf = "channel";
             } else {
                 id.key += "@s" + std::to_string(sid);
                 id.label += " \xC2\xB7 stream " + std::to_string(sid);
@@ -970,7 +1048,10 @@ private:
                     if (it == c.ids.end() || it->second != kv.second) { refines = false; break; }
                     refines = true;
                 }
-                if (mine || refines) merge_network(F, prev, id.key);
+                // An unidentified bucket of a known channel is refined by any
+                // identity heard on that channel, however many streams fed it.
+                const bool channel_unknown = c.freq && prev == "ch@" + std::to_string(c.freq);
+                if (mine || refines || channel_unknown) merge_network(F, prev, id.key);
             }
         }
         c.net = id.key;
@@ -993,6 +1074,7 @@ private:
         Network& a = fi->second;
         Network& z = ti->second;
         z.sites.insert(a.sites.begin(), a.sites.end());
+        for (std::int64_t f : a.freqs) if (z.freqs.size() < kMaxFreqs) z.freqs.insert(f);
         for (const auto& kv : a.ids) z.ids.insert(kv);
         z.sessions.insert(a.sessions.begin(), a.sessions.end());
         z.calls += a.calls;
@@ -1167,6 +1249,7 @@ private:
         k.slot = slot;
         k.net = c.net;
         k.site = c.site;
+        k.freq = c.freq;
         k.start_ms = k.last_ms = now;
         F.calls.push_back(std::move(k));
         c.last_slot_call[slot] = F.calls.back().id;
@@ -1260,6 +1343,7 @@ private:
     std::int64_t since_ = now_ms();
     std::vector<Dataset> imports_;
     std::uint64_t next_import_ = 0;
+    bool per_receiver_ = default_per_receiver();
 };
 
 } // namespace dsdsrv

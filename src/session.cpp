@@ -43,6 +43,17 @@ std::string net_rec_json(const AssocModel::RecStatus& r) {
         .field("file_bytes", static_cast<double>(r.file_bytes)).str();
 }
 
+// A channel frequency as the explorer keys it: snapped to DSD_NET_FREQ_STEP_HZ
+// (default 1250 Hz; see AssocModel::channel_hz).
+std::int64_t channel_freq(double hz) {
+    static const std::int64_t step = [] {
+        const char* v = std::getenv("DSD_NET_FREQ_STEP_HZ");
+        const long long n = (v && v[0]) ? std::strtoll(v, nullptr, 10) : 1250;
+        return static_cast<std::int64_t>(n > 0 ? n : 1);
+    }();
+    return AssocModel::channel_hz(hz, step);
+}
+
 // Largest HTTP request body accepted (explorer imports / merges of exports).
 constexpr std::uint64_t kMaxHttpBody = 128ull << 20;
 
@@ -90,7 +101,9 @@ std::string net_merge_response(const std::string& body) {
         files.emplace_back(f.str("name"), f.str("text"));
     }
     std::vector<MergeReport> report;
-    const Dataset merged = merge_exports(files, report);
+    ChannelMerge cm;
+    cm.per_receiver = AssocModel::default_per_receiver();
+    const Dataset merged = merge_exports(files, report, cm);
     std::string rep = "[";
     for (std::size_t i = 0; i < report.size(); ++i)
         rep += (i ? "," : "") + std::string("{\"name\":") + assocjson::q(report[i].label) + ",\"status\":" +
@@ -490,6 +503,10 @@ void Session::handle_text_message(const std::string& msg) {
             // Optional raw-IQ capture: log the whole session's incoming IQ to a
             // MIDAS BLUE file (server-side; see DSD_IQ_LOG_DIR). Off by default.
             bool iq_log = json::get_bool(obj, "iq_log", false);
+            // Optional absolute tuner centre frequency (Hz). With it the
+            // channel's frequency is known (centre + freq_offset), which the
+            // network explorer uses to label and key what it hears.
+            center_freq_ = json::get_number(obj, "center_freq", 0.0);
             start_pipeline(sample_rate, bw, offset, gain, afc, protocol, key_type, key, matched_filter,
                            pocsag_mode, invert, iq_log);
         } else if (type == "set_gain") {
@@ -504,8 +521,14 @@ void Session::handle_text_message(const std::string& msg) {
             // The TETRA π/4 demod estimates and removes residual CFO itself
             // (±Rs/8), so it has no live NCO to retune -- accept and ignore.
             if (chain_.load() == Chain::Fm) {
-                std::lock_guard<std::mutex> lock(demod_mutex_);
-                if (demod_) demod_->set_freq_offset(json::get_number(obj, "hz", 0.0));
+                const double hz = json::get_number(obj, "hz", 0.0);
+                {
+                    std::lock_guard<std::mutex> lock(demod_mutex_);
+                    if (demod_) demod_->set_freq_offset(hz);
+                }
+                // Another channel now: the explorer starts this stream's identity over.
+                if (stats_ && stats_id_ && center_freq_ > 0)
+                    stats_->assoc().retune_stream(stats_id_, channel_freq(center_freq_ + hz));
             } else if (chain_.load() == Chain::Pager) {
                 std::lock_guard<std::mutex> lock(demod_mutex_);
                 if (pager_demod_) pager_demod_->set_freq_offset(json::get_number(obj, "hz", 0.0));
@@ -755,11 +778,15 @@ void Session::open_iq_log(const std::string& protocol, double sample_rate) {
 #endif
     char ts[24];
     std::strftime(ts, sizeof ts, "%Y%m%d_%H%M%S", &tm);
-    char name[128];
-    std::snprintf(name, sizeof name, "iq_%s_s%llu_%s_%lldHz.blue", ts,
+    char name[160];
+    // "_c<Hz>" = the tuner centre frequency, when the client sent it, so a
+    // replay of the capture (tools/midas_ws_client.py) can send it again.
+    char center[40] = "";
+    if (center_freq_ > 0) std::snprintf(center, sizeof center, "_c%lldHz", static_cast<long long>(center_freq_ + 0.5));
+    std::snprintf(name, sizeof name, "iq_%s_s%llu_%s_%lldHz%s.blue", ts,
                   static_cast<unsigned long long>(stats_id_),
                   sanitize_token(protocol).c_str(),
-                  static_cast<long long>(sample_rate));
+                  static_cast<long long>(sample_rate), center);
     std::string path = (std::filesystem::path(iq_log_dir()) / name).string();
     auto w = std::make_unique<BlueFileWriter>();
     if (w->open(path, sample_rate, iq_log_max_bytes())) {
@@ -802,7 +829,9 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         // Network explorer: open a fresh stream context BEFORE any backend can
         // emit, so even its first events land in this stream (paging maps to
         // no family and is ignored by the model).
-        if (stats_id_) stats_->assoc().begin_stream(stats_id_, protocol_hint_label(hint));
+        if (stats_id_)
+            stats_->assoc().begin_stream(stats_id_, protocol_hint_label(hint), AssocModel::now_ms(), std::string(),
+                                         center_freq_ > 0 ? channel_freq(center_freq_ + freq_offset) : 0);
     }
 
     const bool want_tetra = hint_is_tetra(hint);

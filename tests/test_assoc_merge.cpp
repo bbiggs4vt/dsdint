@@ -404,6 +404,72 @@ int main() {
               "twins: an imported call the live data also heard folds into the live call (live id kept)");
     }
 
+    // ---- channel networks (short code + known frequency) across receivers ----
+    {
+        const std::int64_t F1 = 434425000;
+        auto dmr_on = [](AssocModel& m, std::uint64_t sid, std::int64_t t, std::int64_t f, const std::string& tg,
+                         const std::string& src) {
+            m.begin_stream(sid, "dmr", t, "", f);
+            line(m, sid, "19:54:55 Sync: +DMR  slot1  [SLOT2] | Color Code=04 | VC6 ", t + 10);
+            line(m, sid, "19:54:55 Sync: +DMR  slot1  [SLOT2] | Color Code=04 | VC1 ", t + 20);
+            line(m, sid, " SLOT 2 TGT=" + tg + " SRC=" + src + " Group Call  ", t + 30);
+            m.end_stream(sid, t + 100);
+        };
+        AssocModel X, Y, X2;
+        X.set_identity("1212121200000000", "north");
+        Y.set_identity("3434343400000000", "south");
+        X2.set_identity("5656565600000000", "north");     // north again, after a restart
+        for (AssocModel* m : {&X, &Y, &X2}) m->set_since(1000);
+        dmr_on(X, 1, 2000, F1, "9", "77");          // both hear the same call on 434.425
+        dmr_on(Y, 5, 2050, F1, "9", "77");
+        dmr_on(Y, 6, 9000, F1, "9", "78");
+        dmr_on(X2, 2, 3000, F1, "9", "79");
+        const std::string x = X.to_export_json(20000), y = Y.to_export_json(20000), x2 = X2.to_export_json(20000);
+
+        std::vector<MergeReport> rep;
+        Dataset d = merge_exports({{"x", x}, {"y", y}, {"x2", x2}}, rep);
+        const DsFamily& D = d.fams["dmr"];
+        check(D.networks.size() == 1 && D.networks.count("cc:4@434425000") &&
+                  D.networks.at("cc:4@434425000").confidence == "channel" &&
+                  D.networks.at("cc:4@434425000").freqs == std::set<std::int64_t>{F1},
+              "channel merge: the same frequency + color code from both receivers (and a restart) is ONE network");
+        check(D.calls.size() == 3 && D.networks.at("cc:4@434425000").calls == 3 && D.tgs.at("9").calls == 3 &&
+                  D.calls.back().streams == 2 && D.calls.back().freq == F1,
+              "channel merge: the call both receivers heard is one call (and calls keep their frequency)");
+
+        ChannelMerge per;
+        per.per_receiver = true;
+        rep.clear();
+        Dataset p = merge_exports({{"x", x}, {"y", y}, {"x2", x2}}, rep, per);
+        const DsFamily& P = p.fams["dmr"];
+        check(P.networks.size() == 2 && P.networks.count("cc:4@434425000~north") && P.networks.count("cc:4@434425000~south") &&
+                  P.networks.at("cc:4@434425000~north").calls == 2 &&
+                  P.networks.at("cc:4@434425000~south").label == "Color Code 4 \xC2\xB7 434.4250 MHz \xC2\xB7 south",
+              "per receiver: each receiver keeps its own channel network; one receiver's runs still join");
+        check(P.calls.size() == 4, "per receiver: no cross-receiver call folding either");
+
+        // Import into a live "north" in per-receiver mode: north's own earlier
+        // run joins the live channel network; south's stays apart.
+        AssocModel L;
+        L.set_identity("7878787800000000", "north");
+        L.set_since(15000);
+        L.set_channels_per_receiver(true);
+        dmr_on(L, 1, 16000, F1, "9", "80");
+        check(L.import_export(x, "x", 20000).status == "imported" && L.import_export(y, "y", 20000).status == "imported",
+              "per receiver: imports accepted");
+        mjson::V j = parse(L.to_json(20000));
+        const auto keys = keys_of(arr(fam(j, "dmr"), "networks"), "key");
+        check(keys.size() == 2 && keys.count("cc:4@434425000") && keys.count("cc:4@434425000~south"),
+              "per receiver: the live receiver's own earlier data joins its live channel network");
+        L.set_channels_per_receiver(false);
+        L.clear_imports();
+        L.import_export(y, "y", 20000);
+        mjson::V j2 = parse(L.to_json(20000));
+        const mjson::V* net = by(arr(fam(j2, "dmr"), "networks"), "key", "cc:4@434425000");
+        check(arr(fam(j2, "dmr"), "networks").a.size() == 1 && net && net->num("calls") == 3,
+              "default: another receiver's channel network joins the live one");
+    }
+
     // ---- merged calls are bounded ----
     {
         auto big = [](const std::string& inst, std::int64_t t0) {

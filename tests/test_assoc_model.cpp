@@ -646,6 +646,116 @@ int main() {
         check(g.find("WACN BEE00 \xC2\xB7 SYS 3A1") != std::string::npos, "graphml: network labels carried");
     }
 
+    // ---- known channel frequency: weak codes keyed by channel, not stream ----
+    {
+        check(AssocModel::channel_hz(434425000.0) == 434425000 && AssocModel::channel_hz(434425500.0) == 434425000 &&
+                  AssocModel::channel_hz(451006250.0) == 451006250 && AssocModel::channel_hz(154452400.0) == 154452500 &&
+                  AssocModel::channel_hz(0) == 0 && AssocModel::channel_hz(434425123.0, 1) == 434425123,
+              "channel_hz: snaps to 1.25 kHz (6.25 kHz and 2.5 kHz plans unchanged, +-625 Hz absorbed)");
+        check(freq_text(434425000) == "434.4250 MHz" && freq_text(451006250) == "451.00625 MHz" &&
+                  freq_text(154452500) == "154.4525 MHz",
+              "freq_text: four decimals, more only when needed");
+
+        const std::int64_t F1 = 434425000, F2 = 438500000;
+        const char* cc1 = "19:54:55 Sync: +DMR  slot1  [SLOT1] | Color Code=01 | VC6 ";
+        AssocModel m;
+        m.begin_stream(1, "dmr", 0, "", F1);
+        m.begin_stream(2, "dmr", 0, "", F1);       // a second receiver session on the same channel
+        m.begin_stream(3, "dmr", 0, "", F2);       // same color code, another channel
+        m.begin_stream(4, "dmr", 0);               // same color code, frequency unknown
+        for (std::uint64_t sid : {1, 2, 3, 4})
+            for (int k = 0; k < 2; ++k) line(m, sid, cc1, 1000 + k);
+        for (std::uint64_t sid : {1, 2, 3, 4}) line(m, sid, " SLOT 1 TGT=9 SRC=3112 Group Call ", 1100 + sid);
+        J j = snap(m, 1200);
+        const J& F = j["families"]["dmr"];
+        const J* n1 = find(F["networks"], "key", "cc:1@434425000");
+        check(n1 && (*n1)["confidence"].s == "channel" && (*n1)["label"].s == "Color Code 1 \xC2\xB7 434.4250 MHz" &&
+                  (*n1)["sessions"].n == 2 && (*n1)["freqs"].size() == 1 && (*n1)["freqs"].at(0).n == F1,
+              "channel: two sessions on 434.425 MHz with CC 1 are ONE network ('Color Code 1 · 434.4250 MHz')");
+        check(find(F["networks"], "key", "cc:1@438500000") && find(F["networks"], "key", "cc:1@s4") && F["networks"].size() == 3,
+              "channel: the same code on another channel, or on an unknown one, stays separate");
+        check(n1 && (*n1)["calls"].n == 1 && F["calls"].size() == 3,
+              "channel: the call both sessions on the channel heard is one call (deduplicated, counted once)");
+        const J* c1 = nullptr;
+        for (const auto& c : F["calls"].a) if (c["net"].s == "cc:1@434425000") c1 = &c;
+        check(c1 && (*c1)["freq"].n == F1 && (*c1)["streams"].n == 2, "channel: calls carry their frequency");
+
+        // Reconnect: a new session on the same channel lands in the same network.
+        m.end_stream(1, 2000);
+        m.remove_session(1, 2000);
+        m.begin_stream(9, "dmr", 3000, "", F1);
+        for (int k = 0; k < 2; ++k) line(m, 9, cc1, 3100 + k);
+        line(m, 9, " SLOT 1 TGT=9 SRC=4000 Group Call ", 3200);
+        J j2 = snap(m, 3300);
+        const J* n9 = find(j2["families"]["dmr"]["networks"], "key", "cc:1@434425000");
+        check(n9 && (*n9)["calls"].n == 2 && j2["families"]["dmr"]["networks"].size() == 3,
+              "channel: a reconnect on the same channel continues the same network (no new bucket)");
+
+        // Nothing decoded but traffic on a known channel: the channel is the identity.
+        m.begin_stream(10, "dmr", 4000, "", 446006250);
+        line(m, 10, " SLOT 1 TGT=5 SRC=6 Group Call ", 4100);
+        J j3 = snap(m, 4200);
+        const J* nu = find(j3["families"]["dmr"]["networks"], "key", "ch@446006250");
+        check(nu && (*nu)["confidence"].s == "channel" && (*nu)["label"].s == "Unidentified \xC2\xB7 446.00625 MHz",
+              "channel: an unidentified stream on a known channel is keyed by the channel");
+
+        // Calls before the code is confirmed (as on the real capture): two
+        // sessions fill the channel's "Unidentified" bucket, which becomes
+        // the color-code network once the code is believed.
+        {
+            AssocModel q;
+            q.begin_stream(1, "dmr", 0, "", F1);
+            q.begin_stream(2, "dmr", 0, "", F1);
+            for (std::uint64_t sid : {1, 2}) line(q, sid, " SLOT 1 TGT=1 SRC=123 Group Call ", 1000 + sid);
+            check(find(snap(q, 1100)["families"]["dmr"]["networks"], "key", "ch@434425000") != nullptr,
+                  "channel: traffic before any code -> the channel's Unidentified bucket");
+            for (std::uint64_t sid : {1, 2})
+                for (int k = 0; k < 2; ++k) line(q, sid, cc1, 1200 + k);
+            q.end_stream(1, 2000);
+            q.end_stream(2, 2000);
+            J jq = snap(q, 2100);
+            const J& NQ = jq["families"]["dmr"]["networks"];
+            check(NQ.size() == 1 && NQ.at(0)["key"].s == "cc:1@434425000" && NQ.at(0)["calls"].n == 1 &&
+                      NQ.at(0)["sessions"].n == 2,
+                  "channel: ...which becomes 'Color Code 1' once the code is believed, even when shared by two sessions");
+        }
+
+        // Retune: the stream's identity starts over on the new channel.
+        m.retune_stream(9, F2, 5000);
+        for (int k = 0; k < 2; ++k) line(m, 9, cc1, 5100 + k);
+        line(m, 9, " SLOT 1 TGT=9 SRC=4001 Group Call ", 5200);
+        J j4 = snap(m, 5300);
+        const J* n2 = find(j4["families"]["dmr"]["networks"], "key", "cc:1@438500000");
+        check(n2 && (*n2)["calls"].n == 2 && (*find(j4["families"]["dmr"]["networks"], "key", "cc:1@434425000"))["calls"].n == 2,
+              "retune: after a retune the stream's calls go to the new channel's network");
+
+        // GraphML lists a network's channels.
+        check(m.to_graphml(5300).find("<data key=\"frequencies\">438.5000 MHz</data>") != std::string::npos,
+              "graphml: networks carry their channel frequencies");
+    }
+    {
+        // P25: a NAC heard on a known channel still resolves to the strong
+        // system carrying that NAC; a retune prunes a call-less network.
+        AssocModel m;
+        m.begin_stream(1, "p25p1", 0, "", 851012500);
+        line(m, 1, "17:30:46 Sync: +P25p1 NAC/CC: 717; RFSS: 001; Site: 097;  TSBK", 1000);
+        m.ingest(1, classify_dsd_fme_line(" LRA [00] CFVA [3] RFSS[001] SITE [097] SYSID [715]"), 1010);
+        line(m, 1, " CHAN-T [52E6] CHAN-R [50D7] SSC [70] WACN [BEE0A]", 1020);
+        line(m, 1, "P25 TGT: 00000100; SRC: 00002048; NAC: 717; ", 1100);
+        m.begin_stream(2, "p25p1", 0, "", 852012500);
+        line(m, 2, "17:30:47 Sync: +P25p1 NAC/CC: 717;  LDU1", 1200);
+        line(m, 2, "P25 TGT: 00000100; SRC: 00002099; NAC: 717; ", 1210);
+        J j = snap(m, 1300);
+        const J& P = j["families"]["p25"];
+        check(P["networks"].size() == 1 && P["networks"].at(0)["key"].s == "wacn:BEE0A/sys:715" &&
+                  P["networks"].at(0)["freqs"].size() == 2,
+              "channel/P25: a NAC-only stream on another channel joins the WACN/SYS system; both channels listed");
+        m.begin_stream(3, "dmr", 0, "", 434425000);
+        for (int k = 0; k < 2; ++k) line(m, 3, "19:54:55 Sync: +DMR  slot1  [SLOT1] | Color Code=04 | VC6 ", 2000 + k);
+        m.retune_stream(3, 434450000, 2100);
+        check(snap(m, 2200)["families"].has("dmr") == false, "retune: a call-less network of the old channel is dropped");
+    }
+
     // ---- JSON escaping of decoder-derived text ----
     {
         AssocModel m;

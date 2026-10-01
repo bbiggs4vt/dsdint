@@ -144,6 +144,7 @@ inline std::string render_net_page_html() {
   .b-enc { background: rgba(248,148,6,.2); color: var(--warn); }
   .b-strong { background: rgba(98,196,98,.18); color: var(--success); }
   .b-weak { background: rgba(248,148,6,.18); color: var(--warn); }
+  .b-channel { background: rgba(91,192,222,.16); color: var(--info); }
   .b-none { background: rgba(255,255,255,.07); color: var(--muted); }
   .livecell { color: var(--success); white-space: nowrap; font-variant-numeric: tabular-nums; }
   .dot { display: inline-block; width: .55rem; height: .55rem; border-radius: 50%; margin-right: .35rem;
@@ -368,7 +369,8 @@ function qm() {
 }
 function fCalls() {
   return IX.calls.filter(function (c) {
-    return (S.net === '*' || c.net === S.net) && (!S.q || qm(c.src, c.tgt, c.alias, c.text, IX.rById[c.src] && IX.rById[c.src].aliases));
+    return (S.net === '*' || c.net === S.net) &&
+      (!S.q || qm(c.src, c.tgt, c.alias, c.text, mhz(c.freq), IX.rById[c.src] && IX.rById[c.src].aliases));
   });
 }
 function fTgs() { return IX.tgs.filter(function (t) { return inNet(t.networks) && (!S.q || qm(t.id)); }); }
@@ -398,6 +400,13 @@ function nets(list) {
   return w;
 }
 function badge(cls, t) { return h('span', { class: 'badge ' + cls, text: t }); }
+// 434425000 -> "434.4250" (MHz; more decimals only when needed)
+function mhz(hz) {
+  if (!hz) return '';
+  var t = (hz / 1e6).toFixed(6);
+  while (t.length > t.indexOf('.') + 5 && t.charAt(t.length - 1) === '0') t = t.slice(0, -1);
+  return t;
+}
 function confBadge(c) { return badge('b-' + c, c === 'none' ? 'unidentified' : c); }
 
 // ---------- generic sortable table ----------
@@ -447,6 +456,7 @@ function viewCalls() {
                        : dur(c.last - c.start);
       } },
     { label: 'Network', cell: function (c) { return c.net ? netc(c.net) : '-'; } },
+    { label: 'MHz', cls: 'mono nowrap', k: function (c) { return c.freq || 0; }, cell: function (c) { return mhz(c.freq) || '—'; } },
     { label: 'Slot', cls: 'num', k: function (c) { return c.slot; }, cell: function (c) { return c.slot || '—'; } },
     { label: 'From', k: function (c) { return c.src; }, cell: function (c) { return c.src ? rlink(c.src, c.alias || null) : '—'; } },
     { label: 'To', k: function (c) { return c.tgt; },
@@ -500,6 +510,7 @@ function viewNets() {
     { label: 'Identity', cell: function (n) { return confBadge(n.confidence); } },
     { label: 'Identifiers', cls: 'ids', cell: function (n) { return keys(n.ids).map(function (k) { return k + '=' + n.ids[k]; }).join('  '); } },
     { label: 'Sites', cell: function (n) { return n.sites.join(', ') || '—'; } },
+    { label: 'Channels (MHz)', cls: 'mono', cell: function (n) { return (n.freqs || []).map(mhz).join(', ') || '—'; } },
     { label: 'TGs', cls: 'num', k: function (n) { return IX.netTg[n.key] || 0; }, cell: function (n) { return IX.netTg[n.key] || 0; } },
     { label: 'Radios', cls: 'num', k: function (n) { return IX.netRad[n.key] || 0; }, cell: function (n) { return IX.netRad[n.key] || 0; } },
     { label: 'Calls', cls: 'num', k: function (n) { return n.calls; }, cell: function (n) { return n.calls; } },
@@ -679,10 +690,15 @@ function renderDetail() {
     d.appendChild(h('div', { class: 'ids', text: keys(n.ids).map(function (k) { return k + '=' + n.ids[k]; }).join('   ') || '—' }));
     d.appendChild(h('h4', { text: 'Sites' }));
     d.appendChild(h('div', { text: n.sites.join(', ') || 'None reported.' }));
+    d.appendChild(h('h4', { text: 'Channels' }));
+    d.appendChild(h('div', { class: 'mono', text: (n.freqs || []).map(function (f) { return mhz(f) + ' MHz'; }).join(', ') ||
+      'Unknown (the client sent no center_freq).' }));
     if (n.confidence !== 'strong')
       d.appendChild(h('div', { class: 'hint', style: 'margin-top:.6rem;font-size:.8rem',
-        text: n.confidence === 'weak'
-          ? 'Weak identity: only a short code (color code / NAC / RAN) was seen, which unrelated systems can share, so this bucket covers just one stream. Talkgroups and radios it shares with other buckets are listed under Links.'
+        text: n.confidence === 'channel'
+          ? 'Channel identity: a short code (color code / NAC / RAN), or nothing, heard on a known frequency -- in practice one conventional channel or repeater. Every stream on that frequency with that code shares it, and merged data from other receivers joins it too (unless DSD_NET_CHANNEL_MERGE=receiver).'
+          : n.confidence === 'weak'
+          ? 'Weak identity: only a short code (color code / NAC / RAN) was seen, which unrelated systems can share, and the stream\'s frequency is unknown, so this bucket covers just one stream. Talkgroups and radios it shares with other buckets are listed under Links.'
           : 'No network identity has been decoded on this stream yet.' }));
     d.appendChild(h('h4', { text: 'Busiest talkgroups' }));
     d.appendChild(lst(IX.tgs.filter(function (t) { return t.networks.indexOf(n.key) >= 0; })

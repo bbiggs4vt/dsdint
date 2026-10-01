@@ -76,6 +76,13 @@ static void scenario(AssocModel& m, std::int64_t t0) {
     m.end_stream(5, t0 + 600);
     m.end_stream(4, t0 + 610);
     m.remove_session(4, t0 + 620);
+    // A session with a known channel frequency, retuned mid-call.
+    m.begin_stream(6, "dmr", t0 + 700, "", 434425000);
+    for (int k = 0; k < 2; ++k) line(m, 6, "19:54:55 Sync: +DMR  slot1  [SLOT1] | Color Code=02 | VC6 ", t0 + 710 + k);
+    line(m, 6, " SLOT 1 TGT=77 SRC=7001 Group Call ", t0 + 720);
+    m.retune_stream(6, 438500000, t0 + 800);
+    for (int k = 0; k < 2; ++k) line(m, 6, "19:54:55 Sync: +DMR  slot1  [SLOT1] | Color Code=02 | VC6 ", t0 + 810 + k);
+    line(m, 6, " SLOT 1 TGT=77 SRC=7002 Group Call ", t0 + 820);
     // Later traffic, a gap (new call), a TDMA slot change.
     line(m, 3, " SLOT 1 TGT=9 SRC=3112 Group Call ", t0 + 6000);
     line(m, 3, " SLOT 1 TGT=10 SRC=3115 Group Call ", t0 + 7000);
@@ -126,6 +133,9 @@ int main() {
         line(live, 3, " SLOT 1 TGT=11 SRC=3120 Group Call ", 9500);
         line(live, 3, "19:58:40 Sync: +DMR MS/DM MODE/MONO | Color Code=01 | VC1 ", 9600);
         line(live, 3, "19:58:40 Sync: +DMR MS/DM MODE/MONO | Color Code=01 | VC2 ", 9700);
+        for (int k = 0; k < 2; ++k)                             // the retuned stream after the Clear
+            line(live, 6, "19:54:55 Sync: +DMR  slot1  [SLOT1] | Color Code=02 | VC6 ", 9800 + k);
+        line(live, 6, " SLOT 1 TGT=77 SRC=7003 Group Call ", 9900);
         const std::string live_json = live.to_json(10000);
         live.stop_recording(10000);
         check(!live.recording().on && live.recording().last_path == path, "record: stopped; last file remembered");
@@ -137,18 +147,24 @@ int main() {
         check(text.find("\"why\":\"start\"") != std::string::npos && text.find("\"why\":\"stop\"") != std::string::npos,
               "file: start and stop snapshots present");
         check(text.find("Build Version") != std::string::npos, "file: even inputs the model ignores are recorded");
+        check(text.find("\"freq\":434425000") != std::string::npos &&
+                  text.find("{\"op\":\"tune\",\"t\":2800,\"s\":6,\"freq\":438500000}") != std::string::npos,
+              "file: channel frequencies and retunes are recorded");
         check(recording_start_time(path) == 1000, "file: recording_start_time() reads the header");
 
         AssocModel replay;
         ReplayResult r;
         std::string err;
         check(replay_log(path, replay, r, std::numeric_limits<std::int64_t>::max(), &err), "replay: reads the file");
-        check(r.fresh && r.bad == 0 && !r.truncated && r.clears == 1 && r.removes == 2 && r.begins == 5,
+        check(r.fresh && r.bad == 0 && !r.truncated && r.clears == 1 && r.removes == 2 && r.begins == 6,
               "replay: header fresh, no bad lines, all lifecycle ops seen");
         const std::string rep_json = replay.to_json(r.stop_t);
         check(families_of(rep_json) == families_of(r.stop_model),
               "replay: explorer output matches the recorded 'stop' snapshot byte for byte");
         check(families_of(rep_json) == families_of(live_json), "replay: ...and the live model itself");
+        check(live_json.find("\"key\":\"cc:2@438500000\"") != std::string::npos &&
+                  live_json.find("\"freq\":438500000") != std::string::npos,
+              "replay: ...including a channel-keyed network after a retune and a Clear");
         check(replay.instance() == live.instance() && replay.name() == "bench" && replay.since() == 9000 &&
               live.since() == 9000,
               "replay: takes on the recorded run's identity; the span restarts at the Clear, as live");
