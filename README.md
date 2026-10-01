@@ -504,6 +504,7 @@ session exactly as before; anything else is answered over HTTP:
 | `/iq_log/on`, `/iq_log/off` | flip the global IQ-capture switch (the page's **Log IQ** checkbox); returns `{"iq_log_enabled":…}` |
 | `/net` | the network explorer page (see [Network explorer](#network-explorer)) |
 | `/net.json`, `/net/clear` | the explorer's association model as JSON; forget it |
+| `/net/export.json`, `/net/export.graphml` | export what the explorer shows: native (re-openable) / GraphML |
 | `/net/log/on`, `/net/log/off`, `/net/log/download` | record the explorer's inputs (`?clear=1` clears first); stop; download the current / last recording |
 
 The live update is a tiny `/status.json` poll that patches the page in
@@ -609,6 +610,32 @@ it -- unless another running session is still on that network.
 Everything is in memory, bounded (last 400 calls per protocol; capped
 radios / talkgroups / networks), and resets on restart or with the page's
 **Clear** button. `GET /net.json` serves the same model for tooling.
+
+### Exporting and re-opening explorer data
+
+**Export ▾** in the explorer header saves what the explorer currently shows:
+
+- **Explorer data (.json)** -- the native export (`format: "dsd-net-export"`,
+  `format_version: 1`): networks with their identifiers and sites, talkgroups,
+  radios, every association with its call count, and the recent calls. Open it
+  again later with **Open...** (or drop the file on the page): the explorer
+  shows it offline in a read-only file view, with every view -- calls,
+  graph, links, details -- working, and times shown relative to the export.
+- **Association graph (.graphml)** -- for graph tools (Gephi, Cytoscape, yEd,
+  networkx). Radios, talkgroups and networks are nodes (attribute `type`,
+  `protocol`, `label`, `calls`, aliases, identifiers, first / last seen); edges
+  are radio-talkgroup (`type=talkgroup`, `weight` = calls), radio-radio
+  (`type=private`) and talkgroup/radio-network (`type=member`). Protocols
+  never share an edge.
+
+The export is *not* the same as a recording: a recording is the raw decoder
+input (for debugging -- it reproduces the explorer exactly), while an export is
+the gathered result (compact, opens directly). A recording can be turned into
+either export with `net-replay <recording> --export out.json --graphml
+out.graphml` (add `--at +N` for the state N seconds in). Exports carry the
+bounded recent-calls list (last 400 per protocol) but the full associations
+and counts. `GET /net/export.json` and `GET /net/export.graphml` serve them
+directly.
 
 ### Recording explorer data for analysis
 

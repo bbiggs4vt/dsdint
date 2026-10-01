@@ -235,6 +235,16 @@ void Session::serve_http() {
         res->result(http::status::ok);
         res->set(http::field::content_type, "application/json");
         res->body() = stats_ ? stats_->assoc().to_json() : std::string("{\"families\":{}}");
+    } else if (target == "/net/export.json" || target == "/net/export.graphml") {
+        // Explorer Export: what the explorer shows, as a file to keep -- the
+        // native format (re-openable in the explorer) or GraphML for graph tools.
+        const std::int64_t now = AssocModel::now_ms();
+        const bool graphml = target == "/net/export.graphml";
+        const std::string name = "net_export_" + assoclog::utc_stamp(now) + (graphml ? ".graphml" : ".json");
+        res->result(http::status::ok);
+        res->set(http::field::content_type, graphml ? "application/graphml+xml" : "application/json");
+        res->set(http::field::content_disposition, "attachment; filename=\"" + name + "\"");
+        res->body() = !stats_ ? std::string() : graphml ? stats_->assoc().to_graphml(now) : stats_->assoc().to_export_json(now);
     } else if (target == "/net/log/on" || target == "/net/log/off") {
         // Explorer Record button: record every input to the association model
         // (assoc_log.hpp) for offline replay. "?clear=1" wipes the model first

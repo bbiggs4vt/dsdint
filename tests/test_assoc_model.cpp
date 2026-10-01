@@ -600,6 +600,52 @@ int main() {
         check(snap(m, 1)["families"].has("dmr"), "clear(): live stream keeps working afterwards");
     }
 
+    // ---- export: native JSON (re-openable) and GraphML ----
+    {
+        AssocModel m;
+        m.begin_stream(1, "p25p1", 0);
+        line(m, 1, "17:30:46 Sync: +P25p1 NAC/CC: 293; RFSS: 004; Site: 012;  TSBK", 900);
+        m.ingest(1, classify_dsd_fme_line(" LRA [00] CFVA [3] RFSS[004] SITE [012] SYSID [3A1]"), 910);
+        line(m, 1, " CHAN-T [52E6] CHAN-R [50D7] SSC [70] WACN [BEE00]", 920);
+        line(m, 1, "P25 TGT: 00000100; SRC: 00012001; NAC: 293; ", 1000);
+        line(m, 1, "P25 TGT: 00000200; SRC: 00012001; NAC: 293; ", 6000);
+        line(m, 1, "P25 TGT: 00013002; SRC: 00012003; NAC: 293; ", 12000);
+        line(m, 1, " P25 LCW  Unit to Unit Voice Channel User", 12100);
+        m.begin_stream(2, "dmr", 0);
+        for (int k = 0; k < 2; ++k) line(m, 2, "19:54:55 Sync: +DMR  slot1  [SLOT1] | Color Code=03 | VC1 ", 13000 + k);
+        DsdEvent al; al.kind = "call"; al.slot = "1"; al.talkgroup = "9"; al.source_id = "3112";
+        al.alias = "K\xC3\xA9<b>&\"x\x01\xFF";                     // valid UTF-8 e-acute, markup, ctrl, bad byte
+        m.ingest(2, al, 13100);
+
+        bool ok = false;
+        const std::string ex = m.to_export_json(14000);
+        J e = parse(ex, &ok);
+        check(ok, "export: the JSON export is well-formed");
+        check(e["format"].s == "dsd-net-export" && e["format_version"].n == 1 && e["exported"].n == 14000 &&
+              e["now"].n == 14000 && e["source"].s == "dsd-server", "export: self-describing header (format, version, time)");
+        const std::string live = m.to_json(14000);
+        check(ex.substr(ex.find("\"families\":")) == live.substr(live.find("\"families\":")),
+              "export: 'families' is exactly what /net.json serves (so the explorer can open it)");
+
+        const std::string g = m.to_graphml(14000);
+        auto count = [&](const std::string& needle) {
+            std::size_t n = 0;
+            for (std::size_t p = g.find(needle); p != std::string::npos; p = g.find(needle, p + 1)) ++n;
+            return n;
+        };
+        check(g.rfind("<?xml version=\"1.0\" encoding=\"UTF-8\"?>", 0) == 0 && g.find("</graphml>") != std::string::npos,
+              "graphml: XML declaration and closing tag");
+        // nodes: p25 = 1 network + 2 TGs + 3 radios; dmr = 1 network + 1 TG + 1 radio
+        check(count("<node id=") == 9, "graphml: one node per network / talkgroup / radio (9)");
+        check(count(">talkgroup</data>") == 3 + 3 && count(">private</data>") == 1,
+              "graphml: radio-talkgroup edges and the private-call edge");
+        check(g.find("<node id=\"p25:r:12001\">") != std::string::npos && g.find("<node id=\"p25:t:100\">") != std::string::npos,
+              "graphml: node ids keep protocols apart (p25:r:12001, p25:t:100)");
+        check(g.find("K\xC3\xA9&lt;b&gt;&amp;&quot;x??") != std::string::npos,
+              "graphml: markup escaped, valid UTF-8 kept, control + invalid bytes replaced (well-formed XML)");
+        check(g.find("WACN BEE00 \xC2\xB7 SYS 3A1") != std::string::npos, "graphml: network labels carried");
+    }
+
     // ---- JSON escaping of decoder-derived text ----
     {
         AssocModel m;

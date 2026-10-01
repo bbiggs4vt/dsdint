@@ -1091,6 +1091,8 @@ over HTTP and the connection closed:
 | `GET /net` | `text/html` network explorer (calls / talkgroups / radios / networks and their associations; polls `/net.json`) |
 | `GET /net.json` | `application/json` association model (see below) |
 | `GET /net/clear` | forgets everything the explorer learned; returns `{"ok":true}` |
+| `GET /net/export.json` | `application/json` attachment `net_export_<UTC>.json` — the explorer export (below) |
+| `GET /net/export.graphml` | `application/graphml+xml` attachment — the association graph for graph tools |
 | `GET /net/log/on` | starts recording every input of the explorer's model to `net_<UTC>.jsonl.gz` (`?clear=1` clears the model first so the recording replays exactly); returns the recording status |
 | `GET /net/log/off` | stops recording (the file ends with a snapshot of the model); returns the recording status |
 | `GET /net/log/download` | `application/gzip` — the current or most recent recording; `404` if there is none |
@@ -1210,6 +1212,24 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
   same call (deduplicated on a shared network).
 - Like `/status.json`, this JSON is nested and is a diagnostic surface, not
   part of the WebSocket protocol.
+
+**Explorer export** (`GET /net/export.json`, the page's *Export -> Explorer
+data*): the same `families` object as `/net.json` under a self-describing
+header, so the explorer (and other tools) can open it later:
+
+```json
+{"format": "dsd-net-export", "format_version": 1, "source": "dsd-server",
+ "exported": 1790000000000, "now": 1790000000000, "families": { ... as /net.json ... }}
+```
+
+`format_version` increases only on incompatible changes; readers should
+ignore keys they don't know. `GET /net/export.graphml` serves the same
+associations as GraphML: node ids are `<protocol>:<r|t|n>:<id>` (radio,
+talkgroup, network); node attributes `type`, `protocol`, `label`, `calls`,
+`aliases`, `networks`, `radios`, `talkgroups`, `emergencies`, `encrypted`,
+`confidence`, `identifiers`, `sites`, `first_seen`, `last_seen` (ISO 8601);
+edge attributes `type` (`talkgroup` | `private` | `member`), `weight` and
+`calls`.
 
 `GET /log.json` returns the recent JSON frames the server has sent clients
 — for the status page's **Log** tab — as a bounded, in-memory ring (last

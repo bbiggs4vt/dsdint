@@ -43,6 +43,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <deque>
 #include <map>
 #include <mutex>
@@ -359,11 +360,123 @@ public:
         return to_json_locked(now);
     }
 
+    // ---- export -----------------------------------------------------------
+    // What the explorer shows, as a self-describing file that the explorer can
+    // open again ("Open..." on /net) -- format "dsd-net-export", version 1. The
+    // "families" object is exactly /net.json's (see PROTOCOL.md).
+    std::string to_export_json(std::int64_t now = now_ms()) const {
+        std::lock_guard<std::mutex> lk(mu_);
+        return "{\"format\":\"dsd-net-export\",\"format_version\":1,\"source\":\"dsd-server\",\"exported\":" +
+               std::to_string(now) + ",\"now\":" + std::to_string(now) + ",\"families\":" +
+               families_json_locked(now) + "}";
+    }
+
+    // The association graph as GraphML (Gephi, Cytoscape, yEd, networkx...).
+    // Nodes: radios, talkgroups, networks (attribute "type"; "protocol" keeps
+    // protocols apart). Edges: radio-talkgroup ("talkgroup", weight = calls),
+    // radio-radio ("private", weight = calls), and talkgroup/radio-network
+    // membership ("member").
+    std::string to_graphml(std::int64_t now = now_ms()) const {
+        std::lock_guard<std::mutex> lk(mu_);
+        std::ostringstream o;
+        o << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+             "<graphml xmlns=\"http://graphml.graphdrawing.org/xmlns\" "
+             "xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" "
+             "xsi:schemaLocation=\"http://graphml.graphdrawing.org/xmlns "
+             "http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd\">\n"
+             "  <!-- dsd-server network explorer export, " << iso(now) << " -->\n";
+        const char* nkeys[][3] = {{"type", "type", "string"}, {"protocol", "protocol", "string"},
+                                  {"label", "label", "string"}, {"calls", "calls", "long"},
+                                  {"aliases", "aliases", "string"}, {"networks", "networks", "string"},
+                                  {"radios", "radios", "long"}, {"talkgroups", "talkgroups", "long"},
+                                  {"emergencies", "emergencies", "long"}, {"encrypted", "encrypted", "long"},
+                                  {"confidence", "confidence", "string"}, {"identifiers", "identifiers", "string"},
+                                  {"sites", "sites", "string"}, {"first_seen", "first_seen", "string"},
+                                  {"last_seen", "last_seen", "string"}};
+        for (const auto& k : nkeys)
+            o << "  <key id=\"" << k[0] << "\" for=\"node\" attr.name=\"" << k[1] << "\" attr.type=\"" << k[2] << "\"/>\n";
+        o << "  <key id=\"etype\" for=\"edge\" attr.name=\"type\" attr.type=\"string\"/>\n"
+             "  <key id=\"weight\" for=\"edge\" attr.name=\"weight\" attr.type=\"double\"/>\n"
+             "  <key id=\"ecalls\" for=\"edge\" attr.name=\"calls\" attr.type=\"long\"/>\n"
+             "  <graph id=\"dsd-net\" edgedefault=\"undirected\">\n";
+        auto d = [&](const char* k, const std::string& v) { o << "      <data key=\"" << k << "\">" << xesc(v) << "</data>\n"; };
+        auto dn = [&](const char* k, std::uint64_t v) { o << "      <data key=\"" << k << "\">" << v << "</data>\n"; };
+        std::uint64_t eid = 0;
+        auto edge = [&](const std::string& a, const std::string& z, const char* type, std::uint64_t calls) {
+            o << "    <edge id=\"e" << ++eid << "\" source=\"" << xesc(a) << "\" target=\"" << xesc(z) << "\">\n";
+            d("etype", type);
+            o << "      <data key=\"weight\">" << (calls ? calls : 1) << "</data>\n";
+            if (calls) dn("ecalls", calls);
+            o << "    </edge>\n";
+        };
+        for (const auto& fk : fam_) {
+            const std::string& fam = fk.first;
+            const Family& F = fk.second;
+            auto nid = [&](const char* t, const std::string& id) { return fam + ":" + t + ":" + id; };
+            auto netlabels = [&](const std::set<std::string>& keys) {
+                std::string out;
+                for (const auto& k : keys) {
+                    auto it = F.networks.find(k);
+                    out += (out.empty() ? "" : "; ") + (it == F.networks.end() ? k : it->second.label);
+                }
+                return out;
+            };
+            for (const auto& kv : F.networks) {
+                const Network& n = kv.second;
+                std::string ids, sites;
+                for (const auto& i : n.ids) ids += (ids.empty() ? "" : "; ") + i.first + "=" + i.second;
+                for (const auto& st : n.sites) sites += (sites.empty() ? "" : "; ") + st;
+                o << "    <node id=\"" << xesc(nid("n", n.key)) << "\">\n";
+                d("type", "network"); d("protocol", fam); d("label", n.label); dn("calls", n.calls);
+                d("confidence", n.confidence); d("identifiers", ids); d("sites", sites);
+                d("first_seen", iso(n.first_ms)); d("last_seen", iso(n.last_ms));
+                o << "    </node>\n";
+            }
+            for (const auto& kv : F.tgs) {
+                const Talkgroup& t = kv.second;
+                o << "    <node id=\"" << xesc(nid("t", t.id)) << "\">\n";
+                d("type", "talkgroup"); d("protocol", fam); d("label", "TG " + t.id); dn("calls", t.calls);
+                dn("radios", t.radios.size()); dn("emergencies", t.emergencies); dn("encrypted", t.encrypted);
+                d("networks", netlabels(t.networks)); d("first_seen", iso(t.first_ms)); d("last_seen", iso(t.last_ms));
+                o << "    </node>\n";
+            }
+            for (const auto& kv : F.radios) {
+                const Radio& r = kv.second;
+                std::string al;
+                for (const auto& a : r.aliases) al += (al.empty() ? "" : " / ") + a;
+                o << "    <node id=\"" << xesc(nid("r", r.id)) << "\">\n";
+                d("type", "radio"); d("protocol", fam); d("label", al.empty() ? r.id : r.id + " (" + al + ")");
+                dn("calls", r.calls); d("aliases", al); dn("talkgroups", r.tgs.size());
+                d("networks", netlabels(r.networks)); d("first_seen", iso(r.first_ms)); d("last_seen", iso(r.last_ms));
+                o << "    </node>\n";
+            }
+            for (const auto& kv : F.radios) {
+                const Radio& r = kv.second;
+                for (const auto& t : r.tgs)
+                    if (F.tgs.count(t.first)) edge(nid("r", r.id), nid("t", t.first), "talkgroup", t.second);
+                for (const auto& pr : r.peers)
+                    if (r.id < pr.first && F.radios.count(pr.first)) edge(nid("r", r.id), nid("r", pr.first), "private", pr.second);
+                for (const auto& k : r.networks)
+                    if (F.networks.count(k)) edge(nid("r", r.id), nid("n", k), "member", 0);
+            }
+            for (const auto& kv : F.tgs)
+                for (const auto& k : kv.second.networks)
+                    if (F.networks.count(k)) edge(nid("t", kv.first), nid("n", k), "member", 0);
+        }
+        o << "  </graph>\n</graphml>\n";
+        return o.str();
+    }
+
 private:
     std::string to_json_locked(std::int64_t now) const {
+        return "{\"version\":" + std::to_string(version_) + ",\"now\":" + std::to_string(now) +
+               ",\"rec\":" + rec_json_locked() + ",\"families\":" + families_json_locked(now) + "}";
+    }
+    // The per-protocol model -- the part the explorer renders, shared by
+    // /net.json, the recording snapshots and the export.
+    std::string families_json_locked(std::int64_t now) const {
         std::ostringstream o;
-        o << "{\"version\":" << version_ << ",\"now\":" << now << ",\"rec\":" << rec_json_locked()
-          << ",\"families\":{";
+        o << "{";
         bool firstf = true;
         for (const auto& fk : fam_) {
             const Family& F = fk.second;
@@ -424,7 +537,7 @@ private:
             }
             o << "]}";
         }
-        o << "}}";
+        o << "}";
         return o.str();
     }
 
@@ -1123,6 +1236,43 @@ private:
         return o + "\"";
     }
     static const char* b(bool v) { return v ? "true" : "false"; }
+    static std::string iso(std::int64_t ms) {
+        if (!ms) return std::string();
+        std::time_t t = static_cast<std::time_t>(ms / 1000);
+        std::tm tm{};
+        gmtime_r(&t, &tm);
+        char buf[32];
+        std::strftime(buf, sizeof buf, "%Y-%m-%dT%H:%M:%SZ", &tm);
+        return buf;
+    }
+    // XML text/attribute escaping that also guarantees well-formed UTF-8:
+    // decoder output can hold control bytes and invalid UTF-8 (e.g. Latin-1
+    // aliases), which strict XML readers reject -- each such byte becomes '?'.
+    static std::string xesc(const std::string& s) {
+        std::string o;
+        o.reserve(s.size());
+        for (std::size_t i = 0; i < s.size();) {
+            unsigned char c = static_cast<unsigned char>(s[i]);
+            if (c < 0x80) {
+                switch (c) {
+                    case '&': o += "&amp;"; break;
+                    case '<': o += "&lt;"; break;
+                    case '>': o += "&gt;"; break;
+                    case '"': o += "&quot;"; break;
+                    case '\'': o += "&apos;"; break;
+                    default: o += (c < 0x20 && c != '\t' && c != '\n' && c != '\r') ? '?' : static_cast<char>(c);
+                }
+                ++i;
+                continue;
+            }
+            int n = (c & 0xe0) == 0xc0 ? 2 : (c & 0xf0) == 0xe0 ? 3 : (c & 0xf8) == 0xf0 ? 4 : 0;
+            bool ok = n && c >= 0xc2 && i + n <= s.size();
+            for (int k = 1; ok && k < n; ++k) ok = (static_cast<unsigned char>(s[i + k]) & 0xc0) == 0x80;
+            if (ok) { o.append(s, i, n); i += n; }
+            else { o += '?'; ++i; }
+        }
+        return o;
+    }
     template <class C>
     static std::string arr(const C& c) {
         std::string o = "[";

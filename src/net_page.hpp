@@ -55,6 +55,19 @@ inline std::string render_net_page_html() {
          text-shadow: 0 -1px 0 rgba(0,0,0,.3); }
   .btn:hover { background-image: linear-gradient(rgba(255,255,255,.18), rgba(255,255,255,.03)), linear-gradient(#7a8288, #7a8288); }
   .btn.recon { background-image: linear-gradient(rgba(255,255,255,.12), rgba(255,255,255,0)), linear-gradient(#d9534f, #c9302c); }
+  .dropdown { position: relative; display: inline-block; }
+  .menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 17rem;
+          background: var(--panel); border: 1px solid var(--comp-bd); border-radius: 4px;
+          box-shadow: 0 6px 18px rgba(0,0,0,.45); padding: .25rem 0; }
+  .menu a { display: block; padding: .45rem .8rem; color: var(--heading); text-decoration: none; }
+  .menu a:hover { background: rgba(255,255,255,.07); }
+  .menu a small { display: block; color: var(--muted); font-size: .72rem; }
+  .filebar { background: #2c4a56; border: 1px solid var(--info); color: var(--heading); border-radius: 4px;
+             padding: .5rem .8rem; margin-bottom: .9rem; display: flex; flex-wrap: wrap; gap: .4rem .8rem;
+             align-items: center; }
+  .filebar .m { color: #b9d7e1; font-size: .82rem; }
+  body.filemode .live-only { display: none !important; }
+  body.dragging { outline: 3px dashed var(--info); outline-offset: -6px; }
   .recst { color: var(--muted); font-size: .78rem; max-width: 26rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .recst .live { color: var(--danger); font-weight: 600; }
   .btn.on { background-image: linear-gradient(rgba(255,255,255,.12), rgba(255,255,255,0)), linear-gradient(#e0a33c, #d38f2a); }
@@ -185,13 +198,23 @@ inline std::string render_net_page_html() {
   </div>
   <div class="hdr-actions">
     <input id="q" type="search" placeholder="Find radio, talkgroup, alias, text&hellip;" autocomplete="off">
-    <span id="recst" class="recst"></span>
-    <button id="rec" class="btn" type="button" title="Record everything the explorer receives, to replay and analyse offline">&#9679; Record</button>
-    <button id="pause" class="btn" type="button">Pause</button>
-    <button id="clear" class="btn" type="button" title="Forget everything learned so far">Clear</button>
+    <span id="recst" class="recst live-only"></span>
+    <button id="rec" class="btn live-only" type="button" title="Record everything the explorer receives, to replay and analyse offline">&#9679; Record</button>
+    <button id="pause" class="btn live-only" type="button">Pause</button>
+    <button id="clear" class="btn live-only" type="button" title="Forget everything learned so far">Clear</button>
+    <span class="dropdown live-only">
+      <button id="exp" class="btn" type="button" title="Save what the explorer shows">Export &#9662;</button>
+      <div id="expmenu" class="menu" hidden>
+        <a href="/net/export.json" download>Explorer data (.json)<small>re-open later here with Open&hellip;</small></a>
+        <a href="/net/export.graphml" download>Association graph (.graphml)<small>Gephi &middot; Cytoscape &middot; yEd &middot; networkx</small></a>
+      </div>
+    </span>
+    <button id="open" class="btn" type="button" title="View a saved explorer export (or drop one on the page)">Open&hellip;</button>
+    <input type="file" id="openfile" accept=".json,.gz,application/json" hidden>
   </div>
 </div></header>
 <div class="wrap">
+  <div id="filebar" class="filebar" hidden></div>
   <div class="tabs famtabs" id="famtabs"></div>
   <div id="empty" class="emptybig"><b>Waiting for digital-voice traffic</b>
     Start a decode session (DMR, P25, NXDN, dPMR, D-STAR, YSF, TETRA, EDACS) and its calls, talkgroups,
@@ -265,7 +288,9 @@ function h(tag, a, kids) {
 }
 function store(k, v) { try { localStorage.setItem('netx.' + k, v); } catch (e) {} }
 function load(k) { try { return localStorage.getItem('netx.' + k); } catch (e) { return null; } }
-function now() { return Date.now() + S.skew; }
+// In file view the clock stands still at the export moment, so "3m ago"
+// means three minutes before the export.
+function now() { return S.file ? S.d.now : Date.now() + S.skew; }
 function p2(n) { return (n < 10 ? '0' : '') + n; }
 function hms(ms) { var d = new Date(ms); return p2(d.getUTCHours()) + ':' + p2(d.getUTCMinutes()) + ':' + p2(d.getUTCSeconds()); }
 function dt(ms) { var d = new Date(ms); return d.getUTCFullYear() + '-' + p2(d.getUTCMonth() + 1) + '-' + p2(d.getUTCDate()) + ' ' + hms(ms) + 'Z'; }
@@ -287,7 +312,7 @@ function dur(ms) {
 }
 function keys(o) { return o ? Object.keys(o) : []; }
 function sum(o) { var t = 0; for (var k in o) t += o[k]; return t; }
-function live(c) { return c.open && now() - c.last < LIVE_MS; }
+function live(c) { return !S.file && c.open && now() - c.last < LIVE_MS; }
 
 // ---------- indexing ----------
 function colorFor(key) {
@@ -958,6 +983,57 @@ function render() {
   renderDetail();
 }
 
+// ---------- export / open ----------
+$('exp').addEventListener('click', function (e) { e.stopPropagation(); $('expmenu').hidden = !$('expmenu').hidden; });
+document.addEventListener('click', function () { $('expmenu').hidden = true; });
+function openText(text, name) {
+  if (/^\s*\{"op":"header"/.test(text)) {
+    alert('"' + name + '" is a recording (the raw decoder input), not an export.\n\n' +
+          'Turn it into an export with:\n  net-replay ' + name + ' --export out.json\nthen open out.json here.');
+    return;
+  }
+  var d;
+  try { d = JSON.parse(text); } catch (e) { alert('"' + name + '" is not valid JSON.'); return; }
+  var ok = d && typeof d.families === 'object' && (d.format === 'dsd-net-export' || typeof d.now === 'number');
+  if (!ok) { alert('"' + name + '" is not a dsd-server explorer export (expected format "dsd-net-export").'); return; }
+  if (d.format === 'dsd-net-export' && d.format_version > 1)
+    alert('This export uses a newer format (v' + d.format_version + '); some details may not show.');
+  S.file = { name: name, exported: d.exported || d.now, source: d.source || '' };
+  S.d = { version: -Date.now(), now: d.now || d.exported, families: d.families, rec: {} };
+  S.fam = null; S.net = '*'; S.sel = null; S.q = ''; $('q').value = ''; GR.sig = ''; GR.fitted = false;
+  document.body.classList.add('filemode');
+  var fb = $('filebar');
+  fb.textContent = '';
+  fb.appendChild(h('span', null, ['Viewing export ', h('b', { text: name })]));
+  fb.appendChild(h('span', { class: 'm', text: 'exported ' + dt(S.file.exported) + (S.file.source ? ' by ' + S.file.source : '') +
+                                               ' \u00B7 times are relative to the export' }));
+  fb.appendChild(h('a', { href: '#', onclick: function (e) { e.preventDefault(); backToLive(); } }, 'Back to live'));
+  fb.hidden = false;
+  $('live').textContent = 'file view';
+  render();
+}
+function openFile(f) {
+  if (!f) return;
+  var p = /\.gz$/i.test(f.name) && typeof DecompressionStream !== 'undefined'
+    ? new Response(f.stream().pipeThrough(new DecompressionStream('gzip'))).text()
+    : f.text();
+  p.then(function (t) { openText(t, f.name); }).catch(function () { alert('Could not read "' + f.name + '".'); });
+}
+function backToLive() {
+  S.file = null; S.d = null; IX = null; S.fam = load('fam'); S.net = '*'; S.sel = null; GR.sig = ''; GR.fitted = false;
+  document.body.classList.remove('filemode');
+  $('filebar').hidden = true;
+  $('live').textContent = 'connecting\u2026';
+}
+$('open').addEventListener('click', function () { $('openfile').value = ''; $('openfile').click(); });
+$('openfile').addEventListener('change', function () { openFile(this.files[0]); });
+document.addEventListener('dragover', function (e) { e.preventDefault(); document.body.classList.add('dragging'); });
+document.addEventListener('dragleave', function (e) { if (!e.relatedTarget) document.body.classList.remove('dragging'); });
+document.addEventListener('drop', function (e) {
+  e.preventDefault(); document.body.classList.remove('dragging');
+  if (e.dataTransfer && e.dataTransfer.files.length) openFile(e.dataTransfer.files[0]);
+});
+
 // ---------- recording (Record button) ----------
 function mb(n) { return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
 function updateRec(r) {
@@ -990,7 +1066,7 @@ $('rec').addEventListener('click', function () {
 });
 
 function poll() {
-  if (S.paused || document.hidden) { setTimeout(poll, POLL); return; }
+  if (S.paused || S.file || document.hidden) { setTimeout(poll, POLL); return; }
   fetch('/net.json', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
     S.skew = d.now - Date.now();
     updateRec(d.rec);

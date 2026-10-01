@@ -1,6 +1,7 @@
 // net_replay.cpp -- replay a network-explorer recording offline.
 //
 //   net-replay <net_YYYYMMDD_HHMMSS.jsonl.gz> [--at <ms | +seconds>] [--json <file|->]
+//                                             [--export <file.json>] [--graphml <file.graphml>]
 //
 // Re-applies every recorded input to a fresh AssocModel with its recorded
 // timestamp, then prints a summary of what the explorer would show. With no
@@ -9,7 +10,9 @@
 // faithful, so a fix to the model can be re-run on the same data). --at stops
 // at a moment in the recording (epoch ms, or +seconds after the first input),
 // e.g. when the problem was seen; +N means N seconds after the recording started. --json writes the replayed model (the same
-// JSON as GET /net.json) to a file, or "-" for stdout.
+// JSON as GET /net.json) to a file, or "-" for stdout. --export writes an
+// explorer export (re-openable in the explorer's "Open..."), --graphml the
+// association graph for Gephi / Cytoscape / yEd -- both as of the replayed time.
 
 #include "assoc_replay.hpp"
 
@@ -97,14 +100,17 @@ void summarize(const std::string& model) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: %s <recording.jsonl.gz> [--at <ms|+seconds>] [--json <file|->]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s <recording.jsonl.gz> [--at <ms|+seconds>] [--json <file|->]\n"
+                             "       [--export <file.json>] [--graphml <file.graphml>]\n", argv[0]);
         return 2;
     }
-    std::string path = argv[1], json_out, at;
+    std::string path = argv[1], json_out, at, export_out, graphml_out;
     for (int i = 2; i + 1 < argc; i += 2) {
         std::string a = argv[i];
         if (a == "--at") at = argv[i + 1];
         else if (a == "--json") json_out = argv[i + 1];
+        else if (a == "--export") export_out = argv[i + 1];
+        else if (a == "--graphml") graphml_out = argv[i + 1];
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }
     }
 
@@ -163,6 +169,16 @@ int main(int argc, char** argv) {
             rc = 3;
         }
     }
+    auto write_file = [](const std::string& f, const std::string& body, const char* what) {
+        FILE* o = std::fopen(f.c_str(), "w");
+        if (!o) { std::fprintf(stderr, "cannot write %s\n", f.c_str()); return false; }
+        std::fputs(body.c_str(), o);
+        std::fclose(o);
+        std::printf("%-11s %s\n", what, f.c_str());
+        return true;
+    };
+    if (!export_out.empty() && !write_file(export_out, m.to_export_json(when), "export")) return 1;
+    if (!graphml_out.empty() && !write_file(graphml_out, m.to_graphml(when), "graphml")) return 1;
     if (!json_out.empty()) {
         if (json_out == "-") std::cout << model << "\n";
         else {
