@@ -601,6 +601,9 @@ as `Color Code=00` before a burst's code is decoded).
 A stream only shows up once it decodes real traffic (a sync, call, voice or
 data burst): a session on an empty channel, on noise, or set to the wrong
 protocol leaves no trace -- no protocol tab and no "Unidentified" network.
+When a session ends (stop, disconnect, or a new `start`), any network it fed
+that never carried a call is dropped too, along with radios known only through
+it -- unless another running session is still on that network.
 
 Everything is in memory, bounded (last 400 calls per protocol; capped
 radios / talkgroups / networks), and resets on restart or with the page's

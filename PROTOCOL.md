@@ -1192,6 +1192,9 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
   `none` (`unknown:s<session>`: nothing decoded yet).
 - `radios` on a talkgroup / `tgs` on a radio are call counts per association;
   `peers` are private (unit-to-unit) calls in either direction.
+- A session appears only once it decodes real traffic, and when it ends any
+  network it fed that never carried a call is removed (unless another running
+  session is on it).
 - `calls` holds the most recent calls (newest first, bounded). `open` = still
   running (heard within the last 4 s); `streams` = how many receivers heard the
   same call (deduplicated on a shared network).

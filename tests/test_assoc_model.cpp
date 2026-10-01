@@ -491,6 +491,89 @@ int main() {
         check(snap(m, 1200)["families"].has("dmr"), "clear: real traffic does");
     }
 
+    // ---- when a stream ends, networks that never carried a call are dropped ----
+    {
+        AssocModel m;
+        m.begin_stream(1, "dmr", 0);
+        for (int k = 0; k < 3; ++k) line(m, 1, "19:54:55 Sync: +DMR  slot1  [SLOT1] | Color Code=04 | VC6 ", 1000 + k);
+        check(snap(m, 1100)["families"]["dmr"]["networks"].size() == 1, "prune: a sync-only network is shown while the stream runs");
+        m.end_stream(1);
+        check(snap(m, 1200)["families"].size() == 0, "prune: ...and dropped (with its empty protocol) when the stream ends");
+    }
+    {
+        AssocModel m;
+        m.begin_stream(1, "dmr", 0);
+        for (int k = 0; k < 2; ++k) line(m, 1, "19:54:55 Sync: +DMR  slot1  [SLOT1] | Color Code=04 | VC6 ", 1000 + k);
+        line(m, 1, " SLOT 1 TGT=9 SRC=3112 Group Call ", 1100);
+        m.end_stream(1);
+        m.remove_session(1);
+        J j = snap(m, 1200);
+        check(j["families"]["dmr"]["networks"].size() == 1 && j["families"]["dmr"]["calls"].size() == 1,
+              "prune: a network with calls is kept after its stream ends and disconnects");
+    }
+    {
+        // Retune leftover: CC 4 (sync only), then CC 7 with a call. At the end
+        // only the CC 4 bucket goes.
+        AssocModel m;
+        m.begin_stream(1, "dmr", 0);
+        for (int k = 0; k < 2; ++k) line(m, 1, "19:54:55 Sync: +DMR  slot1  [SLOT1] | Color Code=04 | VC6 ", 1000 + k);
+        for (int k = 0; k < 2; ++k) line(m, 1, "19:55:55 Sync: +DMR  slot1  [SLOT1] | Color Code=07 | VC6 ", 9000 + k);
+        line(m, 1, " SLOT 1 TGT=20 SRC=2 Group Call ", 9100);
+        check(snap(m, 9100)["families"]["dmr"]["networks"].size() == 2, "prune: both buckets present mid-stream");
+        m.end_stream(1);
+        J j = snap(m, 9200);
+        check(j["families"]["dmr"]["networks"].size() == 1 && j["families"]["dmr"]["networks"].at(0)["key"].s == "cc:7@s1",
+              "prune: the call-less CC 4 bucket is dropped, CC 7 (with a call) kept");
+    }
+    {
+        // A shared, call-less network survives while another stream is on it,
+        // and goes when the last one ends.
+        AssocModel m;
+        m.begin_stream(1, "p25p1", 0);
+        m.begin_stream(2, "p25p1", 0);
+        for (std::uint64_t sid : {1, 2}) {
+            line(m, sid, "17:30:46 Sync: +P25p1 NAC/CC: 293; RFSS: 004; Site: 012;  TSBK", 900);
+            m.ingest(sid, classify_dsd_fme_line(" LRA [00] CFVA [3] RFSS[004] SITE [012] SYSID [3A1]"), 910);
+            line(m, sid, "17:30:47 Sync: +P25p1 NAC/CC: 293;  TSBK", 920);
+        }
+        m.end_stream(1);
+        check(snap(m, 1000)["families"]["p25"]["networks"].size() == 1, "prune: kept while another stream is still on it");
+        m.end_stream(2);
+        check(snap(m, 1100)["families"].size() == 0, "prune: dropped when the last stream on it ends");
+    }
+    {
+        // Radios known only through a dropped network go with it; a radio
+        // with calls elsewhere just loses the dropped network.
+        AssocModel m;
+        m.begin_stream(1, "dmr", 0);
+        m.begin_stream(2, "dmr", 0);
+        for (int k = 0; k < 2; ++k) {
+            line(m, 1, "19:54:55 Sync: +DMR  slot1  [SLOT1] | Color Code=01 | VC6 ", 1000 + k);
+            line(m, 2, "19:54:55 Sync: +DMR  slot1  [SLOT1] | Color Code=02 | VC6 ", 1000 + k);
+        }
+        line(m, 1, " SLOT 1 TGT=9 SRC=500 Group Call ", 1100);                   // a real call on stream 1
+        DsdEvent reg; reg.kind = "sync"; reg.slot = "1"; reg.source_id = "500";   // radio 500 merely seen on stream 2
+        m.ingest(2, reg, 1150);
+        DsdEvent lone = reg; lone.source_id = "777";                              // radio 777 only ever on stream 2
+        m.ingest(2, lone, 1160);
+        m.end_stream(2);
+        J j = snap(m, 1200);
+        const J& F = j["families"]["dmr"];
+        check(F["networks"].size() == 1, "prune: stream 2's call-less network dropped");
+        check(!find(F["radios"], "id", "777"), "prune: a radio known only through it is dropped");
+        const J* r = find(F["radios"], "id", "500");
+        check(r && (*r)["networks"].size() == 1 && (*r)["networks"].at(0).s == "cc:1@s1",
+              "prune: a radio with calls elsewhere is kept, minus the dropped network");
+    }
+    {
+        // A restart (new start on the same session) ends the previous stream too.
+        AssocModel m;
+        m.begin_stream(1, "dmr", 0);
+        for (int k = 0; k < 2; ++k) line(m, 1, "19:54:55 Sync: +DMR  slot1  [SLOT1] | Color Code=04 | VC6 ", 1000 + k);
+        m.begin_stream(1, "dmr", 0);
+        check(snap(m, 1100)["families"].size() == 0, "prune: restarting a session drops its call-less network");
+    }
+
     // ---- paging and streams without begin_stream are ignored ----
     {
         AssocModel m;

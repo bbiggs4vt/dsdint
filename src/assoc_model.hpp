@@ -90,9 +90,11 @@ public:
     void begin_stream(std::uint64_t sid, const std::string& label, std::int64_t now = now_ms()) {
         std::lock_guard<std::mutex> lk(mu_);
         close_session_calls_locked(sid);
+        prune_session_locked(sid);      // a restart ends the previous stream
         Ctx& c = sess_[sid];
         c = Ctx{};
         c.family = assoc_family(label);
+        c.running = true;
         (void)now;
         ++version_;
     }
@@ -102,7 +104,8 @@ public:
         std::lock_guard<std::mutex> lk(mu_);
         close_session_calls_locked(sid);
         auto it = sess_.find(sid);
-        if (it != sess_.end()) it->second.active.clear();
+        if (it != sess_.end()) { it->second.running = false; it->second.active.clear(); }
+        prune_session_locked(sid);
         ++version_;
     }
 
@@ -110,6 +113,7 @@ public:
     void remove_session(std::uint64_t sid) {
         std::lock_guard<std::mutex> lk(mu_);
         close_session_calls_locked(sid);
+        prune_session_locked(sid);
         sess_.erase(sid);
         ++version_;
     }
@@ -121,8 +125,10 @@ public:
         fam_.clear();
         for (auto& kv : sess_) {
             std::string f = kv.second.family;
+            const bool running = kv.second.running;
             kv.second = Ctx{};
             kv.second.family = f;
+            kv.second.running = running;
         }
         ++version_;
     }
@@ -408,6 +414,7 @@ private:
         std::string net, site;
         bool strong = false;
         bool live = false;                              // has decoded real traffic yet
+        bool running = false;                           // pipeline up (begin_stream .. end_stream)
         std::map<std::string, std::uint64_t> active;   // "slot|tgt" -> call id
         std::map<std::string, std::uint64_t> last_slot_call; // slot -> latest call id
         // Weak-anchor values seen but not yet believed: key -> (value, times in a row).
@@ -938,6 +945,54 @@ private:
             }
         }
     }
+    // A stream ended: drop each network it fed that never carried a call --
+    // no call counted on it, no call record referring to it -- unless another
+    // stream is still on it (that stream's own end decides). Radios and
+    // talkgroups known only through a dropped network go with it, and a
+    // protocol left empty disappears. Networks with calls are kept.
+    void prune_session_locked(std::uint64_t sid) {
+        auto sit = sess_.find(sid);
+        if (sit == sess_.end()) return;
+        const std::string fam = sit->second.family;
+        auto fit = fam_.find(fam);
+        if (fit == fam_.end()) return;
+        Family& F = fit->second;
+        std::vector<std::string> dead;
+        for (const auto& kv : F.networks) {
+            const Network& n = kv.second;
+            if (n.calls || !n.sessions.count(sid)) continue;
+            bool in_use = false;
+            for (const auto& sk : sess_)
+                if (sk.first != sid && sk.second.running && sk.second.family == fam && sk.second.net == kv.first) {
+                    in_use = true;
+                    break;
+                }
+            if (in_use) continue;
+            bool has_call = false;
+            for (const auto& k : F.calls) if (k.net == kv.first) { has_call = true; break; }
+            if (!has_call) dead.push_back(kv.first);
+        }
+        if (dead.empty()) return;
+        for (const auto& key : dead) {
+            F.networks.erase(key);
+            for (auto it = F.radios.begin(); it != F.radios.end();) {
+                Radio& r = it->second;
+                r.networks.erase(key);
+                if (r.networks.empty() && !r.calls && r.tgs.empty() && r.peers.empty()) it = F.radios.erase(it);
+                else ++it;
+            }
+            for (auto it = F.tgs.begin(); it != F.tgs.end();) {
+                Talkgroup& t = it->second;
+                t.networks.erase(key);
+                if (t.networks.empty() && !t.calls && t.radios.empty()) it = F.tgs.erase(it);
+                else ++it;
+            }
+            if (sit->second.net == key) sit->second.net.clear();
+        }
+        if (F.networks.empty() && F.radios.empty() && F.tgs.empty() && F.calls.empty()) fam_.erase(fit);
+        ++version_;
+    }
+
     void close_session_calls_locked(std::uint64_t sid) {
         auto sit = sess_.find(sid);
         if (sit == sess_.end()) return;
