@@ -2,6 +2,7 @@
 #include "json_util.hpp"
 #include "protocol_capabilities.hpp"
 #include "status_page.hpp"
+#include "net_page.hpp"
 #include "pager_events.hpp"
 
 #include <iostream>
@@ -163,6 +164,22 @@ void Session::serve_http() {
         res->result(http::status::ok);
         res->set(http::field::content_type, "application/json");
         res->body() = std::string("{\"log\":[]}");
+    } else if (target == "/net" || target == "/net.html") {
+        // Network explorer: calls, talkgroups, radios and their associations.
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "text/html; charset=utf-8");
+        res->body() = render_net_page_html();
+    } else if (target == "/net.json") {
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "application/json");
+        res->body() = stats_ ? stats_->assoc().to_json() : std::string("{\"families\":{}}");
+    } else if (target == "/net/clear") {
+        // Explorer Clear button: forget everything learned so far (a
+        // side-effecting GET, matching /log/clear's style for these pages).
+        if (stats_) stats_->assoc().clear();
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "application/json");
+        res->body() = std::string("{\"ok\":true}");
     } else if (target == "/iq_log/on" || target == "/iq_log/off") {
         // Status-page "Log IQ" switch: flip the global IQ-capture toggle. Every
         // active session opens (on) or closes (off) its BLUE capture, and new
@@ -595,6 +612,10 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
     if (stats_) {
         stats_->note_request(stats_id_, protocol_hint_label(hint),
                              hint_is_tetra(hint) ? "tetra" : want_pager ? "pager" : "fm");
+        // Network explorer: open a fresh stream context BEFORE any backend can
+        // emit, so even its first events land in this stream (paging maps to
+        // no family and is ignored by the model).
+        if (stats_id_) stats_->assoc().begin_stream(stats_id_, protocol_hint_label(hint));
     }
 
     const bool want_tetra = hint_is_tetra(hint);
@@ -614,6 +635,9 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
     std::function<void(const DsdEvent&)> on_event = [weak_self](const DsdEvent& ev) {
         auto self = weak_self.lock();
         if (!self) return;
+        // Feed the network explorer's association model (structured, before
+        // serialization). It has its own lock; this runs on the reader thread.
+        if (self->stats_ && self->stats_id_) self->stats_->assoc().ingest(self->stats_id_, ev);
         std::string s = json::Writer()
             .field("type", std::string("event"))
             .field("kind", ev.kind)
@@ -881,6 +905,10 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
             default:                       dcfg.mode_flag = "s"; break;
         }
         dcfg.udp_audio_port = udp_audio_port_;
+        dcfg.on_suppressed = [weak_self](const DsdEvent& ev) {
+            auto self = weak_self.lock();
+            if (self && self->stats_ && self->stats_id_) self->stats_->assoc().ingest(self->stats_id_, ev);
+        };
         // Decryption key -> the matching dsd-fme flag, appended as a separate
         // argv token (never a shell string, and key was validated digits-only
         // above). Flag/value formats verified against dsd-fme's source
@@ -990,6 +1018,10 @@ void Session::stop_pipeline() {
         std::lock_guard<std::mutex> lock(iq_mutex_);
         iq_queue_.clear();
     }
+
+    // Network explorer: the backend is stopped (its reader threads joined),
+    // so every event is in -- close this stream's open calls.
+    if (stats_ && stats_id_) stats_->assoc().end_stream(stats_id_);
 
     // Finalize the IQ capture, if any (patches the BLUE header's data_size).
     if (iq_log_) {

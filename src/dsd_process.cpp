@@ -352,6 +352,7 @@ void DsdProcess::stdout_reader_loop() {
                 slot_carry_.apply(ev);   // stamp the burst's slot onto unmarked lines
                 publish_active_slot(ev);
                 if (dsd_fme_forward_event(ev, cfg_.forward_unknown)) on_event_(ev);
+                else if (cfg_.on_suppressed) cfg_.on_suppressed(ev);
             }
         }
     }
@@ -365,6 +366,7 @@ void DsdProcess::stdout_reader_loop() {
         slot_carry_.apply(ev);
         publish_active_slot(ev);
         if (dsd_fme_forward_event(ev, cfg_.forward_unknown)) on_event_(ev);
+        else if (cfg_.on_suppressed) cfg_.on_suppressed(ev);
     }
     // End of stream: emit any text PDU still being accumulated.
     if (cfg_.decode_short_data && on_event_) {
@@ -669,6 +671,14 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     // strip_leading_zeros normalizes P25's zero-padded "%08d" IDs (and is
     // a no-op on DMR/NXDN's unpadded ones).
     if (std::regex_search(line, m, tg_re)) ev.talkgroup = strip_leading_zeros(m[1].str());
+    // DMR CSBK / data-header lines name the destination "Target: N" rather than
+    // TG/TGT ("Preamble CSBK - Group Data - Source: 123 - Target: 1", "Slot 1
+    // Data Header - Group - ... Source: 123 Target: 1"). Same meaning as TGT
+    // (the dst id: a talkgroup, or a radio for an individual call), so use it
+    // when no TG/TGT was found. \b keeps it off "unit_target"-style tokens.
+    static const std::regex target_re(R"(\bTarget:?\s*(\d+))", std::regex::icase);
+    if (ev.talkgroup.empty() && std::regex_search(line, m, target_re))
+        ev.talkgroup = strip_leading_zeros(m[1].str());
     if (std::regex_search(line, m, src_re)) ev.source_id = strip_leading_zeros(m[1].str());
     if (std::regex_search(line, m, slot_bracket_re)) ev.slot = m[1].str();
     else if (std::regex_search(line, m, slot_re)) ev.slot = m[1].str();

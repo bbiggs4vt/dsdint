@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include "assoc_model.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -232,9 +234,15 @@ public:
         it->second.active = active;
     }
 
+    // The network explorer's association model (/net). Has its own lock; fed
+    // decoded events by every session, independent of the tables above.
+    AssocModel& assoc() { return assoc_; }
+    const AssocModel& assoc() const { return assoc_; }
+
     // The WebSocket client disconnected. Archive it into the bounded
     // history (most-recent kept) before dropping it from the live table.
     void remove_session(std::uint64_t id) {
+        assoc_.remove_session(id); // its own lock; taken before (never inside) mu_
         std::lock_guard<std::mutex> lk(mu_);
         auto it = sessions_.find(id);
         if (it == sessions_.end()) return;
@@ -329,6 +337,7 @@ private:
     std::deque<LogEntry> log_;
     bool iq_logging_ = false;                                   // global IQ-capture switch
     std::map<std::uint64_t, std::function<void(bool)>> iq_controls_; // per-session appliers
+    AssocModel assoc_;                                          // network explorer model
     std::size_t history_limit_;
     std::size_t log_limit_;
     std::uint64_t last_id_ = 0;

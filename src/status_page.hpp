@@ -351,7 +351,8 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
     o << "<h1><span class=\"accent\">dsd-server</span> status</h1>\n";
     o << "<div class=\"sub\">up <span id=\"uptime\">" << html_escape(human_duration(s.uptime_s))
       << "</span> &middot; since " << html_escape(format_utc(s.started))
-      << " &middot; <span id=\"live\">live</span></div>\n";
+      << " &middot; <span id=\"live\">live</span>"
+      << " &middot; <a href=\"/net\" style=\"color:var(--info)\">network explorer</a></div>\n";
     o << "</div></header>\n";
 
     o << "<div class=\"wrap\">\n";

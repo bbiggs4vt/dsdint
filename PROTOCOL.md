@@ -744,6 +744,12 @@ verified — see the backend note above). `raw` is illustrative:
 
 ##### DMR short data / SMS (dsd-fme backend)
 
+DMR CSBK and data-header lines name the destination `Target: N` rather than
+`TGT`/`TG` (`Preamble CSBK - Group Data - Source: 123 - Target: 1`, `Slot 1
+Data Header - Group - Unconfirmed Delivery - Source: 123 Target: 1`); that
+value fills `talkgroup` (the destination id -- a talkgroup, or a radio for an
+individual data call) when no `TGT`/`TG` is on the line.
+
 Text-message decode from dsd-fme's short-data (SDS) and UDT PDU output.
 Shapes are pinned against dsd-fme's own `…Text:` render formats
 (`dmr_pdu.c` / `dmr_block.c` — source-format verified, no SMS capture in the
@@ -1082,6 +1088,9 @@ over HTTP and the connection closed:
 | `GET /log/clear` | empties the log ring buffer (the page's Clear button); returns `{"log":[]}` |
 | `GET /iq_log/on` | turns the global IQ-capture switch on (every active/new session captures); returns `{"iq_log_enabled":true}` |
 | `GET /iq_log/off` | turns it off (finalizes every session's capture); returns `{"iq_log_enabled":false}` |
+| `GET /net` | `text/html` network explorer (calls / talkgroups / radios / networks and their associations; polls `/net.json`) |
+| `GET /net.json` | `application/json` association model (see below) |
+| `GET /net/clear` | forgets everything the explorer learned; returns `{"ok":true}` |
 | any other path | `404` |
 | non-GET | `405` |
 
@@ -1153,6 +1162,41 @@ over HTTP and the connection closed:
 - Unlike the WebSocket frames, this JSON is **nested** (a `sessions`
   array, a `by_protocol` object) — it is a separate diagnostic surface,
   not a wire event.
+
+`GET /net.json` returns the network explorer's association model, keyed by
+protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
+`edacs`, `x2tdma`; paging is not modelled). Times are epoch milliseconds;
+`now` is the server's clock so a client can compute ages without skew:
+
+```json
+{"version": 812, "now": 1790000000000, "families": {
+  "p25": {
+    "networks":   [{"key": "wacn:BEE00/sys:3A1", "label": "WACN BEE00 · SYS 3A1", "confidence": "strong",
+                    "ids": {"nac": "293", "rfss": "4", "site_id": "12", "system_id": "3A1", "wacn": "BEE00"},
+                    "sites": ["RFSS 4 · Site 12", "RFSS 4 · Site 13"], "sessions": 2, "calls": 22,
+                    "first": 1789999970000, "last": 1789999990000}],
+    "talkgroups": [{"id": "100", "networks": ["wacn:BEE00/sys:3A1"], "radios": {"10001": 2, "12001": 1},
+                    "calls": 3, "emerg": 0, "enc": 0, "first": 1789999971000, "last": 1789999989000}],
+    "radios":     [{"id": "10001", "aliases": [], "tgs": {"100": 2, "200": 1}, "peers": {},
+                    "networks": ["wacn:BEE00/sys:3A1"], "calls": 3, "first": 1789999971000, "last": 1789999989000}],
+    "calls":      [{"id": 41, "session": 3, "net": "wacn:BEE00/sys:3A1", "site": "RFSS 4 · Site 12", "slot": "",
+                    "src": "10001", "tgt": "100", "alias": "", "text": "", "priv": false, "voice": true,
+                    "data": false, "emerg": false, "enc": false, "open": false, "streams": 1,
+                    "start": 1789999988000, "last": 1789999989000}]
+  }}}
+```
+
+- `confidence` is `strong` (a system identity: P25 WACN+SysID, DMR network
+  id, NXDN system code, TETRA MCC+MNC), `weak` (only a short code -- DMR color
+  code, NAC, RAN -- seen; scoped to one stream, key suffixed `@s<session>`) or
+  `none` (`unknown:s<session>`: nothing decoded yet).
+- `radios` on a talkgroup / `tgs` on a radio are call counts per association;
+  `peers` are private (unit-to-unit) calls in either direction.
+- `calls` holds the most recent calls (newest first, bounded). `open` = still
+  running (heard within the last 4 s); `streams` = how many receivers heard the
+  same call (deduplicated on a shared network).
+- Like `/status.json`, this JSON is nested and is a diagnostic surface, not
+  part of the WebSocket protocol.
 
 `GET /log.json` returns the recent JSON frames the server has sent clients
 — for the status page's **Log** tab — as a bounded, in-memory ring (last

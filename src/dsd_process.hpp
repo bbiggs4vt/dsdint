@@ -210,6 +210,14 @@ struct DsdProcessConfig {
     // suppressed), and a message is emitted only when a PDU decodes to printable
     // text -- never per voice frame, never for a binary/control PDU. Default on.
     bool decode_short_data = true;
+
+    // Observer for the lines the forward filter suppresses (kind "unknown"
+    // while forward_unknown is false). They never reach on_event, but some
+    // carry network identity (P25 WACN/SysID/RFSS/Site broadcasts) or call
+    // flags (a P25 "LCW ... Emergency" line) that the network explorer's
+    // association model needs. Called on the stdout reader thread; does not
+    // change what clients receive. Unset = no-op.
+    std::function<void(const DsdEvent&)> on_suppressed;
 };
 
 // Emit filter for the subprocess backend: whether a classified event should

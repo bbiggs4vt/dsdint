@@ -502,6 +502,8 @@ session exactly as before; anything else is answered over HTTP:
 | `/`, `/status` | HTML dashboard (live-updates ~1 s by polling the JSON in place; falls back to a 5 s full-page `<meta>`-refresh if JavaScript is off) |
 | `/status.json` | the same data as JSON, for health checks / scraping |
 | `/iq_log/on`, `/iq_log/off` | flip the global IQ-capture switch (the page's **Log IQ** checkbox); returns `{"iq_log_enabled":…}` |
+| `/net` | the network explorer page (see [Network explorer](#network-explorer)) |
+| `/net.json`, `/net/clear` | the explorer's association model as JSON; forget it |
 
 The live update is a tiny `/status.json` poll that patches the page in
 place — cheap on the server (no decode work, just a mutex-guarded snapshot
@@ -546,6 +548,59 @@ turns raw-IQ capture on or off for every session live (see below).
 curl http://localhost:22600/status.json
 # open http://localhost:22600/ in a browser for the live view
 ```
+
+## Network explorer
+
+`/net` on the same port is a second page that turns the decoded event stream
+into **calls, talkgroups, radios and networks, and the associations between
+them** -- live, per protocol (P25, DMR, NXDN, TETRA, dPMR, D-STAR, YSF, EDACS).
+Protocols are never cross-linked: a P25 radio id and a DMR radio id are
+unrelated numbers.
+
+- **Calls** -- one row per call, stitched from the per-frame events: source
+  (with talker alias) -> talkgroup, or radio -> radio for a private call;
+  voice vs. data/SMS (with the text), slot, emergency, encrypted, duration,
+  and a live indicator. A call heard by two receivers (e.g. a P25 control
+  channel's grant and the voice channel) is one call, marked `2 RX`.
+- **Talkgroups / Radios** -- who talks on what, how often, on which networks.
+  Click any radio, talkgroup or network for its associations: the talkgroups
+  a radio uses, its private-call partners, the radios it shares talkgroups
+  with, the talkgroups linked to a talkgroup through shared radios, and
+  recent calls.
+- **Graph** -- a force-directed radio <-> talkgroup graph (private calls as
+  dashed links, colour = network, a white ring = seen on 2+ networks).
+- **Links** -- the analysis view: *talk communities* (groups of radios tied
+  together through shared talkgroups / private calls), talkgroups and radios
+  **seen on more than one network** (evidence of a link between systems),
+  and *hub radios* active on 3+ talkgroups (dispatchers, supervisors,
+  scanning radios).
+- **Networks** -- each identified network with its identifiers and sites.
+
+**How networks are identified.** Identity arrives on different lines than
+calls, so each stream keeps the identity it has decoded and its calls are
+attributed to it:
+
+| Protocol | Strong identity | Weak identity | Site |
+|---|---|---|---|
+| P25 | WACN + System ID | NAC | RFSS + Site |
+| DMR | Network ID (Tier III / Capacity Max) | color code | Site ID |
+| NXDN | System code | RAN | site code / location |
+| TETRA | MCC + MNC | colour code | location area |
+
+A weak id is a short code that unrelated systems routinely share (a DMR color
+code has 16 values), so a weakly identified stream gets its own bucket
+(`Color Code 1 · stream 3`) instead of being merged with other streams on
+the same code; talkgroups and radios it shares with other buckets show up
+under **Links** as evidence instead. P25's NAC is the exception: a stream
+that only hears a NAC is resolved to the known WACN/SysID network carrying
+that NAC, if exactly one does. Neighbour-site broadcasts are recorded as
+sites without moving the stream's identity, and a short code must be seen
+twice in a row before it is believed (dsd-fme prints placeholder values such
+as `Color Code=00` before a burst's code is decoded).
+
+Everything is in memory, bounded (last 400 calls per protocol; capped
+radios / talkgroups / networks), and resets on restart or with the page's
+**Clear** button. `GET /net.json` serves the same model for tooling.
 
 ## IQ capture (recording the raw stream)
 
