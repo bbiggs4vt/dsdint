@@ -558,8 +558,11 @@ curl http://localhost:22600/status.json
 
 > **User manual:** [docs/NET_EXPLORER.md](docs/NET_EXPLORER.md) — a tour of
 > the page, every view and control, troubleshooting, and appendices on how
-> calls and associations are worked out for each protocol. This section is
-> the server-side reference.
+> calls and associations are worked out for each protocol. A printable copy
+> to hand out is [docs/NET_EXPLORER.pdf](docs/NET_EXPLORER.pdf) (rebuild it
+> after editing the manual with `tools/build_manual_pdf.py`; it needs Python's
+> `markdown` package and Chrome or Chromium). This section is the
+> server-side reference.
 
 `/net` on the same port is a second page that turns the decoded event stream
 into **calls, talkgroups, radios and networks, and the associations between
