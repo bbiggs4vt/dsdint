@@ -764,9 +764,6 @@ In the **Calls** view:
   downloads the audio of the calls listed (in the order shown -- filter,
   search or sort first) up to 25 MB, with a `calls.csv` of when, where, who
   and any transcript.
-- **Pause list** holds the list still while you read or play calls; it keeps
-  updating the calls shown and counts the new ones until you press
-  **Resume list**. (The header's **Pause** freezes the whole page.)
 - Click the **Audio** column header to put calls with audio first, or tick
   **With audio only**.
 - The call playing stays in a bar at the bottom of the window (time, channel,

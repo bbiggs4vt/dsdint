@@ -72,7 +72,7 @@ From top to bottom:
 | **Search box** | Finds radios, talkgroups, aliases, SMS text and frequencies. Filters every view. See [section 9](#9-searching-filtering-and-sorting). |
 | **Record** | Records everything the explorer receives, for replay and troubleshooting ([section 13](#13-recording-a-session-for-troubleshooting)). While on, the header shows the file name, its size and a **Download** link. |
 | **♫ Audio** | Starts / stops recording each call's voice (off by default) — [section 10](#10-call-audio). Orange when on. |
-| **Pause** | Freezes the whole page (no updates) until pressed again. To hold only the call list, use **Pause list** in the Calls view. |
+| **Pause** | Freezes the whole page (no updates) until pressed again. |
 | **Clear** | Forgets everything learned so far, and any imports. Asks first. |
 | **Export ▾** | Saves what the explorer shows: explorer data (.json) or the association graph (.graphml). |
 | **Import…** | Adds saved exports (e.g. from another receiver) to the live view. |
@@ -115,10 +115,6 @@ own line under the row.
 
 **Calls toolbar** (above the list):
 
-- **❚❚ Pause list** — holds the rows still so you can read or play them.
-  The calls shown keep updating (durations, audio, transcripts); new calls
-  are counted (`Paused · 12 new calls since`) and appear when you press
-  **▶ Resume list**. Switching protocol releases it.
 - **With audio only** — lists only calls with recorded voice.
 - **Transcribe on play**, the language and model lists — see
   [section 11](#11-speech-to-text).
@@ -127,9 +123,6 @@ own line under the row.
 
 The audio and transcription controls appear once audio recording is on or
 some call has audio.
-
-![Figure 3](img/calls-toolbar.png)
-*Figure 3: The Calls toolbar with the list paused.*
 
 Up to 400 calls are shown at a time; the explorer keeps many more (5000 per
 protocol by default) — narrow the list with the search box, a network chip or
@@ -148,8 +141,8 @@ last heard. Aliases are shown next to the id wherever the radio appears.
 Click a row for its details ([section 8](#8-the-details-panel)). Click a
 column header to sort.
 
-![Figure 4](img/talkgroups.png)
-*Figure 4: Talkgroups, with TG 100 selected: its radios and the talkgroups linked to it through shared radios.*
+![Figure 3](img/talkgroups.png)
+*Figure 3: Talkgroups, with TG 100 selected: its radios and the talkgroups linked to it through shared radios.*
 
 ## 5. Graph
 
@@ -167,8 +160,8 @@ a talkgroup's size grows with its calls.
 - Click a node to select it: its neighbours stay lit, everything else fades,
   and the details panel shows it.
 
-![Figure 5](img/graph.png)
-*Figure 5: The graph with TG 100 selected. Squares are talkgroups, dots radios; the white dashed ring (10001) marks a radio seen on two networks.*
+![Figure 4](img/graph.png)
+*Figure 4: The graph with TG 100 selected. Squares are talkgroups, dots radios; the white dashed ring (10001) marks a radio seen on two networks.*
 
 ## 6. Links
 
@@ -184,8 +177,8 @@ The analysis view — evidence of how radios, talkgroups and systems relate:
 - **Hub radios** — radios active on three or more talkgroups: dispatchers,
   supervisors, scanning or patched radios.
 
-![Figure 6](img/links.png)
-*Figure 6: Links: talk communities, a talkgroup and a radio seen on two networks, and hub radios.*
+![Figure 5](img/links.png)
+*Figure 5: Links: talk communities, a talkgroup and a radio seen on two networks, and hub radios.*
 
 ## 7. Networks
 
@@ -201,8 +194,8 @@ One row per network the explorer has identified:
 | **TGs / Radios / Calls** | Counts on this network. |
 | **Streams** | How many decode sessions fed it (more than one = several receivers or reconnects). |
 
-![Figure 7](img/networks.png)
-*Figure 7: Networks: a strongly identified P25 system (three sites, two channels) and a NAC heard on a known channel; the system's details on the right.*
+![Figure 6](img/networks.png)
+*Figure 6: Networks: a strongly identified P25 system (three sites, two channels) and a NAC heard on a known channel; the system's details on the right.*
 
 ## 8. The details panel
 
@@ -345,7 +338,7 @@ half a megabyte per minute on a busy multi-channel server.
 
 <p align="center"><img src="img/phone-calls.png" alt="Calls on a phone" width="250">&nbsp;&nbsp;&nbsp;<img src="img/phone-details.png" alt="Details on a phone" width="250"></p>
 
-*Figure 8: On a phone: calls as cards (left) and a radio's details in a bottom sheet (right).*
+*Figure 7: On a phone: calls as cards (left) and a radio's details in a bottom sheet (right).*
 
 ## 15. Limits: what is kept, and for how long
 
@@ -367,7 +360,7 @@ half a megabyte per minute on a busy multi-channel server.
 | `Unidentified · …` network | No identity decoded yet (often at the start of a session, or on a quiet channel). It updates when one is heard. |
 | One system appears as several `Color Code n · stream N` networks | The client didn't send the frequency, so short codes can't be trusted to join streams. Send `center_freq` in `start`. Meanwhile **Links → Seen on more than one network** shows the shared radios and talkgroups. |
 | Many very short calls with no source | Usually decoder lines the explorer misread as calls. Make a **recording** ([section 13](#13-recording-a-session-for-troubleshooting)) and send it — that is how the Capacity Plus channel-status issue was found and fixed. |
-| The list moves too fast to read | **Pause list** in the Calls toolbar (or the header's **Pause** for the whole page). |
+| The list moves too fast to read | The header's **Pause** freezes the page; or narrow the list with the search box or a network chip. |
 | ▶ buttons don't appear | Audio recording is off — press **♫ Audio**. Encrypted and data calls never have audio. |
 | "Speech-to-text needs its files on the server" | Run `tools/get_asr_assets.sh` on the server (or point `DSD_NET_ASR_DIR` at a copy), then reload the page. |
 | Transcripts are slow | Open the page over HTTPS or as `localhost`, use a faster PC, or pick `base` in the model list (faster but much less accurate). |

@@ -236,8 +236,6 @@ inline std::string render_net_page_html() {
   .callbar select { background: #1f2327; color: var(--heading); border: 1px solid var(--comp-bd); border-radius: 3px; font: inherit; }
   .callbar .btn { padding: .2rem .65rem; font-size: .78rem; }
   .callbar .grow { flex: 1 1 auto; }
-  .callbar .held { color: var(--warn); }
-  .callbar .held a { margin-left: .4rem; }
   body.filemode .callbar, .callbar .audctl.off { display: none !important; }
   @media (pointer: coarse) {
     .callbar .btn { min-height: 40px; }
@@ -431,8 +429,6 @@ inline std::string render_net_page_html() {
         </div>
         <div class="panel" id="v-calls">
           <div class="callbar">
-            <button id="hold" class="btn live-only" type="button" title="Stop the list moving while you read it (new calls are still counted)">&#10074;&#10074; Pause list</button>
-            <span id="holdst" class="held live-only" hidden></span>
             <label class="audctl" title="List only calls whose voice was recorded"><input type="checkbox" id="audonly"> With audio only</label>
             <span class="grow"></span>
             <label class="audctl live-only" id="asrctl" title="Turn each call's speech into text when you play it (runs in this browser)"><input type="checkbox" id="asron"> Transcribe on play</label>
@@ -484,7 +480,7 @@ var FAMN = {dmr:'DMR', p25:'P25', nxdn:'NXDN', tetra:'TETRA', dpmr:'dPMR', dstar
 var PAL = ['#5bc0de','#62c462','#f89406','#ee5f5b','#b38bff','#e6c229','#3fc1a5','#ff7eb6','#8fa8ff',
            '#c3e88d','#ffab70','#4dd0e1','#d4a5ff','#a3d977'];
 var S = { d: null, fam: null, net: '*', view: 'calls', sel: null, q: '', paused: false, skew: 0,
-          ncol: {}, nidx: {}, sort: {}, rows: {}, hold: null, audOnly: false };
+          ncol: {}, nidx: {}, sort: {}, rows: {}, audOnly: false };
 var IX = null;
 
 function $(id) { return document.getElementById(id); }
@@ -743,7 +739,6 @@ function typeBadges(c) {
 var PLAYER = { a: null, name: null, call: null };
 function mmss(ms) { var s = Math.round(ms / 1000); return Math.floor(s / 60) + ':' + p2(s % 60); }
 // A call's identity across polls (its id can change as imports come and go).
-function callKey(c) { return c.start + '|' + c.session + '|' + c.slot + '|' + c.src + '|' + c.tgt; }
 function audioUrl(c) { return '/net/audio/' + encodeURIComponent(c.audio); }
 function stamp(ms) { return dt(ms).replace(/[-:]/g, '').replace(' ', 'T'); }
 function safeName(s) { return String(s).replace(/[^A-Za-z0-9.-]+/g, '_'); }
@@ -1096,27 +1091,8 @@ function callCard(c) {
     c.text ? h('div', { class: 'tx', text: c.text }) : null,
     sttSpan(c, 'tx')]);
 }
-// Pause list: the calls listed when it was pressed stay put (still updated);
-// new ones are only counted until it is released.
-function setHold(on) {
-  S.hold = on && IX ? { fam: S.fam, list: IX.calls.slice(), set: {} } : null;
-  if (S.hold) S.hold.list.forEach(function (c) { S.hold.set[callKey(c)] = 1; });
-  $('hold').textContent = S.hold ? '▶ Resume list' : '❚❚ Pause list';
-  $('hold').classList.toggle('on', !!S.hold);
-  $('holdst').hidden = !S.hold;
-  $('holdst').textContent = 'Paused';
-  if (IX && S.view === 'calls') viewCalls();
-}
 function viewCalls() {
-  var rows = fCalls(), held = S.hold;
-  if (held && (held.fam !== S.fam || S.file)) { setHold(false); return; }
-  if (held) {
-    var cur = {};
-    IX.calls.forEach(function (c) { cur[callKey(c)] = c; });
-    var fresh = rows.filter(function (c) { return !held.set[callKey(c)]; }).length;
-    rows = fCalls(held.list.map(function (c) { return cur[callKey(c)] || c; }));
-    $('holdst').textContent = 'Paused · ' + fresh + ' new call' + (fresh === 1 ? '' : 's') + ' since';
-  }
+  var rows = fCalls();
   var hasAudio = (S.audio && S.audio.on) || S.audOnly || IX.calls.some(function (c) { return !!c.audio; });
   document.querySelectorAll('.callbar .audctl').forEach(function (e) { e.classList.toggle('off', !hasAudio); });
   table($('t-calls'), 'calls', [
@@ -1133,8 +1109,8 @@ function viewCalls() {
     { label: 'Audio', cls: 'nowrap', k: function (c) { return c.audio && !S.file ? 1 : 0; }, cell: audioCell,
       hideEmpty: function (c) { return !!c.audio && !S.file; } },
     { label: 'Text', cls: 'wrap', cell: function (c) { return c.text || ''; }, hideEmpty: function (c) { return !!c.text; } }
-  ], rows, (S.audOnly ? 'No calls with audio' : 'No calls heard yet') + (S.net !== '*' || S.q ? ' for this filter.' : '.') +
-           (held ? ' (The list is paused.)' : ''), null, null, callCard, function (c) { return sttSpan(c); });
+  ], rows, (S.audOnly ? 'No calls with audio' : 'No calls heard yet') + (S.net !== '*' || S.q ? ' for this filter.' : '.'),
+     null, null, callCard, function (c) { return sttSpan(c); });
 }
 function viewTgs() {
   var rows = fTgs().slice().sort(function (a, b) { return b.last - a.last; });
@@ -1998,7 +1974,6 @@ $('clear').addEventListener('click', function () {
   if (m.addEventListener) m.addEventListener('change', f); else if (m.addListener) m.addListener(f);
 });
 // Calls toolbar and the now-playing bar.
-$('hold').addEventListener('click', function () { setHold(!S.hold); });
 S.audOnly = load('audonly') === '1';
 $('audonly').checked = S.audOnly;
 $('audonly').addEventListener('change', function () { S.audOnly = this.checked; store('audonly', S.audOnly ? '1' : '0'); if (S.d) render(); });
