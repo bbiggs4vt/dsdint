@@ -7,6 +7,9 @@
 // on more than one network. Everything is per protocol family.
 //
 // The page is static; its script polls /net.json and renders client-side.
+// Speech-to-text (a call's audio transcribed when it is played) runs in the
+// browser; its library and model are loaded only then, from the server's
+// /net/asr/ folder -- or from the internet only if the user picks that.
 // Every decoder-derived string (ids, aliases, SMS text, network labels) is
 // inserted with textContent / setAttribute, never as HTML.
 
@@ -212,6 +215,45 @@ inline std::string render_net_page_html() {
   .play:hover { background: rgba(91,192,222,.22); }
   .play.on { color: #fff; background: var(--info); border-color: var(--info); }
   @media (pointer: coarse) { .play { min-height: 36px; padding: .2rem .75rem; font-size: .85rem; } }
+  .dl { display: inline-block; margin-left: .35rem; color: var(--muted); text-decoration: none; font-size: .9rem; padding: 0 .15rem; }
+  .dl:hover { color: var(--info); text-decoration: none; }
+  @media (pointer: coarse) { .dl { padding: .3rem .5rem; font-size: 1.05rem; } }
+  .stt { display: block; color: #e3e6e8; font-style: italic; white-space: normal; }
+  .stt::before { content: '\201C'; } .stt::after { content: '\201D'; }
+  td .stt { min-width: 12rem; }
+  td.tgcell { white-space: nowrap; }
+  /* Calls toolbar: pause the list, audio filter, speech-to-text settings, zip. */
+  .callbar { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem .9rem; padding: .45rem .8rem;
+             border-bottom: 1px solid var(--table-bd); font-size: .8rem; color: var(--muted); }
+  .callbar label { display: inline-flex; gap: .3rem; align-items: center; cursor: pointer; }
+  .callbar select { background: #1f2327; color: var(--heading); border: 1px solid var(--comp-bd); border-radius: 3px; font: inherit; }
+  .callbar .btn { padding: .2rem .65rem; font-size: .78rem; }
+  .callbar .grow { flex: 1 1 auto; }
+  .callbar .held { color: var(--warn); }
+  .callbar .held a { margin-left: .4rem; }
+  body.filemode .callbar, .callbar .audctl.off { display: none !important; }
+  @media (pointer: coarse) {
+    .callbar .btn { min-height: 40px; }
+    .callbar select, .callbar label { min-height: 40px; }
+    .callbar input[type=checkbox] { width: 20px; height: 20px; }
+  }
+  /* Now playing: the call, its progress and its transcript, pinned to the
+     bottom of the window so a busy list can't scroll it away. */
+  .np { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; background: #1f2327; border-top: 1px solid var(--info);
+        box-shadow: 0 -6px 18px rgba(0,0,0,.45); }
+  .np .in { display: flex; align-items: flex-start; gap: .7rem; max-width: 1500px; margin: 0 auto; padding: .55rem 1rem; }
+  .np .main { flex: 1 1 auto; min-width: 0; }
+  .np .meta { font-size: .8rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: .1rem .6rem; align-items: center; }
+  .np .meta b { color: var(--heading); font-weight: 500; }
+  .np .tx { margin-top: .25rem; font-size: .95rem; color: var(--heading); min-height: 1.3em; overflow-wrap: anywhere; }
+  .np .tx.st { color: var(--muted); font-style: italic; font-size: .85rem; }
+  .np .tx a { margin-left: .4rem; }
+  .np .x { appearance: none; background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 1rem; padding: .2rem .4rem; }
+  .np .x:hover { color: var(--heading); }
+  .np .prog { height: 2px; background: var(--info); width: 0; transition: width .2s linear; }
+  body.np-on { padding-bottom: 6.5rem; }
+  body.np-on .toast { bottom: 7rem; }
+  @media (pointer: coarse) { .np .x { padding: .5rem .7rem; } .np .dl { padding: .4rem .6rem; } }
   /* Details: a drawer over the page instead of a column below it. */
   @media (max-width: 1050px) {
     .side { position: fixed; z-index: 30; top: 0; right: 0; bottom: 0; width: min(400px, 92vw); max-height: none;
@@ -380,7 +422,19 @@ inline std::string render_net_page_html() {
           <button class="tab" data-v="links">Links</button>
           <button class="tab" data-v="nets">Networks <span class="count" id="c-nets"></span></button>
         </div>
-        <div class="panel" id="v-calls"><div class="scroll" id="t-calls"></div></div>
+        <div class="panel" id="v-calls">
+          <div class="callbar">
+            <button id="hold" class="btn live-only" type="button" title="Stop the list moving while you read it (new calls are still counted)">&#10074;&#10074; Pause list</button>
+            <span id="holdst" class="held live-only" hidden></span>
+            <label class="audctl" title="List only calls whose voice was recorded"><input type="checkbox" id="audonly"> With audio only</label>
+            <span class="grow"></span>
+            <label class="audctl live-only" id="asrctl" title="Turn each call's speech into text when you play it (runs in this browser)"><input type="checkbox" id="asron"> Transcribe on play</label>
+            <select id="asrlang" class="audctl live-only" aria-label="Spoken language" title="Spoken language"></select>
+            <select id="asrmodel" class="audctl live-only" aria-label="Speech-to-text model" title="Speech-to-text model: larger is more accurate but slower" hidden></select>
+            <button id="zip" class="btn audctl live-only" type="button" title="Download the audio of the listed calls (up to 25 MB), with a calls.csv of who, when and what was said">&#10515; Audio (.zip)</button>
+          </div>
+          <div class="scroll" id="t-calls"></div>
+        </div>
         <div class="panel" id="v-tgs" hidden><div class="scroll" id="t-tgs"></div></div>
         <div class="panel" id="v-radios" hidden><div class="scroll" id="t-radios"></div></div>
         <div class="panel" id="v-graph" hidden>
@@ -402,6 +456,18 @@ inline std::string render_net_page_html() {
     </div>
   </div>
 </div>
+<div id="np" class="np" hidden>
+  <div class="prog" id="npprog"></div>
+  <div class="in">
+    <button id="npplay" class="play on" type="button" title="Play / stop"><span>&#9632;</span></button>
+    <div class="main">
+      <div class="meta" id="npmeta"></div>
+      <div class="tx" id="nptx"></div>
+    </div>
+    <a id="npdl" class="dl" href="#" download title="Download this call's audio">&#10515;</a>
+    <button id="npx" class="x" type="button" title="Close" aria-label="Close">&#10005;</button>
+  </div>
+</div>
 <script>
 (function () {
 'use strict';
@@ -411,7 +477,7 @@ var FAMN = {dmr:'DMR', p25:'P25', nxdn:'NXDN', tetra:'TETRA', dpmr:'dPMR', dstar
 var PAL = ['#5bc0de','#62c462','#f89406','#ee5f5b','#b38bff','#e6c229','#3fc1a5','#ff7eb6','#8fa8ff',
            '#c3e88d','#ffab70','#4dd0e1','#d4a5ff','#a3d977'];
 var S = { d: null, fam: null, net: '*', view: 'calls', sel: null, q: '', paused: false, skew: 0,
-          ncol: {}, nidx: {}, sort: {} };
+          ncol: {}, nidx: {}, sort: {}, rows: {}, hold: null, audOnly: false };
 var IX = null;
 
 function $(id) { return document.getElementById(id); }
@@ -501,9 +567,10 @@ function qm() {
   }
   return false;
 }
-function fCalls() {
-  return IX.calls.filter(function (c) {
-    return (S.net === '*' || c.net === S.net) &&
+function fCalls(list) {
+  var aud = S.audOnly && !S.file;
+  return (list || IX.calls).filter(function (c) {
+    return (S.net === '*' || c.net === S.net) && (!aud || c.audio) &&
       (!S.q || qm(c.src, c.tgt, c.alias, c.text, mhz(c.freq), IX.rById[c.src] && IX.rById[c.src].aliases));
   });
 }
@@ -595,6 +662,7 @@ function table(cont, view, cols, rows, empty, onRow, selFn, card) {
       return (x < y ? -1 : x > y ? 1 : 0) * st.dir;
     });
   }
+  S.rows[view] = rows;                                  // as listed (the audio .zip follows it)
   var head = h('tr', null, cols.map(function (c) {
     var i = c.i, arrow = st && st.i === i ? (st.dir > 0 ? ' ▲' : ' ▼') : '';
     return h('th', { class: (/\bnum\b/.test(c.cls || '') ? 'num' : '') + (c.k ? ' sortable' : ''),
@@ -660,48 +728,384 @@ function typeBadges(c) {
     c.streams > 1 ? h('span', { class: 'badge b-group', title: rx, 'data-tip': rx }, c.streams + ' RX') : null]);
 }
 // ---------- call audio ----------
-var PLAYER = { a: null, name: null };
+var PLAYER = { a: null, name: null, call: null };
 function mmss(ms) { var s = Math.round(ms / 1000); return Math.floor(s / 60) + ':' + p2(s % 60); }
+// A call's identity across polls (its id can change as imports come and go).
+function callKey(c) { return c.start + '|' + c.session + '|' + c.slot + '|' + c.src + '|' + c.tgt; }
+function audioUrl(c) { return '/net/audio/' + encodeURIComponent(c.audio); }
+function stamp(ms) { return dt(ms).replace(/[-:]/g, '').replace(' ', 'T'); }
+function safeName(s) { return String(s).replace(/[^A-Za-z0-9.-]+/g, '_'); }
+// A descriptive name for a call's audio file: when, where, to and from whom.
+function callFile(c) {
+  return 'call_' + stamp(c.start) + (c.freq ? '_' + mhz(c.freq) + 'MHz' : '') + (c.slot ? '_s' + c.slot : '') +
+         '_' + (c.priv ? 'to_' : 'TG') + safeName(c.tgt || 'x') + '_from_' + safeName(c.src || 'x') + '.wav';
+}
+function netLabel(k) { return k ? (IX && IX.netByKey[k] ? IX.netByKey[k].label : k) : ''; }
 function syncPlay() {
   document.querySelectorAll('.play[data-audio]').forEach(function (b) {
     var on = b.getAttribute('data-audio') === PLAYER.name;
     b.classList.toggle('on', on);
-    b.firstChild.textContent = on ? '\u25A0' : '\u25B6';
+    b.firstChild.textContent = on ? '■' : '▶';
   });
+  var np = $('npplay');
+  np.classList.toggle('on', !!PLAYER.name);
+  np.firstChild.textContent = PLAYER.name ? '■' : '▶';
 }
-function playAudio(name) {
+function playAudio(c) {
   if (!PLAYER.a) {
     PLAYER.a = new Audio();
-    PLAYER.a.addEventListener('ended', function () { PLAYER.name = null; syncPlay(); });
+    PLAYER.a.addEventListener('ended', function () { PLAYER.name = null; syncPlay(); npProgress(); });
     PLAYER.a.addEventListener('error', function () { if (PLAYER.name) toast('This call\'s audio is no longer available.'); PLAYER.name = null; syncPlay(); });
+    PLAYER.a.addEventListener('timeupdate', npProgress);
   }
-  if (PLAYER.name === name) { PLAYER.a.pause(); PLAYER.name = null; syncPlay(); return; }
-  PLAYER.name = name;
-  PLAYER.a.src = '/net/audio/' + encodeURIComponent(name);
+  if (PLAYER.name === c.audio) { PLAYER.a.pause(); PLAYER.name = null; syncPlay(); return; }
+  PLAYER.name = c.audio;
+  PLAYER.call = c;
+  PLAYER.a.src = audioUrl(c);
   var p = PLAYER.a.play();
   if (p && p.catch) p.catch(function () {});
   syncPlay();
+  showNp();
+  if (ASR.on) transcribe(c);
 }
 function playBtn(c) {
   if (!c.audio || S.file) return null;
   return h('button', { class: 'play' + (PLAYER.name === c.audio ? ' on' : ''), type: 'button', 'data-audio': c.audio,
-                       title: 'Play this call\'s audio' + (c.audio_ms ? ' (' + mmss(c.audio_ms) + ')' : ''),
-                       onclick: function (e) { e.stopPropagation(); playAudio(c.audio); } },
-           [h('span', { text: PLAYER.name === c.audio ? '\u25A0' : '\u25B6' }), c.audio_ms ? mmss(c.audio_ms) : '']);
+                       title: 'Play this call\'s audio' + (c.audio_ms ? ' (' + mmss(c.audio_ms) + ')' : '') +
+                              (ASR.on ? ' and transcribe it' : ''),
+                       onclick: function (e) { e.stopPropagation(); playAudio(c); } },
+           [h('span', { text: PLAYER.name === c.audio ? '■' : '▶' }), c.audio_ms ? mmss(c.audio_ms) : '']);
 }
+function dlLink(c) {
+  return h('a', { class: 'dl', href: audioUrl(c), download: callFile(c), title: 'Download this call\'s audio (.wav)',
+                  onclick: function (e) { e.stopPropagation(); } }, '⤓');
+}
+function audioCell(c) { var p = playBtn(c); return p ? h('span', { class: 'nowrap' }, [p, dlLink(c)]) : ''; }
+function sttSpan(c, cls) {
+  var r = c.audio && ASR.tx[c.audio];
+  return r && r.t ? h(cls === 'tx' ? 'div' : 'span', { class: 'stt' + (cls ? ' ' + cls : ''), text: r.t,
+                       title: 'Speech-to-text (' + r.m.replace(/^.*\//, '') + '); may be wrong' }) : null;
+}
+
+// ---------- now playing ----------
+function showNp() {
+  var c = PLAYER.call;
+  if (!c) return;
+  $('np').hidden = false;
+  document.body.classList.add('np-on');
+  var m = $('npmeta');
+  m.textContent = '';
+  m.appendChild(h('b', { class: 'mono', text: hms(c.start) + 'Z' }));
+  if (c.freq) m.appendChild(h('span', { class: 'mono', text: mhz(c.freq) + ' MHz' }));
+  if (c.slot) m.appendChild(h('span', { text: 'slot ' + c.slot }));
+  m.appendChild(h('span', null, [c.src ? rlink(c.src, c.alias || null) : '?', ' → ', toCell(c)]));
+  if (c.net) m.appendChild(netc(c.net));
+  m.appendChild(h('span', { id: 'nptime', class: 'mono' }));
+  $('npdl').href = audioUrl(c);
+  $('npdl').setAttribute('download', callFile(c));
+  npProgress();
+  npText();
+}
+function npProgress() {
+  var a = PLAYER.a, c = PLAYER.call;
+  if (!a || !c || $('np').hidden) return;
+  var d = isFinite(a.duration) && a.duration > 0 ? a.duration : (c.audio_ms || 0) / 1000, t = a.currentTime || 0;
+  if (!PLAYER.name && a.ended) t = d;
+  $('npprog').style.width = d ? Math.min(100, 100 * t / d) + '%' : '0';
+  var el = $('nptime');
+  if (el) el.textContent = mmss(t * 1000) + ' / ' + mmss(d * 1000);
+}
+function closeNp() {
+  if (PLAYER.a && PLAYER.name) PLAYER.a.pause();
+  PLAYER.name = null; PLAYER.call = null;
+  $('np').hidden = true;
+  document.body.classList.remove('np-on');
+  syncPlay();
+}
+// The transcript line: the text, or what speech-to-text is doing for this call.
+function npText() {
+  var c = PLAYER.call, el = $('nptx');
+  if (!c || $('np').hidden) return;
+  el.textContent = '';
+  el.className = 'tx st';
+  var r = ASR.tx[c.audio], j = ASR.job && ASR.job.name === c.audio ? ASR.job : ASR.next && ASR.next.name === c.audio ? ASR.next : null;
+  if (r && !j) {
+    el.className = 'tx' + (r.t ? '' : ' st');
+    el.appendChild(document.createTextNode(r.t || '(no speech recognized)'));
+    el.appendChild(h('span', { class: 'alias', text: '  · ' + r.m.replace(/^.*\//, '') + (r.ms ? ' · ' + (r.ms / 1000).toFixed(1) + ' s' : '') +
+                                                  (r.p ? ' · partial (call still in progress)' : '') }));
+    return;
+  }
+  if (!ASR.on) { el.textContent = 'Transcribe on play is off (Calls toolbar).'; return; }
+  if (ASR.state === 'nosrc') {
+    el.appendChild(document.createTextNode('Speech-to-text needs its files on the server (tools/get_asr_assets.sh) — or '));
+    el.appendChild(h('a', { href: '#', onclick: function (e) {
+      e.preventDefault(); ASR.net = true; store('asr.net', '1'); ASR.state = 'off'; asrPump(); npText();
+    } }, 'load them from the internet'));
+    el.appendChild(document.createTextNode(' (jsDelivr and Hugging Face, ~100 MB, then cached).'));
+    return;
+  }
+  if (ASR.state === 'error') { el.textContent = 'Speech-to-text failed: ' + ASR.err; return; }
+  if (ASR.lastErr && ASR.lastErr.name === c.audio && !j) { el.textContent = 'Could not transcribe this call: ' + ASR.lastErr.err; return; }
+  if (!j) { el.textContent = ''; return; }
+  if (ASR.state === 'loading')
+    el.textContent = 'Loading the speech model' + (ASR.loaded ? ' — ' + mb(ASR.loaded) : '') + ' (once per visit)…';
+  else el.textContent = j === ASR.job && j.phase === 'run' ? 'Transcribing…' : 'Waiting to transcribe…';
+}
+
+// ---------- speech-to-text ----------
+// Whisper runs in this browser (a worker: /net/asr_worker.js), on demand --
+// a call is transcribed when it is played. The library and model come from
+// the server (/net/asr/, filled by tools/get_asr_assets.sh) or, only if the
+// user says so, from the internet. Transcripts are kept in this browser.
+var LANGS = [['english', 'English'], ['auto', 'Detect language'], ['spanish', 'Spanish'], ['french', 'French'],
+             ['german', 'German'], ['italian', 'Italian'], ['portuguese', 'Portuguese'], ['dutch', 'Dutch'],
+             ['polish', 'Polish'], ['russian', 'Russian'], ['ukrainian', 'Ukrainian'], ['arabic', 'Arabic'],
+             ['chinese', 'Chinese'], ['japanese', 'Japanese'], ['korean', 'Korean'], ['vietnamese', 'Vietnamese'],
+             ['turkish', 'Turkish'], ['hindi', 'Hindi']];
+var CDN_LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.0/dist/transformers.min.js';
+var ASR = { cfg: null, cfgP: null, on: load('asr') !== '0', lang: load('asr.lang'), model: load('asr.model'),
+            net: load('asr.net') === '1', w: null, wModel: null, state: 'off', loaded: 0, total: 0, err: '',
+            job: null, next: null, seq: 0, lastErr: null, tx: {} };
+try { ASR.tx = JSON.parse(load('asr.tx') || '{}') || {}; } catch (e) { ASR.tx = {}; }
+function txSave() {
+  var k = Object.keys(ASR.tx);
+  if (k.length > 1000) k.slice(0, k.length - 800).forEach(function (x) { delete ASR.tx[x]; });
+  var keep = {};
+  Object.keys(ASR.tx).forEach(function (x) { if (!ASR.tx[x].p) keep[x] = ASR.tx[x]; });
+  store('asr.tx', JSON.stringify(keep));
+}
+// Whisper's stock inventions on silence and noise, and its loops.
+var JUNK = /^(you|thank you|thanks for watching|thank you for watching|thank you so much for watching|please subscribe|subtitles by .*|.*amara\.org.*)$/i;
+function cleanTx(t) {
+  t = String(t || '').replace(/\[[^\]]*\]|\([^)]*\)|\*[^*]*\*|♪/g, ' ').replace(/\s+/g, ' ').trim();
+  t = t.replace(/(^|\s)(\S+(?:\s+\S+){0,2}?)(?:[\s,.!?]+\2(?=[\s,.!?]|$)){2,}/gi, '$1$2 …');
+  if (!/[0-9A-Za-zÀ-￿]/.test(t)) return '';
+  return JUNK.test(t.replace(/[\s.!?,…]+$/, '')) ? '' : t;
+}
+function asrCfg() {
+  if (!ASR.cfgP)
+    ASR.cfgP = fetch('/net/asr/config.json', { cache: 'no-store' }).then(function (r) { return r.json(); })
+      .then(function (c) { ASR.cfg = c; asrControls(); return c; }, function (e) { ASR.cfgP = null; throw e; });
+  return ASR.cfgP;
+}
+function asrModel() {
+  var c = ASR.cfg;
+  return ASR.model && (!c.local || c.models.indexOf(ASR.model) >= 0) ? ASR.model : c.model;
+}
+function asrLang() { return ASR.lang || (ASR.cfg && ASR.cfg.language) || 'english'; }
+function asrSource() {
+  if (ASR.cfg.local) return { lib: '/net/asr/transformers.min.js', wasm: '/net/asr/ort/', local: '/net/asr/models/' };
+  if (ASR.net) return { lib: CDN_LIB, wasm: null, local: null };
+  return null;
+}
+function asrControls() {
+  var c = ASR.cfg, ls = $('asrlang'), ms = $('asrmodel'), model = asrModel();
+  if (!ls.options.length)
+    LANGS.forEach(function (l) { ls.appendChild(h('option', { value: l[0] }, l[1])); });
+  ls.value = asrLang();
+  ls.hidden = /\.en$/.test(model);
+  ms.textContent = '';
+  var list = c.local ? c.models : [c.model];
+  list.forEach(function (m) { ms.appendChild(h('option', { value: m }, m.replace(/^.*\//, ''))); });
+  ms.value = model;
+  ms.hidden = list.length < 2;
+}
+function asrFail(msg) {
+  ASR.state = 'error'; ASR.err = msg;
+  if (ASR.w) ASR.w.terminate();
+  ASR.w = null; ASR.wModel = null; ASR.job = null; ASR.next = null;
+  npText();
+}
+function asrWorker(model) {
+  if (ASR.w) ASR.w.terminate();
+  var src = asrSource();
+  ASR.w = new Worker('/net/asr_worker.js', { type: 'module' });
+  ASR.wModel = model; ASR.state = 'loading'; ASR.loaded = 0; ASR.total = 0; ASR.err = '';
+  ASR.w.onmessage = asrMsg;
+  ASR.w.onerror = function (e) { asrFail('the speech-to-text worker stopped' + (e && e.message ? ' (' + e.message + ')' : '')); };
+  ASR.w.postMessage({ cmd: 'load', lib: new URL(src.lib, location.href).href,
+                      wasm: src.wasm ? new URL(src.wasm, location.href).href : null, local: src.local, model: model });
+}
+function asrMsg(e) {
+  var m = e.data, j = ASR.job;
+  if (m.type === 'progress') { ASR.loaded = m.loaded; ASR.total = m.total; npText(); return; }
+  if (m.type === 'ready') { ASR.state = 'ready'; ASR.threads = m.threads; asrPump(); return; }
+  if (m.type === 'error' && m.cmd === 'load') { asrFail(m.msg); return; }
+  if (!j || j.id !== m.id) return;
+  ASR.job = null;
+  if (m.type === 'result') {
+    ASR.tx[j.name] = { t: cleanTx(m.text), m: j.model, l: j.lang, ms: m.ms, p: j.live || undefined };
+    txSave();
+    if (S.view === 'calls' && IX) renderView();
+  } else if (m.type === 'error') {
+    j.err = m.msg; ASR.lastErr = j;
+  }
+  npText();
+  asrPump();
+}
+// Transcribe call `c` (the newest request wins; one runs at a time).
+function transcribe(c) {
+  if (!c.audio || S.file) return;
+  ASR.next = { id: ++ASR.seq, c: c, name: c.audio, live: live(c) };
+  asrCfg().then(function () {
+    var r = ASR.tx[c.audio], n = ASR.next;
+    if (n && n.name === c.audio && r && !r.p && r.m === asrModel() && r.l === asrLang()) ASR.next = null;   // already done
+    asrPump();
+    npText();
+  }, function () { ASR.next = null; ASR.state = 'error'; ASR.err = 'the server did not answer'; npText(); });
+  npText();
+}
+function asrPump() {
+  if (ASR.job || !ASR.next || !ASR.cfg) return;
+  if (!asrSource()) { ASR.state = 'nosrc'; npText(); return; }
+  var model = asrModel();
+  if (!ASR.w || ASR.wModel !== model) asrWorker(model);
+  if (ASR.state !== 'ready') { npText(); return; }
+  var j = ASR.job = ASR.next;
+  ASR.next = null;
+  j.model = model; j.lang = asrLang(); j.phase = 'decode';
+  npText();
+  fetch(audioUrl(j.c), { cache: 'no-store' }).then(function (r) {
+    if (!r.ok) throw new Error('its audio is no longer on the server');
+    return r.arrayBuffer();
+  }).then(function (buf) {
+    // Decoding into a 16 kHz context also resamples (Whisper's rate).
+    return new OfflineAudioContext(1, 16000, 16000).decodeAudioData(buf);
+  }).then(function (ab) {
+    if (ASR.job !== j || !ASR.w) return;
+    j.phase = 'run';
+    npText();
+    var pcm = ab.getChannelData(0).slice();
+    ASR.w.postMessage({ cmd: 'run', id: j.id, pcm: pcm,
+                        language: /\.en$/.test(j.model) || j.lang === 'auto' ? null : j.lang }, [pcm.buffer]);
+  }).catch(function (e) {
+    if (ASR.job !== j) return;
+    ASR.job = null; j.err = String((e && e.message) || e); ASR.lastErr = j;
+    npText();
+    asrPump();
+  });
+}
+
+// ---------- audio download (.zip of the listed calls) ----------
+var CRCT = null;
+function crc32(u8) {
+  if (!CRCT) {
+    CRCT = new Uint32Array(256);
+    for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; CRCT[n] = c >>> 0; }
+  }
+  var x = 0xFFFFFFFF;
+  for (var i = 0; i < u8.length; i++) x = CRCT[(x ^ u8[i]) & 255] ^ (x >>> 8);
+  return (x ^ 0xFFFFFFFF) >>> 0;
+}
+// A zip (stored, not compressed: WAV barely compresses) of [{name, data}].
+function zipBlob(files) {
+  var parts = [], cdir = [], off = 0, cdLen = 0, enc = new TextEncoder(), d = new Date();
+  var dtime = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+  var ddate = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+  files.forEach(function (f) {
+    var nm = enc.encode(f.name), crc = crc32(f.data), n = f.data.length;
+    var lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true);
+    lh.setUint16(10, dtime, true); lh.setUint16(12, ddate, true); lh.setUint32(14, crc, true);
+    lh.setUint32(18, n, true); lh.setUint32(22, n, true); lh.setUint16(26, nm.length, true);
+    parts.push(lh.buffer, nm, f.data);
+    var ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true);
+    ch.setUint16(12, dtime, true); ch.setUint16(14, ddate, true); ch.setUint32(16, crc, true);
+    ch.setUint32(20, n, true); ch.setUint32(24, n, true); ch.setUint16(28, nm.length, true); ch.setUint32(42, off, true);
+    cdir.push(ch.buffer, nm);
+    off += 30 + nm.length + n;
+    cdLen += 46 + nm.length;
+  });
+  var e = new DataView(new ArrayBuffer(22));
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true);
+  e.setUint32(12, cdLen, true); e.setUint32(16, off, true);
+  return new Blob(parts.concat(cdir, [e.buffer]), { type: 'application/zip' });
+}
+function csvCell(v) {
+  v = v == null ? '' : String(v);
+  if (/^[=+\-@]/.test(v)) v = "'" + v;
+  return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+}
+var ZIP_MAX = 25 * 1048576;
+function zipCalls() {
+  var btn = $('zip');
+  if (btn.disabled) return;
+  var rows = (S.rows.calls || []).filter(function (c) { return c.audio && !live(c); });
+  if (!rows.length) { toast('No finished calls with audio in the list.'); return; }
+  btn.disabled = true;
+  var label = btn.textContent, files = [], names = {}, total = 0, i = 0, missing = 0, full = false;
+  var csv = [['file', 'start_utc', 'duration_s', 'audio_s', 'network', 'mhz', 'slot', 'from', 'alias', 'to', 'private',
+              'emergency', 'encrypted', 'transcript', 'transcript_model']];
+  function next() {
+    if (i >= rows.length || full) return Promise.resolve();
+    var c = rows[i++];
+    btn.textContent = 'Zipping ' + i + ' / ' + rows.length + '…';
+    return fetch(audioUrl(c)).then(function (r) { if (!r.ok) throw new Error(); return r.arrayBuffer(); }).then(function (b) {
+      if (total + b.byteLength > ZIP_MAX) { full = true; return; }
+      var name = callFile(c), t = ASR.tx[c.audio], k = 1;
+      while (names[name]) name = callFile(c).replace(/\.wav$/, '_' + (++k) + '.wav');
+      names[name] = 1;
+      total += b.byteLength;
+      files.push({ name: name, data: new Uint8Array(b) });
+      csv.push([name, dt(c.start), ((c.last - c.start) / 1000).toFixed(1), ((c.audio_ms || 0) / 1000).toFixed(1), netLabel(c.net),
+                c.freq ? mhz(c.freq) : '', c.slot || '', c.src || '', c.alias || '', c.tgt || '', c.priv ? 'yes' : '',
+                c.emerg ? 'yes' : '', c.enc ? 'yes' : '', t ? t.t : '', t ? t.m : '']);
+    }, function () { ++missing; }).then(next);
+  }
+  next().then(function () {
+    if (!files.length) { toast('None of the listed calls’ audio is still on the server.'); return; }
+    var n = files.length;
+    files.push({ name: 'calls.csv', data: new TextEncoder().encode('﻿' + csv.map(function (r) { return r.map(csvCell).join(','); }).join('\r\n') + '\r\n') });
+    var a = h('a', { href: URL.createObjectURL(zipBlob(files)), download: 'dsd_calls_' + stamp(now()) + '.zip' });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 60000);
+    toast('Saved ' + n + ' call' + (n > 1 ? 's' : '') + ' (' + mb(total) + ')' +
+          (full ? ' — the first ' + n + ' of ' + rows.length + ' listed; the zip stops at ' + mb(ZIP_MAX) : '') +
+          (missing ? '; ' + missing + ' no longer on the server' : '') + '.');
+  }, function (e) { toast('Could not make the zip (' + e + ').'); }).then(function () { btn.disabled = false; btn.textContent = label; });
+}
+
+// ---------- calls list ----------
 // A call as a card (phones).
 function callCard(c) {
+  var pb = playBtn(c);
   return h('div', { class: 'ccard' }, [
-    h('div', { class: 'r1' }, [h('span', { class: 't mono', text: hms(c.start) }), durCell(c), typeBadges(c), playBtn(c)]),
-    h('div', { class: 'r2' }, [c.src ? rlink(c.src, c.alias || null) : '—', ' \u2192 ', toCell(c)]),
+    h('div', { class: 'r1' }, [h('span', { class: 't mono', text: hms(c.start) }), durCell(c), typeBadges(c), pb, pb ? dlLink(c) : null]),
+    h('div', { class: 'r2' }, [c.src ? rlink(c.src, c.alias || null) : '—', ' → ', toCell(c)]),
     h('div', { class: 'r3' }, [c.net ? netc(c.net) : null,
                                c.freq && !(IX.netByKey[c.net] && IX.netByKey[c.net].label.indexOf(mhz(c.freq)) >= 0)
                                  ? h('span', { class: 'mono', text: mhz(c.freq) + ' MHz' }) : null,
                                c.slot ? h('span', { text: 'slot ' + c.slot }) : null]),
-    c.text ? h('div', { class: 'tx', text: c.text }) : null]);
+    c.text ? h('div', { class: 'tx', text: c.text }) : null,
+    sttSpan(c, 'tx')]);
+}
+// Pause list: the calls listed when it was pressed stay put (still updated);
+// new ones are only counted until it is released.
+function setHold(on) {
+  S.hold = on && IX ? { fam: S.fam, list: IX.calls.slice(), set: {} } : null;
+  if (S.hold) S.hold.list.forEach(function (c) { S.hold.set[callKey(c)] = 1; });
+  $('hold').textContent = S.hold ? '▶ Resume list' : '❚❚ Pause list';
+  $('hold').classList.toggle('on', !!S.hold);
+  $('holdst').hidden = !S.hold;
+  $('holdst').textContent = 'Paused';
+  if (IX && S.view === 'calls') viewCalls();
 }
 function viewCalls() {
-  var rows = fCalls();
+  var rows = fCalls(), held = S.hold;
+  if (held && (held.fam !== S.fam || S.file)) { setHold(false); return; }
+  if (held) {
+    var cur = {};
+    IX.calls.forEach(function (c) { cur[callKey(c)] = c; });
+    var fresh = rows.filter(function (c) { return !held.set[callKey(c)]; }).length;
+    rows = fCalls(held.list.map(function (c) { return cur[callKey(c)] || c; }));
+    $('holdst').textContent = 'Paused · ' + fresh + ' new call' + (fresh === 1 ? '' : 's') + ' since';
+  }
+  var hasAudio = (S.audio && S.audio.on) || S.audOnly || IX.calls.some(function (c) { return !!c.audio; });
+  document.querySelectorAll('.callbar .audctl').forEach(function (e) { e.classList.toggle('off', !hasAudio); });
   table($('t-calls'), 'calls', [
     { label: 'Start (UTC)', cls: 'mono nowrap', k: function (c) { return c.start; }, cell: function (c) { return hms(c.start); } },
     { label: 'Duration', cls: 'nowrap', k: function (c) { return c.last - c.start; }, cell: durCell },
@@ -713,10 +1117,11 @@ function viewCalls() {
     { label: 'From', k: function (c) { return c.src; }, cell: function (c) { return c.src ? rlink(c.src, c.alias || null) : '—'; } },
     { label: 'To', cls: 'tgcell', k: function (c) { return c.tgt; }, cell: toCell },
     { label: 'Type', cls: 'nowrap ctype', cell: typeBadges },
-    { label: 'Audio', cls: 'nowrap', cell: function (c) { return playBtn(c) || ''; },
+    { label: 'Audio', cls: 'nowrap', k: function (c) { return c.audio && !S.file ? 1 : 0; }, cell: audioCell,
       hideEmpty: function (c) { return !!c.audio && !S.file; } },
-    { label: 'Text', cls: 'wrap', cell: function (c) { return c.text || ''; } }
-  ], rows, 'No calls heard yet' + (S.net !== '*' || S.q ? ' for this filter.' : '.'), null, null, callCard);
+    { label: 'Text', cls: 'wrap', cell: function (c) { return [c.text || null, c.text && sttSpan(c) ? ' ' : null, sttSpan(c)]; } }
+  ], rows, (S.audOnly ? 'No calls with audio' : 'No calls heard yet') + (S.net !== '*' || S.q ? ' for this filter.' : '.') +
+           (held ? ' (The list is paused.)' : ''), null, null, callCard);
 }
 function viewTgs() {
   var rows = fTgs().slice().sort(function (a, b) { return b.last - a.last; });
@@ -864,7 +1269,7 @@ function recent(filter) {
     ul.appendChild(h('li', null, [
       h('div', null, [c.src ? rlink(c.src, c.alias || null) : '?', ' → ', c.tgt ? (c.priv ? rlink(c.tgt) : tlink(c.tgt)) : '?',
                       c.emerg ? h('span', null, [' ', badge('b-emerg', 'EMERG')]) : null,
-                      c.text ? h('div', { class: 'alias', text: '“' + c.text + '”' }) : null]),
+                      c.text ? h('div', { class: 'alias', text: '“' + c.text + '”' }) : null, sttSpan(c, 'tx')]),
       h('span', { class: 'c' }, [pb, pb ? ' ' : '', live(c) ? 'live' : hms(c.start)])]));
   });
   return ul;
@@ -1579,6 +1984,29 @@ $('clear').addEventListener('click', function () {
   };
   if (m.addEventListener) m.addEventListener('change', f); else if (m.addListener) m.addListener(f);
 });
+// Calls toolbar and the now-playing bar.
+$('hold').addEventListener('click', function () { setHold(!S.hold); });
+S.audOnly = load('audonly') === '1';
+$('audonly').checked = S.audOnly;
+$('audonly').addEventListener('change', function () { S.audOnly = this.checked; store('audonly', S.audOnly ? '1' : '0'); if (S.d) render(); });
+$('asron').checked = ASR.on;
+$('asron').addEventListener('change', function () {
+  ASR.on = this.checked; store('asr', ASR.on ? '1' : '0');
+  if (ASR.on && PLAYER.call) transcribe(PLAYER.call); else npText();
+});
+$('asrlang').addEventListener('change', function () {
+  ASR.lang = this.value; store('asr.lang', ASR.lang);
+  if (ASR.on && PLAYER.call) transcribe(PLAYER.call);
+});
+$('asrmodel').addEventListener('change', function () {
+  ASR.model = this.value; store('asr.model', ASR.model);
+  $('asrlang').hidden = /\.en$/.test(ASR.model);
+  if (ASR.on && PLAYER.call) transcribe(PLAYER.call);
+});
+$('zip').addEventListener('click', zipCalls);
+$('npplay').addEventListener('click', function () { if (PLAYER.call) playAudio(PLAYER.call); });
+$('npx').addEventListener('click', closeNp);
+asrCfg().catch(function () {});
 S.fam = load('fam');
 setView(load('view') || 'calls');
 poll();
@@ -1587,6 +2015,54 @@ poll();
 </body>
 </html>
 )NETPAGE";
+}
+
+// The explorer's speech-to-text worker (GET /net/asr_worker.js): runs Whisper
+// (Transformers.js, ONNX Runtime WebAssembly) off the page's main thread.
+// Messages in: {cmd:'load', lib, wasm, local, model} then {cmd:'run', id,
+// pcm (16 kHz mono Float32Array), language}. Out: progress / ready / result /
+// error. The library and model come from the server's /net/asr/ folder, or
+// -- only if the user chose to -- from the internet (jsDelivr, Hugging Face).
+inline std::string render_asr_worker_js() {
+    return R"ASRW('use strict';
+let T = null, asr = null;
+self.onmessage = async (e) => {
+  const m = e.data;
+  try {
+    if (m.cmd === 'load') {
+      T = await import(m.lib);
+      const env = T.env;
+      env.allowLocalModels = !!m.local;
+      env.allowRemoteModels = !m.local;
+      if (m.local) env.localModelPath = m.local;
+      env.useBrowserCache = typeof caches !== 'undefined';
+      if (m.wasm) env.backends.onnx.wasm.wasmPaths = m.wasm;
+      const threads = self.crossOriginIsolated ? Math.max(1, Math.min(8, navigator.hardwareConcurrency || 4)) : 1;
+      env.backends.onnx.wasm.numThreads = threads;
+      const files = {};
+      const t0 = performance.now();
+      asr = await T.pipeline('automatic-speech-recognition', m.model, {
+        dtype: 'q8', device: 'wasm',
+        progress_callback: (p) => {
+          if (p.status !== 'progress' || !p.total) return;
+          files[p.file] = [p.loaded, p.total];
+          let a = 0, b = 0;
+          for (const k in files) { a += files[k][0]; b += files[k][1]; }
+          postMessage({ type: 'progress', loaded: a, total: b });
+        } });
+      postMessage({ type: 'ready', model: m.model, threads: threads, ms: Math.round(performance.now() - t0) });
+    } else if (m.cmd === 'run') {
+      const t0 = performance.now();
+      const opts = { chunk_length_s: 30, stride_length_s: 5, return_timestamps: false };
+      if (m.language) { opts.language = m.language; opts.task = 'transcribe'; }
+      const r = await asr(m.pcm, opts);
+      postMessage({ type: 'result', id: m.id, text: String((r && r.text) || '').trim(), ms: Math.round(performance.now() - t0) });
+    }
+  } catch (err) {
+    postMessage({ type: 'error', id: m.id, cmd: m.cmd, msg: String((err && err.message) || err) });
+  }
+};
+)ASRW";
 }
 
 } // namespace dsdsrv

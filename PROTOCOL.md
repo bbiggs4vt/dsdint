@@ -1093,7 +1093,7 @@ over HTTP and the connection closed:
 | `GET /log/clear` | empties the log ring buffer (the page's Clear button); returns `{"log":[]}` |
 | `GET /iq_log/on` | turns the global IQ-capture switch on (every active/new session captures); returns `{"iq_log_enabled":true}` |
 | `GET /iq_log/off` | turns it off (finalizes every session's capture); returns `{"iq_log_enabled":false}` |
-| `GET /net` | `text/html` network explorer (calls / talkgroups / radios / networks and their associations; polls `/net.json`) |
+| `GET /net` | `text/html` network explorer (calls / talkgroups / radios / networks and their associations; polls `/net.json`); sent with `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: credentialless` so it can be cross-origin isolated (multi-threaded speech-to-text) |
 | `GET /net.json` | `application/json` association model (see below) |
 | `GET /net/clear` | forgets everything the explorer learned, and its imports; returns `{"ok":true}` |
 | `GET /net/export.json` | `application/json` attachment `net_export_<UTC>.json` — the explorer export (below) |
@@ -1104,6 +1104,9 @@ over HTTP and the connection closed:
 | `GET /net/audio/on` | starts recording each call's decoded voice (off by default; see `/net.json` `audio`); returns the audio status |
 | `GET /net/audio/off` | stops recording call audio (finished files stay playable); returns the audio status |
 | `GET /net/audio/<file>.wav` | `audio/wav` — a call's audio (the `audio` file a call lists); supports `Range` (`206`); `404` for any name the server didn't create |
+| `GET /net/asr/config.json` | `application/json` — the explorer's speech-to-text assets (`DSD_NET_ASR_DIR`): `{"local","lib","models":[…],"model","language","dir"}` — `local` when the library and at least one model are present |
+| `GET /net/asr/<path>` | a file of that folder (`transformers.min.js`, `ort/…`, `models/<org>/<name>/…`), streamed; `ETag` / `If-None-Match` (`304`); `404` for anything else (no `..` or hidden names) |
+| `GET /net/asr_worker.js` | `text/javascript` — the explorer's speech-to-text Web Worker |
 | `POST /net/import?name=<label>` | body: an explorer export (JSON, or gzip) — added to the live view as an import layer; returns `{"name","status","message","id"}` (below); `400` if it isn't an export |
 | `GET /net/imports/remove?id=N` | removes one import (`404` if no such id); `GET /net/imports/clear` removes all; return `{"ok":…}` |
 | `POST /net/merge` | body `{"files":[{"name":…,"text":…}]}` (each export's text verbatim) — merges them without touching the live data; returns `{"report":[{"name","status","message"}],"export":{…merged export…}}` |

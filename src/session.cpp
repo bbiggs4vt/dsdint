@@ -5,6 +5,7 @@
 #include "net_page.hpp"
 #include "pager_events.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <zlib.h>
@@ -17,6 +18,7 @@
 #include <functional>
 #include <random>
 #include <set>
+#include <vector>
 #include <filesystem>
 
 namespace dsdsrv {
@@ -78,6 +80,77 @@ std::string net_audio_json(const CallAudioStore::Status& a) {
         .field("cap_bytes", static_cast<double>(a.cap_bytes)).field("files", static_cast<double>(a.files))
         .field("recording", static_cast<double>(a.open)).str();
 }
+// Network-explorer speech-to-text (the explorer's "Transcribe on play"): the
+// browser runs Whisper itself (Transformers.js); the server only serves the
+// library and model files, from DSD_NET_ASR_DIR, else <net log dir>/net_asr
+// (tools/get_asr_assets.sh fills it). DSD_NET_ASR_MODEL picks the default
+// model (else Xenova/whisper-base when present), DSD_NET_ASR_LANG the default
+// language (else english; "auto" detects it).
+std::string net_asr_dir() {
+    const char* d = std::getenv("DSD_NET_ASR_DIR");
+    return (d && d[0]) ? std::string(d) : (std::filesystem::path(net_log_dir()) / "net_asr").string();
+}
+// A path under the asset folder that may be served: plain names only (no
+// "..", no hidden files, no absolute paths).
+bool asr_rel_ok(const std::string& rel) {
+    if (rel.empty() || rel.size() > 200) return false;
+    std::size_t p = 0;
+    while (p <= rel.size()) {
+        std::size_t e = rel.find('/', p);
+        if (e == std::string::npos) e = rel.size();
+        const std::string seg = rel.substr(p, e - p);
+        if (seg.empty() || seg[0] == '.') return false;
+        for (char c : seg)
+            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '_' && c != '-') return false;
+        p = e + 1;
+    }
+    return true;
+}
+// What the asset folder holds, for the page: whether the library is there,
+// which models (org/name with the quantized ONNX files), and the defaults.
+std::string net_asr_config_json() {
+    namespace fs = std::filesystem;
+    const fs::path dir = net_asr_dir();
+    std::error_code ec;
+    const bool lib = fs::is_regular_file(dir / "transformers.min.js", ec) &&
+                     fs::is_regular_file(dir / "ort" / "ort-wasm-simd-threaded.asyncify.wasm", ec);
+    std::vector<std::string> models;
+    auto subdirs = [](const fs::path& p) {
+        std::vector<fs::path> out;
+        std::error_code e;
+        for (fs::directory_iterator it(p, e), end; !e && it != end; it.increment(e))
+            if (it->is_directory(e) && asr_rel_ok(it->path().filename().string())) out.push_back(it->path());
+        return out;
+    };
+    for (const fs::path& org : subdirs(dir / "models"))
+        for (const fs::path& m : subdirs(org))
+            if (fs::is_regular_file(m / "config.json", ec) && fs::is_regular_file(m / "onnx" / "encoder_model_quantized.onnx", ec) &&
+                fs::is_regular_file(m / "onnx" / "decoder_model_merged_quantized.onnx", ec))
+                models.push_back(org.filename().string() + "/" + m.filename().string());
+    std::sort(models.begin(), models.end());
+    const char* em = std::getenv("DSD_NET_ASR_MODEL");
+    const char* el = std::getenv("DSD_NET_ASR_LANG");
+    std::string model = (em && em[0]) ? em : "";
+    if (model.empty()) {
+        model = "Xenova/whisper-base";
+        if (!models.empty() && std::find(models.begin(), models.end(), model) == models.end()) model = models.front();
+    }
+    std::string list = "[";
+    for (std::size_t i = 0; i < models.size(); ++i) list += (i ? "," : "") + assocjson::q(models[i]);
+    list += "]";
+    return std::string("{\"local\":") + (lib && !models.empty() ? "true" : "false") + ",\"lib\":" + (lib ? "true" : "false") +
+           ",\"models\":" + list + ",\"model\":" + assocjson::q(model) +
+           ",\"language\":" + assocjson::q((el && el[0]) ? el : "english") + ",\"dir\":" + assocjson::q(dir.string()) + "}";
+}
+std::string asr_content_type(const std::string& rel) {
+    auto ends = [&](const char* x) { const std::size_t n = std::strlen(x); return rel.size() >= n && rel.compare(rel.size() - n, n, x) == 0; };
+    if (ends(".js") || ends(".mjs")) return "text/javascript";
+    if (ends(".wasm")) return "application/wasm";
+    if (ends(".json")) return "application/json";
+    if (ends(".txt")) return "text/plain; charset=utf-8";
+    return "application/octet-stream";
+}
+
 bool env_on(const char* name) {
     const char* v = std::getenv(name);
     if (!v || !v[0]) return false;
@@ -325,6 +398,59 @@ void Session::serve_http() {
         return;
     }
 
+    // Speech-to-text assets (/net/asr/<path>, see net_asr_dir): the library,
+    // its WebAssembly and the model files -- tens of MB, streamed from disk.
+    // Revalidated by ETag, so a browser downloads them once. Served with the
+    // explorer's cross-origin isolation headers (multi-threaded WebAssembly).
+    if (target.rfind("/net/asr/", 0) == 0 && target != "/net/asr/config.json" && http_req_.method() == http::verb::get) {
+        namespace fs = std::filesystem;
+        const std::string rel = target.substr(9);
+        std::error_code ec;
+        const fs::path path = fs::path(net_asr_dir()) / rel;
+        const bool ok = asr_rel_ok(rel) && fs::is_regular_file(path, ec);
+        const std::uint64_t size = ok ? fs::file_size(path, ec) : 0;
+        const auto mtime = ok ? fs::last_write_time(path, ec).time_since_epoch().count() : 0;
+        char tag[64];
+        std::snprintf(tag, sizeof tag, "\"%llx-%llx\"", static_cast<unsigned long long>(size), static_cast<unsigned long long>(mtime));
+        auto finish = [this](auto r) {
+            r->set(http::field::server, "dsd-server/1.0");
+            r->set("Cross-Origin-Opener-Policy", "same-origin");
+            r->set("Cross-Origin-Embedder-Policy", "credentialless");
+            r->set("Cross-Origin-Resource-Policy", "same-origin");
+            r->keep_alive(false);
+            r->prepare_payload();
+            auto self = shared_from_this();
+            http::async_write(ws_.next_layer(), *r, [self, r](beast::error_code, std::size_t) {
+                beast::error_code ig;
+                beast::get_lowest_layer(self->ws_).socket().shutdown(tcp::socket::shutdown_send, ig);
+            });
+        };
+        if (ok && std::string(http_req_[http::field::if_none_match]) == tag) {
+            res->result(http::status::not_modified);
+            res->set(http::field::etag, tag);
+            res->set(http::field::cache_control, "no-cache");
+            finish(res);
+            return;
+        }
+        http::file_body::value_type body;
+        beast::error_code fec;
+        if (ok) body.open(path.string().c_str(), beast::file_mode::scan, fec);
+        if (!ok || fec) {
+            res->result(http::status::not_found);
+            res->set(http::field::content_type, "text/plain; charset=utf-8");
+            res->body() = "no such file -- see tools/get_asr_assets.sh\n";
+            finish(res);
+            return;
+        }
+        auto fres = std::make_shared<http::response<http::file_body>>(
+            std::piecewise_construct, std::make_tuple(std::move(body)), std::make_tuple(http::status::ok, http_req_.version()));
+        fres->set(http::field::content_type, asr_content_type(rel));
+        fres->set(http::field::etag, tag);
+        fres->set(http::field::cache_control, "no-cache");
+        finish(fres);
+        return;
+    }
+
     // A call's audio (/net/audio/<file>.wav): only files the audio store
     // made. Byte ranges are supported (Safari requires them for media, and
     // they make seeking work); a recording still in progress is served as far
@@ -433,7 +559,24 @@ void Session::serve_http() {
         // Network explorer: calls, talkgroups, radios and their associations.
         res->result(http::status::ok);
         res->set(http::field::content_type, "text/html; charset=utf-8");
+        // Cross-origin isolated (where the browser allows it: HTTPS or
+        // localhost), so speech-to-text can use several CPU threads.
+        res->set("Cross-Origin-Opener-Policy", "same-origin");
+        res->set("Cross-Origin-Embedder-Policy", "credentialless");
         res->body() = render_net_page_html();
+    } else if (target == "/net/asr_worker.js") {
+        // The explorer's speech-to-text worker (net_page.hpp).
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "text/javascript");
+        res->set(http::field::cache_control, "no-cache");
+        res->set("Cross-Origin-Embedder-Policy", "credentialless");
+        res->set("Cross-Origin-Resource-Policy", "same-origin");
+        res->body() = render_asr_worker_js();
+    } else if (target == "/net/asr/config.json") {
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "application/json");
+        res->set(http::field::cache_control, "no-store");
+        res->body() = net_asr_config_json();
     } else if (target == "/net.json") {
         res->result(http::status::ok);
         res->set(http::field::content_type, "application/json");

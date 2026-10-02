@@ -508,6 +508,7 @@ session exactly as before; anything else is answered over HTTP:
 | `POST /net/import`, `/net/imports/remove`, `/net/imports/clear`, `POST /net/merge` | add exports to the live view, remove them; merge exports without the live data |
 | `/net/log/on`, `/net/log/off`, `/net/log/download` | record the explorer's inputs (`?clear=1` clears first); stop; download the current / last recording |
 | `/net/audio/on`, `/net/audio/off`, `/net/audio/<file>.wav` | record each call's decoded voice; stop; play a call's audio |
+| `/net/asr/config.json`, `/net/asr/<file>`, `/net/asr_worker.js` | speech-to-text: what the asset folder holds; its files (library, model); the browser worker |
 
 The live update is a tiny `/status.json` poll that patches the page in
 place — cheap on the server (no decode work, just a mutex-guarded snapshot
@@ -744,6 +745,60 @@ or talkgroup's recent calls.
 
 Rules on keeping intercepted communications differ from place to place;
 check what applies to you before switching it on.
+
+In the **Calls** view:
+
+- **⤓** next to a call's ▶ downloads its WAV, named after the call
+  (`call_<UTC>_<MHz>MHz_s<slot>_TG<to>_from_<from>.wav`). **⤓ Audio (.zip)**
+  downloads the audio of the calls listed (in the order shown -- filter,
+  search or sort first) up to 25 MB, with a `calls.csv` of when, where, who
+  and any transcript.
+- **Pause list** holds the list still while you read or play calls; it keeps
+  updating the calls shown and counts the new ones until you press
+  **Resume list**. (The header's **Pause** freezes the whole page.)
+- Click the **Audio** column header to put calls with audio first, or tick
+  **With audio only**.
+- The call playing stays in a bar at the bottom of the window (time, channel,
+  who, progress, download), however fast the list moves.
+
+### Speech-to-text
+
+With **Transcribe on play** ticked (the Calls toolbar), playing a call also
+turns its speech into text: it shows in the bar at the bottom and then in the
+call's **Text** column, and goes into the audio zip's `calls.csv`. It is done
+**in the browser**, with OpenAI's Whisper (the `base` model by default) run by
+[Transformers.js](https://github.com/huggingface/transformers.js) -- the server
+does no speech work; it only serves the files:
+
+    tools/get_asr_assets.sh            # ~100 MB into ./net_asr (base)
+    tools/get_asr_assets.sh base small # also the larger, slower, more accurate model
+
+Run it where dsd-server runs (or copy the folder there) and point the server
+at it with `DSD_NET_ASR_DIR` -- else it looks in `net_asr/` under the
+recording directory (`/captures/net_asr` in the Docker image). The script
+needs `registry.npmjs.org` and/or `huggingface.co`; models come from Hugging
+Face (Xenova's ONNX conversions), else an npm mirror of the same files. With
+no files on the server the page offers to load them from the internet
+(jsDelivr, Hugging Face) instead -- only if you choose to.
+
+- **Speed.** The first call of a visit also loads the model (about 80 MB for
+  `base`; then cached). After that, measured on a 4-core cloud VM: about
+  2-5 s a call where the browser allows several threads, 7-11 s where it
+  doesn't; `small` about 14 s / 25-30 s. A desktop PC is usually faster.
+  Whisper's cost is per call, not per second of audio. Browsers allow threads
+  only on pages that are HTTPS or `localhost`: over plain `http://<server-ip>`
+  it runs on one thread (in Chrome, `chrome://flags/#unsafely-treat-insecure-origin-as-secure`
+  with the server's address lifts that).
+- **Language.** The toolbar's language list (default English, or
+  `DSD_NET_ASR_LANG`; "Detect language" guesses, poorly on short calls).
+  `.en` models are English only. `DSD_NET_ASR_MODEL` picks the default model
+  when the folder has several (also a toolbar choice).
+- **Accuracy.** Fine on clear speech, unreliable on short or vocoder-mangled
+  calls; Whisper also invents text for silence or noise ("you", "Thanks for
+  watching") -- the explorer drops those and collapses its word loops. Treat
+  transcripts as a hint, not a record.
+- Transcripts are kept in that browser (`localStorage`, the last ~1000), not
+  on the server; a call still in progress is transcribed again when replayed.
 
 ### Recording explorer data for analysis
 
