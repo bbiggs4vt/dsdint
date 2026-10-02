@@ -1,0 +1,125 @@
+<header><div class="wrap">
+  <h1><span class="accent">dsd-server</span> status</h1>
+  <div class="sub">
+    up <span data-test="uptime">{{ humanDuration(doc()?.uptime_seconds ?? 0) }}</span>
+    &middot; since {{ doc()?.started || '…' }}
+    &middot; <span data-test="live">{{ connected() ? 'live' : 'disconnected — retrying' }}</span>
+    &middot; <a routerLink="/net">network explorer</a>
+  </div>
+</div></header>
+
+<div class="wrap">
+  <div class="cards">
+    <div class="card"><div class="n" data-test="cur">{{ doc()?.current_sessions ?? 0 }}</div><div class="l">Current sessions</div></div>
+    <div class="card"><div class="n" data-test="tot">{{ doc()?.total_sessions ?? 0 }}</div><div class="l">Total sessions</div></div>
+    <div class="card"><div class="n" data-test="act">{{ doc()?.active_pipelines ?? 0 }}</div><div class="l">Active decodes</div></div>
+  </div>
+
+  <div class="ctrlbar">
+    <label><input type="checkbox" data-test="iq" [checked]="iqChecked()" (change)="setIq($any($event.target).checked)"> Log IQ to BLUE file</label>
+    <span class="note" data-test="iq-note">{{ iqNote() }}</span>
+  </div>
+
+  @if (byProtocol().length) {
+    <div class="section-label">Active by protocol</div>
+    <div class="byproto" data-test="byproto">
+      @for (p of byProtocol(); track p.protocol) {
+        <span class="tag">{{ p.protocol }} <b>{{ p.n }}</b></span>
+      }
+    </div>
+  }
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" [class.active]="tab() === 'sessions'" (click)="showTab('sessions')">Sessions
+      <span class="count">{{ doc()?.sessions?.length ?? 0 }}</span></button>
+    <button class="tab" role="tab" [class.active]="tab() === 'protocols'" (click)="showTab('protocols')">Protocols
+      <span class="count">{{ doc()?.protocols?.length ?? 0 }}</span></button>
+    <button class="tab" role="tab" [class.active]="tab() === 'history'" (click)="showTab('history')">History
+      <span class="count">{{ doc()?.history?.length ?? 0 }}</span></button>
+    <button class="tab" role="tab" [class.active]="tab() === 'log'" (click)="showTab('log')">Log
+      <span class="count" data-test="log-count">{{ logCount() }}</span></button>
+  </div>
+
+  @switch (tab()) {
+    @case ('sessions') {
+      <div class="panel"><table data-test="sessions">
+        <thead><tr><th>#</th><th>Client</th><th>Protocols</th><th>State</th><th>Connected (UTC)</th><th class="num">Duration</th></tr></thead>
+        <tbody>
+          @for (r of doc()?.sessions ?? []; track r.id) {
+            <tr>
+              <td class="num">{{ r.id }}</td>
+              <td class="mono">{{ r.remote || '-' }}</td>
+              <td>{{ trail(r.protocols_requested, r.protocols_used, r.protocol) }}</td>
+              <td [class]="r.active ? 'state-on' : 'state-off'"><span class="dot" [class]="r.active ? 'on' : 'off'"></span>{{ r.active ? 'decoding' : 'idle' }}</td>
+              <td class="mono">{{ r.connected }}</td>
+              <td class="num">{{ humanDuration(r.duration_seconds) }}</td>
+            </tr>
+          } @empty {
+            <tr><td colspan="6" class="empty">no clients connected</td></tr>
+          }
+        </tbody>
+      </table></div>
+    }
+    @case ('protocols') {
+      <div class="panel"><table data-test="protocols">
+        <thead><tr><th>Protocol</th><th>Now</th><th class="num">Requests</th><th class="num">Started</th><th class="num">Failed</th>
+          <th class="num">Sessions</th><th class="num">Decode time</th><th>First requested (UTC)</th><th>Last requested (UTC)</th></tr></thead>
+        <tbody>
+          @for (u of doc()?.protocols ?? []; track u.protocol) {
+            <tr>
+              <td>{{ u.protocol }}</td>
+              <td [class]="u.active > 0 ? 'state-on' : 'state-off'"><span class="dot" [class]="u.active > 0 ? 'on' : 'off'"></span>{{ u.active > 0 ? u.active + ' decoding' : 'idle' }}</td>
+              <td class="num">{{ u.requests }}</td>
+              <td class="num">{{ u.starts }}</td>
+              <td class="num">{{ u.failed }}</td>
+              <td class="num">{{ u.sessions }}</td>
+              <td class="num">{{ humanDuration(u.decode_seconds) }}</td>
+              <td class="mono">{{ u.first_requested || '-' }}</td>
+              <td class="mono">{{ u.last_requested || '-' }}</td>
+            </tr>
+          } @empty {
+            <tr><td colspan="9" class="empty">no protocols requested yet</td></tr>
+          }
+        </tbody>
+      </table></div>
+    }
+    @case ('history') {
+      <div class="panel"><table data-test="history">
+        <thead><tr><th>#</th><th>Client</th><th>Protocols</th><th>Connected (UTC)</th><th>Ended (UTC)</th><th class="num">Duration</th></tr></thead>
+        <tbody>
+          @for (r of doc()?.history ?? []; track r.id) {
+            <tr>
+              <td class="num">{{ r.id }}</td>
+              <td class="mono">{{ r.remote || '-' }}</td>
+              <td>{{ trail(r.protocols_requested, r.protocols_used, r.protocol) }}</td>
+              <td class="mono">{{ r.connected }}</td>
+              <td class="mono">{{ r.ended }}</td>
+              <td class="num">{{ humanDuration(r.duration_seconds) }}</td>
+            </tr>
+          } @empty {
+            <tr><td colspan="6" class="empty">no finished sessions yet</td></tr>
+          }
+        </tbody>
+      </table></div>
+    }
+    @case ('log') {
+      <div class="panel">
+        <div class="logbar">
+          <button class="btn" type="button" data-test="log-pause" [class.paused]="logPaused()" (click)="toggleLogPause()">{{ logPaused() ? 'Resume' : 'Pause' }}</button>
+          <button class="btn" type="button" data-test="log-clear" (click)="clearLog()">Clear</button>
+          <span class="note">{{ logPaused() ? 'paused — log frozen for inspection' : '' }}</span>
+        </div>
+        <table data-test="log">
+          <thead><tr><th>Time (UTC)</th><th>#</th><th>Message</th></tr></thead>
+          <tbody>
+            @for (e of log(); track $index) {
+              <tr><td class="logtime">{{ e.time }}</td><td class="num">{{ e.session }}</td><td class="logmsg">{{ e.text }}</td></tr>
+            } @empty {
+              <tr><td colspan="3" class="empty">no frames logged yet</td></tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  }
+</div>
