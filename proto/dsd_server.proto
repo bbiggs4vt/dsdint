@@ -90,6 +90,12 @@ message StartRequest {
   // Server-side; the resulting path is reported in Started.iq_log_file.
   // Off by default. See PROTOCOL.md "IQ capture".
   bool iq_log = 13 [json_name = "iq_log"];
+  // Optional absolute tuner centre frequency in Hz (0 / absent = unknown).
+  // The channel's frequency is then center_freq + freq_offset, which the
+  // network explorer (/net) uses to label and key what it hears (snapped to
+  // DSD_NET_FREQ_STEP_HZ, default 1250 Hz); with iq_log, the capture's file
+  // name carries it as "_c<Hz>Hz". Nothing else uses it. See PROTOCOL.md.
+  double center_freq = 14 [json_name = "center_freq"];
 }
 
 // {"type":"set_gain","gain":N}. Live discriminator-gain adjust. No reply.
@@ -99,6 +105,8 @@ message SetGainRequest {
 }
 
 // {"type":"set_freq_offset","hz":N}. Live NCO retune (also resets AFC).
+// When the start carried a center_freq, the network explorer treats it as a
+// move to another channel (center_freq + hz).
 message SetFreqOffsetRequest {
   string type = 1; // = "set_freq_offset"
   double hz = 2;   // default 0; +hz means the channel sits above 0 Hz

@@ -104,6 +104,7 @@ components:
             gain: 26000
             afc: true
             protocol: dmr
+            center_freq: 434450000
         - name: dmr-basic-privacy
           payload:
             type: start
@@ -390,6 +391,16 @@ components:
             "CF") server-side. The resulting path is reported in the
             `started` reply's `iq_log_file`. Off by default; see PROTOCOL.md
             "IQ capture" and the DSD_IQ_LOG_DIR / DSD_IQ_LOG_MAX_MB env vars.
+        center_freq:
+          type: number
+          default: 0
+          description: |
+            Optional absolute tuner centre frequency (Hz; 0 = unknown). The
+            channel's frequency is then `center_freq + freq_offset` (in the
+            example above, 434450000 - 25000 = 434.425 MHz). The network
+            explorer (`/net`) uses it to label and key what it hears (snapped
+            to DSD_NET_FREQ_STEP_HZ, default 1250 Hz); with `iq_log`, the
+            capture's file name carries it as `_c<Hz>Hz`. Nothing else uses it.
 
     SetGainRequest:
       type: object
@@ -408,7 +419,10 @@ components:
         hz:
           type: number
           default: 0
-          description: NCO shift (Hz), same sign convention as start.freq_offset.
+          description: |
+            NCO shift (Hz), same sign convention as start.freq_offset. When the
+            start carried a `center_freq`, the network explorer treats this as a
+            move to another channel (`center_freq + hz`).
 
     StopRequest:
       type: object
