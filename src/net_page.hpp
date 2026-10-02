@@ -110,22 +110,30 @@ inline std::string render_net_page_html() {
   .chip .n { color: var(--muted); font-variant-numeric: tabular-nums; }
   .sw { display: inline-block; width: .65rem; height: .65rem; border-radius: 2px; flex: none; }
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 1rem; align-items: start; }
+  @media (max-width: 1300px) {                 /* details beside the table: give the table room */
+    .layout { grid-template-columns: minmax(0, 1fr) 300px; }
+  }
   @media (max-width: 1050px) { .layout { grid-template-columns: minmax(0, 1fr); } }
   .panel { background: var(--panel); border: 1px solid var(--comp-bd); border-radius: 4px; overflow: hidden;
            box-shadow: inset 0 1px 0 rgba(255,255,255,.05); }
   .scroll { max-height: 68vh; overflow: auto; }
   table { border-collapse: collapse; width: 100%; font-size: .86rem; }
   th, td { text-align: left; padding: .42rem .7rem; vertical-align: middle; }
+  @media (max-width: 1300px) { th, td { padding-left: .5rem; padding-right: .5rem; } }
   thead th { position: sticky; top: 0; z-index: 1; background-image: linear-gradient(#41474d, #3a3f44);
              color: var(--heading); font-weight: 500; font-size: .7rem; text-transform: uppercase;
              letter-spacing: .05em; border-bottom: 2px solid var(--table-bd); white-space: nowrap; }
   th.sortable { cursor: pointer; }
   th.sortable:hover { color: var(--info); }
   tbody tr { border-top: 1px solid var(--table-bd); }
-  tbody tr:nth-child(even) { background: rgba(255,255,255,.035); }
-  tbody tr:hover { background: rgba(255,255,255,.075); }
+  tbody tr.alt { background: rgba(255,255,255,.035); }
+  tbody tr:hover, tbody tr:hover + tr.sub { background: rgba(255,255,255,.075); }
   tr.click { cursor: pointer; }
-  tr.sel, tr.sel:nth-child(even) { background: rgba(91,192,222,.14); }
+  tr.sel, tr.sel.alt { background: rgba(91,192,222,.14); }
+  /* A row's own line under it (a call's transcript): as wide as the table. */
+  tbody tr.sub { border-top: 0; }
+  tbody tr.sub td { padding-top: 0; white-space: normal; overflow-wrap: anywhere; }
+  tbody tr.hassub td { padding-bottom: .2rem; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   td.mono, .mono { font-family: Menlo, Monaco, Consolas, 'Courier New', monospace; font-size: .82rem; }
   td.wrap { white-space: pre-wrap; word-break: break-word; }
@@ -220,7 +228,6 @@ inline std::string render_net_page_html() {
   @media (pointer: coarse) { .dl { padding: .3rem .5rem; font-size: 1.05rem; } }
   .stt { display: block; color: #e3e6e8; font-style: italic; white-space: normal; }
   .stt::before { content: '\201C'; } .stt::after { content: '\201D'; }
-  td .stt { min-width: 12rem; }
   td.tgcell { white-space: nowrap; }
   /* Calls toolbar: pause the list, audio filter, speech-to-text settings, zip. */
   .callbar { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem .9rem; padding: .45rem .8rem;
@@ -291,7 +298,7 @@ inline std::string render_net_page_html() {
     .hdr-actions input[type=search] { flex: 1 1 auto; }
   }
   /* Narrow tables: let headers and badges wrap rather than scroll sideways. */
-  @media (max-width: 1050px), (pointer: coarse) {
+  @media (max-width: 1400px), (pointer: coarse) {
     thead th { white-space: normal; }
     td.ctype { white-space: normal; min-width: 6.5rem; }
     td.ids { word-break: break-word; }
@@ -590,10 +597,13 @@ function tlink(id) {
                   onclick: function (e) { e.preventDefault(); e.stopPropagation(); select('tg', id); } }, ['TG ', id]);
 }
 function sw(key) { return h('span', { class: 'sw', style: 'background:' + colorFor(key) }); }
-function netc(key) {
-  var n = IX.netByKey[key];
-  return h('span', { class: 'netc', title: n ? n.label : key,
-                     onclick: function (e) { e.stopPropagation(); select('net', key); } }, [sw(key), n ? n.label : key]);
+// `hz`: a frequency shown next to it already -- left out of the label
+// ("Color Code 5 · 460.0250 MHz" -> "Color Code 5"); the tooltip keeps it.
+function netc(key, hz) {
+  var n = IX.netByKey[key], label = n ? n.label : key;
+  var short = hz ? label.replace(' \u00B7 ' + mhz(hz) + ' MHz', '') : label;
+  return h('span', { class: 'netc', title: label,
+                     onclick: function (e) { e.stopPropagation(); select('net', key); } }, [sw(key), short || label]);
 }
 function nets(list) {
   var w = h('span');
@@ -642,7 +652,7 @@ document.addEventListener('click', function (e) {
 // ---------- generic sortable table ----------
 // On phones it renders as stacked cards (CSS) with a sort menu in place of
 // the column headers; `card`, if given, renders each row as a custom card.
-function table(cont, view, cols, rows, empty, onRow, selFn, card) {
+function table(cont, view, cols, rows, empty, onRow, selFn, card, sub) {
   // Narrow screens drop columns that are empty for every row (dropEmpty: the
   // test for a value) or only repeat what the details show (hideMd).
   cols.forEach(function (c, i) { c.i = i; });
@@ -700,10 +710,12 @@ function table(cont, view, cols, rows, empty, onRow, selFn, card) {
   } else {
     var tb = h('tbody');
     if (!rows.length) tb.appendChild(h('tr', null, h('td', { class: 'empty', colspan: cols.length, text: empty })));
-    rows.slice(0, ROWS).forEach(function (r) {
-      tb.appendChild(h('tr', { class: (onRow ? 'click' : '') + (selFn && selFn(r) ? ' sel' : ''),
+    rows.slice(0, ROWS).forEach(function (r, i) {
+      var below = sub && sub(r), alt = i % 2 ? ' alt' : '';
+      tb.appendChild(h('tr', { class: (onRow ? 'click' : '') + (selFn && selFn(r) ? ' sel' : '') + alt + (below ? ' hassub' : ''),
                                onclick: onRow ? function () { onRow(r); } : null },
         cols.map(function (c) { return h('td', { class: c.cls || '', 'data-label': c.label }, c.cell(r)); })));
+      if (below) tb.appendChild(h('tr', { class: 'sub' + alt }, h('td', { colspan: cols.length }, below)));
     });
     cont.appendChild(h('table', null, [h('thead', null, head), tb]));
   }
@@ -1110,7 +1122,7 @@ function viewCalls() {
   table($('t-calls'), 'calls', [
     { label: 'Start (UTC)', cls: 'mono nowrap', k: function (c) { return c.start; }, cell: function (c) { return hms(c.start); } },
     { label: 'Duration', cls: 'nowrap', k: function (c) { return c.last - c.start; }, cell: durCell },
-    { label: 'Network', cell: function (c) { return c.net ? netc(c.net) : '-'; } },
+    { label: 'Network', cell: function (c) { return c.net ? netc(c.net, c.freq) : '-'; } },
     { label: 'MHz', cls: 'mono nowrap', k: function (c) { return c.freq || 0; }, cell: function (c) { return mhz(c.freq) || '—'; },
       dropEmpty: function (c) { return !!c.freq; } },
     { label: 'Slot', cls: 'num', k: function (c) { return c.slot; }, cell: function (c) { return c.slot || '—'; },
@@ -1120,9 +1132,9 @@ function viewCalls() {
     { label: 'Type', cls: 'nowrap ctype', cell: typeBadges },
     { label: 'Audio', cls: 'nowrap', k: function (c) { return c.audio && !S.file ? 1 : 0; }, cell: audioCell,
       hideEmpty: function (c) { return !!c.audio && !S.file; } },
-    { label: 'Text', cls: 'wrap', cell: function (c) { return [c.text || null, c.text && sttSpan(c) ? ' ' : null, sttSpan(c)]; } }
+    { label: 'Text', cls: 'wrap', cell: function (c) { return c.text || ''; }, hideEmpty: function (c) { return !!c.text; } }
   ], rows, (S.audOnly ? 'No calls with audio' : 'No calls heard yet') + (S.net !== '*' || S.q ? ' for this filter.' : '.') +
-           (held ? ' (The list is paused.)' : ''), null, null, callCard);
+           (held ? ' (The list is paused.)' : ''), null, null, callCard, function (c) { return sttSpan(c); });
 }
 function viewTgs() {
   var rows = fTgs().slice().sort(function (a, b) { return b.last - a.last; });

@@ -144,6 +144,34 @@ int main() {
         m.end_stream(1, 9100);
     }
 
+    // ---- data calls: no audio; dsd-fme's copy of the other slot's voice goes there ----
+    {
+        AssocModel m;
+        m.start_audio((dir / "d").string(), 1 << 30, 0, 1000);
+        m.begin_stream(1, "dmr", 0);
+        for (int k = 0; k < 2; ++k) line(m, 1, kCC, 1000 + k);
+        // A data call alone: audible audio on its slot makes no file.
+        line(m, 1, " Slot 1 Data Header - Group - Unconfirmed Delivery - Source: 123 Target: 1 ", 1100);
+        for (int f = 0; f < 25; ++f) tone(m, 1, 1, 1500, 1110 + 20 * f);
+        auto cs = calls(m, "dmr", 1700);
+        check(by_src(cs, "123") && by_src(cs, "123")->audio.empty(), "data: a data-only call gets no audio file");
+        // Voice on slot 2 while slot 1 carries data: dsd-fme copies the voice to
+        // both channels and it arrives as slot 1 -- it belongs to the voice call.
+        line(m, 1, " SLOT 2 TGT=10 SRC=200 Group Call ", 1750);
+        for (int f = 0; f < 25; ++f) tone(m, 1, 2, 2222, 1760 + 20 * f);
+        line(m, 1, " Slot 1 Data Header - Group - Unconfirmed Delivery - Source: 124 Target: 1 ", 2260);
+        for (int f = 0; f < 25; ++f) tone(m, 1, 1, 2222, 2270 + 20 * f);
+        for (int f = 0; f < 5; ++f) tone(m, 1, 1, 0, 2770 + 20 * f);       // an idle slot's silence: dropped
+        cs = calls(m, "dmr", 2900);
+        const C* v = by_src(cs, "200");
+        const C* d = by_src(cs, "124");
+        std::vector<int16_t> sv;
+        check(d && d->audio.empty(), "data: the data call on the other slot gets none of the voice");
+        check(v && wav(m.audio_path(v->audio, 1LL << 40), sv) && all_eq(sv, 2222) && sv.size() == 8000,
+              "data: the voice copied onto the data call's slot goes to the voice call (1.000 s, nothing lost)");
+        m.end_stream(1, 3000);
+    }
+
     // ---- audio that arrives just before its call is decoded ----
     {
         AssocModel m;

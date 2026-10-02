@@ -532,6 +532,23 @@ public:
         int peak = 0;
         for (std::size_t i = 0; i < n; ++i) peak = std::max(peak, pcm[i] < 0 ? -static_cast<int>(pcm[i]) : static_cast<int>(pcm[i]));
         const bool silent = peak == 0, audible = peak >= kAudiblePeak;
+        // A data-only call (SMS, private data) never gets audio. While only
+        // one DMR slot carries voice, dsd-fme copies that voice to both
+        // channels and the copy follows whichever slot last printed a line --
+        // often a data call on the other slot: it belongs to the (voice) call
+        // there. (Silence from an idle slot is just dropped.)
+        if (k && k->data && !k->voice) {
+            Call* v = nullptr;
+            int vslot = slot;
+            if (!silent)
+                for (const char* s : {"1", "2", ""}) {
+                    Call* x = fresh_call(c, F, s, now);
+                    if (x && x != k && !(x->data && !x->voice) && (!v || x->last_ms > v->last_ms)) { v = x; vslot = s[0] ? s[0] - '0' : 0; }
+                }
+            if (!v) return;
+            k = v;
+            slot = vslot;
+        }
         if (!k) {
             if (silent) return;
             Ctx::Preroll& p = c.preroll[slot];
@@ -1488,8 +1505,9 @@ private:
         if (!k.open) return;
         k.open = false;
         if (!k.audio.empty()) {
-            // Flagged encrypted late, or too short to be worth a file: delete.
-            if (k.encrypted || k.audio_samples < kMinAudioSamples) {
+            // Flagged encrypted late, turned out to carry only data, or too
+            // short to be worth a file: delete.
+            if (k.encrypted || (k.data && !k.voice) || k.audio_samples < kMinAudioSamples) {
                 audio_.discard(k.audio);
                 k.audio.clear();
                 k.audio_samples = 0;

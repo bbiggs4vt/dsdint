@@ -739,6 +739,9 @@ or talkgroup's recent calls.
   call list longest). `DSD_NET_AUDIO_MAX_AGE_H` also deletes files
   older than that many hours. Files from earlier runs in the directory count
   toward the cap and stay playable.
+- Data-only calls (SMS, private data) never get audio: while one DMR slot
+  carries voice, dsd-fme copies it to both channels, and a copy that lands on a
+  data call on the other slot is given to the voice call it came from.
 - Audio stays on the server that recorded it: exports note which calls had
   audio, but imports and merged views have no audio to play. Explorer
   recordings (for replay) don't include audio either.
