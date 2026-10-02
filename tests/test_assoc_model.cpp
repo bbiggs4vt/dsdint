@@ -385,6 +385,29 @@ int main() {
         check(!j["families"]["dmr"].has("radios") || j["families"]["dmr"]["radios"].size() == 0, "crc: no radio 888 / TG 999 from a failed frame");
     }
 
+    // ---- Capacity Plus: the channel-status roster is not a call (real lines, 460.175 MHz) ----
+    {
+        AssocModel m;
+        m.begin_stream(1, "dmr", 0);
+        std::int64_t t = 1000;
+        for (int f = 0; f < 6; ++f) {                 // one TDMA frame pair, repeated
+            line(m, 1, "18:20:50 Sync: +DMR   slot1  [slot2] | Color Code=05 | CSBK", t);
+            line(m, 1, " Capacity Plus Channel Status - FL: 1 TS: 1 RS: 0 - Rest LSN: 4 - Final Block", t);
+            line(m, 1, f % 2 ? " Bank One F80 Private or Data Call(s) -  LSN 01: TGT 17434; LSN 02: TGT 23043;"
+                             : " Bank One F80 Private or Data Call(s) -  LSN 04: TGT 20504;", t);
+            line(m, 1, "18:20:50 Sync: +DMR  [SLOT1]  slot2  | Color Code=05 | VC6 ", t + 30);
+            if (f == 0) line(m, 1, " SLOT 1 TGT=12 SRC=23021 FLCO=0x00 FID=0x10 SVC=0x20 Group TXI Call  ", t + 30);
+            line(m, 1, " AMBE A33E43756BB380 err = [0] [0] ", t + 30);
+            t += 90;
+        }
+        J j = snap(m, t);
+        const J& F = j["families"]["dmr"];
+        check(F["calls"].size() == 1, "cap+: roster lines (other LSNs' traffic) make no calls of their own");
+        const J& c = F["calls"].at(0);
+        check(c["src"].s == "23021" && c["tgt"].s == "12" && !c["priv"].b && c["voice"].b,
+              "cap+: the slot's real call (23021 -> TG 12, voice) is one call, not cut by the roster");
+    }
+
     // ---- the real DMR SMS sequence (direct mode): one data call carrying the text ----
     {
         AssocModel m;

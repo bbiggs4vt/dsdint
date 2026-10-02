@@ -335,6 +335,12 @@ public:
         const bool enc = is_encrypted(up, extra);
         const bool emerg = ev.emergency == "1";
 
+        // A roster of the site's other channels opens, ends and extends no
+        // call. (Taken for one, every roster line -- several a second on a
+        // Capacity Plus channel -- made a source-less call and cut the real
+        // call on the slot into sub-second pieces, each with a scrap of audio.)
+        if (is_roster(up)) return;
+
         // Unknown lines (identity broadcasts, P25 LCW, ...) never open calls or
         // introduce ids -- they only refine the call in progress on this slot.
         if (ev.kind == "unknown") {
@@ -1006,6 +1012,10 @@ private:
         return has(up, "PRIVATE") || has(up, "UNIT TO UNIT") || has(up, "UNIT-TO-UNIT") ||
                has(up, "INDIV") || has(up, "I-CALL") || has(up, "U2U");
     }
+    // A trunking roster: Capacity Plus channel status ("Bank One F80 Private
+    // or Data Call(s) -  LSN 01: TGT 17434; LSN 02: TGT 23043;") lists what
+    // the site's other logical channels carry -- it is not a call here.
+    static bool is_roster(const std::string& up) { return has(up, "CALL(S)") && has(up, "LSN"); }
     static bool is_data(const std::string& up) {
         return has(up, " DATA") || has(up, "SMS") || has(up, "UDT") || has(up, "SHORT DATA") ||
                has(up, "TEXT:");
