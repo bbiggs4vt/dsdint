@@ -2,6 +2,7 @@
 //
 //   net-replay <net_YYYYMMDD_HHMMSS.jsonl.gz> [--at <ms | +seconds>] [--json <file|->]
 //                                             [--export <file.json>] [--graphml <file.graphml>]
+//                                             [--reparse]
 //
 // Re-applies every recorded input to a fresh AssocModel with its recorded
 // timestamp, then prints a summary of what the explorer would show. With no
@@ -13,8 +14,13 @@
 // JSON as GET /net.json) to a file, or "-" for stdout. --export writes an
 // explorer export (re-openable in the explorer's "Open..."), --graphml the
 // association graph for Gephi / Cytoscape / yEd -- both as of the replayed time.
+// --reparse re-classifies each dsd-fme event from its recorded raw line with
+// this build's parser instead of using the fields it was recorded with, to see
+// what a parser fix makes of old data (the replay then won't match the stop
+// snapshot, which was made with the old parser).
 
 #include "assoc_replay.hpp"
+#include "dsd_process.hpp"
 
 #include <cstdio>
 #include <iostream>
@@ -24,6 +30,19 @@
 using namespace dsdsrv;
 
 namespace {
+
+// --reparse: classify the event's raw line again. Only dsd-fme streams (TETRA
+// and pager lines come from other parsers), and not reassembled data messages
+// (built from several lines). Fields the classifier can't know from one line
+// alone -- the slot carried from the last burst, a CRC flag -- are kept.
+void reparse_event(DsdEvent& e, const std::string& label) {
+    const std::string fam = assoc_family(label);
+    if (e.raw_line.empty() || fam.empty() || fam == "tetra" || e.kind == "message") return;
+    DsdEvent n = classify_dsd_fme_line(e.raw_line);
+    if (n.slot.empty()) n.slot = e.slot;
+    if (n.crc_error.empty()) n.crc_error = e.crc_error;
+    e = std::move(n);
+}
 
 std::string utc(std::int64_t ms) {
     if (!ms) return "-";
@@ -101,12 +120,15 @@ void summarize(const std::string& model) {
 int main(int argc, char** argv) {
     if (argc < 2) {
         std::fprintf(stderr, "usage: %s <recording.jsonl.gz> [--at <ms|+seconds>] [--json <file|->]\n"
-                             "       [--export <file.json>] [--graphml <file.graphml>]\n", argv[0]);
+                             "       [--export <file.json>] [--graphml <file.graphml>] [--reparse]\n", argv[0]);
         return 2;
     }
     std::string path = argv[1], json_out, at, export_out, graphml_out;
-    for (int i = 2; i + 1 < argc; i += 2) {
+    bool reparse = false;
+    for (int i = 2; i < argc; i += 2) {
         std::string a = argv[i];
+        if (a == "--reparse") { reparse = true; --i; continue; }
+        if (i + 1 >= argc) { std::fprintf(stderr, "%s needs a value\n", a.c_str()); return 2; }
         if (a == "--at") at = argv[i + 1];
         else if (a == "--json") json_out = argv[i + 1];
         else if (a == "--export") export_out = argv[i + 1];
@@ -129,7 +151,7 @@ int main(int argc, char** argv) {
     AssocModel m;
     ReplayResult r;
     std::string err;
-    if (!replay_log(path, m, r, until, &err)) {
+    if (!replay_log(path, m, r, until, &err, reparse ? ReplayRewrite(reparse_event) : ReplayRewrite())) {
         std::fprintf(stderr, "%s\n", err.c_str());
         return 1;
     }
@@ -157,6 +179,8 @@ int main(int argc, char** argv) {
             std::printf("check       skipped: no 'stop' snapshot (recording was not stopped cleanly)\n");
         } else if (r.truncated) {
             std::printf("check       skipped: the recording hit its size cap\n");
+        } else if (reparse) {
+            std::printf("check       skipped: --reparse (the recorded snapshot used the old parser)\n");
         } else if (families_of(model) == families_of(r.stop_model)) {
             std::printf("check       OK -- replay reproduces the recorded explorer state exactly\n");
         } else {

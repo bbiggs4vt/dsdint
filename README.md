@@ -845,12 +845,15 @@ the server):
 ./build/net-replay net_20261001_214359.jsonl.gz            # summary + exactness check
 ./build/net-replay net_20261001_214359.jsonl.gz --at +42   # state 42 s into the recording
 ./build/net-replay net_20261001_214359.jsonl.gz --json out.json   # the replayed /net.json
+./build/net-replay net_20261001_214359.jsonl.gz --reparse  # re-parse dsd-fme lines with this build
 ```
 
 A recording that started with an empty (or cleared) explorer is checked
 against the snapshot taken when it stopped; `check OK` means the replay
 reproduced the explorer exactly, so a fix to the model can be re-run on the
-same data and compared.
+same data and compared. Events are recorded already parsed; `--reparse`
+classifies each dsd-fme event again from its raw line, so a parser fix can be
+checked on old recordings too (the exactness check is skipped then).
 
 ## IQ capture (recording the raw stream)
 

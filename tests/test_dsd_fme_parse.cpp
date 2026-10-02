@@ -262,6 +262,21 @@ int main() {
               "D-STAR: no numeric access code");
     }
     {
+        // With payload logging, dsd-fme prints the header on the voice frame's
+        // line, without the "DSTAR" marker (real line, simplex, joined mid-
+        // transmission: no source callsign).
+        DsdEvent e = classify_dsd_fme_line(
+            " AMBE F094B64EF43600 err = [0] [0]  RPT 2: DIRECT   RPT 1: DIRECT   DST: CQCQCQ   SRC:              INTERRUPTED");
+        check(e.kind == "call" && e.talkgroup == "CQCQCQ" && e.source_id.empty(),
+              "D-STAR on an AMBE line: DST -> talkgroup, blank SRC stays blank");
+        check(e.extra.find("rpt1=DIRECT") != std::string::npos, "D-STAR on an AMBE line: rpt1 in extra");
+        DsdEvent f = classify_dsd_fme_line(
+            " AMBE F094B64EF43600 err = [0] [0]  RPT 2: W1ABC  G RPT 1: W1ABC  B DST: CQCQCQ   SRC: N0CALL  /ID51");
+        check(f.source_id == "N0CALL /ID51" && f.talkgroup == "CQCQCQ", "D-STAR on an AMBE line: source callsign too");
+        DsdEvent g = classify_dsd_fme_line(" AMBE F094B64EF43600 err = [0] [0] ");
+        check(g.kind == "voice" && g.talkgroup.empty(), "a plain AMBE line stays a voice frame");
+    }
+    {
         // Radio text on its own slow-data frame (same reprinted sync line).
         DsdEvent e = classify_dsd_fme_line(
             "18:27:56 Sync: -DSTAR VOICE   TEXT: YANNICK ST RAPHAEL");

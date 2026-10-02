@@ -12,6 +12,7 @@
 #include <zlib.h>
 
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <map>
 #include <string>
@@ -55,16 +56,21 @@ inline std::int64_t recording_start_time(const std::string& path) {
     return t;
 }
 
+// Called on each recorded event before it is ingested, with its stream's
+// protocol label, to rewrite it (net-replay --reparse: re-classify the raw line).
+using ReplayRewrite = std::function<void(DsdEvent&, const std::string& label)>;
+
 // Replay `path` (gzip or plain JSON Lines) into `m`, stopping after time
 // `until`. Returns false (with *err) if the file can't be read.
 inline bool replay_log(const std::string& path, AssocModel& m, ReplayResult& r,
                        std::int64_t until = std::numeric_limits<std::int64_t>::max(),
-                       std::string* err = nullptr) {
+                       std::string* err = nullptr, const ReplayRewrite& rewrite = nullptr) {
     gzFile f = gzopen(path.c_str(), "rb");          // also reads uncompressed files
     if (!f) { if (err) *err = "cannot open " + path; return false; }
     std::string buf, line;
     char chunk[1 << 16];
     bool stop = false;
+    std::map<std::uint64_t, std::string> labels;   // session -> protocol label (for `rewrite`)
     auto handle = [&](const std::string& l) {
         if (l.empty()) return;
         ++r.lines;
@@ -96,8 +102,14 @@ inline bool replay_log(const std::string& path, AssocModel& m, ReplayResult& r,
             if (!r.t_first) r.t_first = t;
             r.t_last = t;
             const std::uint64_t sid = k.count("s") ? std::stoull(k["s"]) : 0;
-            if (op == "ev") { m.ingest(sid, assoclog::line_event(k), t); ++r.events; }
+            if (op == "ev") {
+                DsdEvent e = assoclog::line_event(k);
+                if (rewrite) rewrite(e, labels[sid]);
+                m.ingest(sid, e, t);
+                ++r.events;
+            }
             else if (op == "begin") {
+                labels[sid] = k["label"];
                 m.begin_stream(sid, k["label"], t, k["family"], k.count("freq") ? std::stoll(k["freq"]) : 0);
                 ++r.begins;
             }

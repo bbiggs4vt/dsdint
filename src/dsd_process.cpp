@@ -693,6 +693,10 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     // %s"; YSF "DST: %s SRC: %s", "U/L: %s D/L: %s", "DST RID: %s SRC RID:
     // %s".
     static const std::regex dstar_ctx_re(R"(DSTAR)", std::regex::icase);
+    // The D-STAR header's own shape, for builds that print it on the voice
+    // frame's line (payload logging: " AMBE ... RPT 2: DIRECT RPT 1: DIRECT
+    // DST: CQCQCQ SRC: ...") rather than after the "Sync: -DSTAR" marker.
+    static const std::regex dstar_hdr_re(R"(\bRPT\s*2:.*\bRPT\s*1:.*\bDST:)", std::regex::icase);
     static const std::regex ysf_ctx_re(R"(\bYSF\b)", std::regex::icase);
     static const std::regex cs_src_re(
         R"(\bSRC:\s*(.*?)\s*(?:DST:|U/?L:|D/?L:|RM\d|DATA\b|REPEATER\b|INTERRUPTED\b|CONTROL\b|URGENT\b|$))",
@@ -792,7 +796,7 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     // first and only the callsign/RID logic below repopulates these
     // fields.
     bool cs_call = false;
-    const bool is_dstar = std::regex_search(line, dstar_ctx_re);
+    const bool is_dstar = std::regex_search(line, dstar_ctx_re) || std::regex_search(line, dstar_hdr_re);
     const bool is_ysf   = std::regex_search(line, ysf_ctx_re);
     if (is_dstar || is_ysf) {
         std::smatch cm;

@@ -236,9 +236,9 @@ add_test(NAME assoc_audio_test COMMAND test_assoc_audio)
 set_tests_properties(assoc_audio_test PROPERTIES TIMEOUT 30)
 
 # net-replay: replay a network-explorer recording offline (tools/net_replay.cpp).
-add_executable(net-replay tools/net_replay.cpp)
+add_executable(net-replay tools/net_replay.cpp src/dsd_process.cpp)
 target_include_directories(net-replay PRIVATE src)
-target_link_libraries(net-replay PRIVATE ZLIB::ZLIB)
+target_link_libraries(net-replay PRIVATE Threads::Threads ZLIB::ZLIB)
 target_compile_options(net-replay PRIVATE -Wall -Wextra)
 
 # net-merge: merge explorer exports into one (tools/net_merge.cpp).

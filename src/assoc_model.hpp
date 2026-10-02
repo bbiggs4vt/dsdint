@@ -417,7 +417,11 @@ public:
             cur->tgt = tgt;
             c.active[slot + "|" + tgt] = cur->id;
         }
-        if (ev.kind == "voice" || (ev.kind == "sync" && is_voice_sync(up))) cur->voice = true;
+        // (A call header printed on a voice frame -- D-STAR "AMBE ... DST:" --
+        // is voice too.)
+        if (ev.kind == "voice" || (ev.kind == "sync" && is_voice_sync(up)) ||
+            (ev.kind == "call" && has(" " + up, " AMBE ")))
+            cur->voice = true;
         if (data) cur->data = true;
         if (emerg) cur->emergency = true;
         if (enc) cur->encrypted = true;
@@ -1076,6 +1080,7 @@ private:
         if (!ev.ran.empty() && fam == "nxdn") got["ran"] = ev.ran;
         for (const auto& kv : x) {
             if (kv.second.empty()) continue;
+            if (fam == "dstar" && kv.first == "rpt1" && upper(kv.second) == "DIRECT") continue;   // simplex, no repeater
             if (is_anchor(fam, kv.first) || is_site_key(fam, kv.first) ||
                 (fam == "dmr" && kv.first == "network_type"))
                 got[kv.first] = kv.second;
@@ -1368,22 +1373,28 @@ private:
         if (F.rate.empty() || F.rate.back().first != sec) F.rate.push_back({sec, 0});
         ++F.rate.back().second;
         while (!F.rate.empty() && F.rate.front().first <= sec - kRateWindowS) F.rate.pop_front();
-        Radio& r = ensure_radio(F, k.src, now);
-        r.last_ms = now;
-        ++r.calls;
-        if (!k.net.empty()) r.networks.insert(k.net);
+        // (No source: a call whose talker wasn't decoded -- the target only.)
+        Radio* r = nullptr;
+        if (!k.src.empty()) {
+            r = &ensure_radio(F, k.src, now);
+            r->last_ms = now;
+            ++r->calls;
+            if (!k.net.empty()) r->networks.insert(k.net);
+        }
         if (k.priv) {
-            bump(r.peers, k.tgt);
-            Radio& p = ensure_radio(F, k.tgt, now);
-            p.last_ms = now;
-            bump(p.peers, k.src);
-            if (!k.net.empty()) p.networks.insert(k.net);
+            if (r) {
+                bump(r->peers, k.tgt);
+                Radio& p = ensure_radio(F, k.tgt, now);
+                p.last_ms = now;
+                bump(p.peers, k.src);
+                if (!k.net.empty()) p.networks.insert(k.net);
+            }
         } else {
-            bump(r.tgs, k.tgt);
+            if (r) bump(r->tgs, k.tgt);
             Talkgroup& t = ensure_tg(F, k.tgt, now);
-            t.last_ms = now;
+            t.last_ms = std::max(t.last_ms, now);
             ++t.calls;
-            bump(t.radios, k.src);
+            if (r) bump(t.radios, k.src);
             if (!k.net.empty()) t.networks.insert(k.net);
         }
         auto nit = F.networks.find(k.net);
@@ -1526,6 +1537,10 @@ private:
                 audio_.finish(k.audio);
             }
         }
+        // A voice call whose talker was never decoded (D-STAR heard after its
+        // header: "SRC: ... INTERRUPTED") still went to its target: counted
+        // for it (and its network) when it ends -- without a radio.
+        if (!k.counted && k.src.empty() && !k.tgt.empty() && k.voice && !k.data) count_call(F, k, k.last_ms);
         if (!k.counted || k.priv) return;
         auto t = F.tgs.find(k.tgt);
         if (t == F.tgs.end()) return;

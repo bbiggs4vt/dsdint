@@ -601,7 +601,13 @@ Encrypted calls are not recorded (unless the session has the key).
   destination (often `CQCQCQ` = everyone) is the "talkgroup".
 - The repeater callsign (D-STAR RPT1) or downlink id (YSF) is the network's
   weak identity, believed at once. Radio text / messages are attached to the
-  call.
+  call. A simplex D-STAR call (`RPT 1: DIRECT`) has no repeater, so its
+  network is just the channel.
+- A D-STAR call picked up after its header shows a blank source
+  (`SRC: ... INTERRUPTED`). It's still a call to its destination: it counts
+  for that "talkgroup" and the channel, with no radio. dsd-fme builds that log
+  frame payloads print the header on every voice frame (`AMBE ... DST:`),
+  and those are read too.
 
 **EDACS / ProVoice**
 

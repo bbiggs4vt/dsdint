@@ -785,6 +785,34 @@ int main() {
         check(snap(m, 2200)["families"].has("dmr") == false, "retune: a call-less network of the old channel is dropped");
     }
 
+    // ---- D-STAR: header on AMBE lines (payload logging), blank SRC, DIRECT ----
+    {
+        AssocModel m;
+        m.begin_stream(1, "dstar", 0, "", 429998750);
+        const std::string hdr = " AMBE F094B64EF43600 err = [0] [0]  RPT 2: DIRECT   RPT 1: DIRECT   DST: CQCQCQ   ";
+        for (int k = 0; k < 10; ++k) line(m, 1, hdr + "SRC:              INTERRUPTED", 1000 + 100 * k);
+        m.end_stream(1, 3000);
+        m.remove_session(1, 3000);
+        J j = snap(m, 3100);
+        check(j["families"].has("dstar"), "D-STAR: a call heard without its talker keeps the network after the stream ends");
+        const J& D = j["families"]["dstar"];
+        check(D["calls"].size() == 1 && D["calls"].at(0)["tgt"].s == "CQCQCQ" && D["calls"].at(0)["src"].s.empty(),
+              "D-STAR: blank SRC -> one call to CQCQCQ, no source");
+        const J* tg = find(D["talkgroups"], "id", "CQCQCQ");
+        check(tg && (*tg)["calls"].n == 1 && (*tg)["radios"].size() == 0, "D-STAR: CQCQCQ counted (1 call), no radio");
+        check(D["radios"].size() == 0, "D-STAR: no radio made up for the missing source");
+        check(D["networks"].size() == 1 && D["networks"].at(0)["key"].s.find("DIRECT") == std::string::npos,
+              "D-STAR: RPT 1: DIRECT (simplex) is not a repeater network");
+
+        m.begin_stream(2, "dstar", 4000, "", 429998750);
+        for (int k = 0; k < 5; ++k) line(m, 2, hdr + "SRC: N0CALL  /ID51", 4000 + 100 * k);
+        m.end_stream(2, 5000);
+        J j2 = snap(m, 5100);
+        const J& D2 = j2["families"]["dstar"];
+        const J* tg2 = find(D2["talkgroups"], "id", "CQCQCQ");
+        check(tg2 && (*tg2)["calls"].n == 2 && (*tg2)["radios"].size() == 1, "D-STAR: a call with its talker adds the radio");
+    }
+
     // ---- JSON escaping of decoder-derived text ----
     {
         AssocModel m;
