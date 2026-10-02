@@ -5,7 +5,9 @@
 #include "net_page.hpp"
 #include "pager_events.hpp"
 
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <cstring>
 #include <cstdlib>
 #include <cctype>
@@ -52,6 +54,34 @@ std::int64_t channel_freq(double hz) {
         return static_cast<std::int64_t>(n > 0 ? n : 1);
     }();
     return AssocModel::channel_hz(hz, step);
+}
+
+// Network-explorer per-call audio (AssocModel::audio, assoc_audio.hpp):
+// DSD_NET_AUDIO_DIR, else <net log dir>/net_audio; capped at
+// DSD_NET_AUDIO_MAX_MB (default 1024) and, if set, DSD_NET_AUDIO_MAX_AGE_H.
+std::string net_audio_dir() {
+    const char* d = std::getenv("DSD_NET_AUDIO_DIR");
+    return (d && d[0]) ? std::string(d) : (std::filesystem::path(net_log_dir()) / "net_audio").string();
+}
+std::uint64_t net_audio_max_bytes() {
+    const char* m = std::getenv("DSD_NET_AUDIO_MAX_MB");
+    unsigned long mb = (m && m[0]) ? std::strtoul(m, nullptr, 10) : 1024;
+    return static_cast<std::uint64_t>(mb) * 1024ull * 1024ull;
+}
+std::int64_t net_audio_max_age_ms() {
+    const char* h = std::getenv("DSD_NET_AUDIO_MAX_AGE_H");
+    return (h && h[0]) ? static_cast<std::int64_t>(std::strtod(h, nullptr) * 3600.0 * 1000.0) : 0;
+}
+std::string net_audio_json(const CallAudioStore::Status& a) {
+    return json::Writer().field("on", a.on).field("dir", a.dir).field("bytes", static_cast<double>(a.bytes))
+        .field("cap_bytes", static_cast<double>(a.cap_bytes)).field("files", static_cast<double>(a.files))
+        .field("recording", static_cast<double>(a.open)).str();
+}
+bool env_on(const char* name) {
+    const char* v = std::getenv(name);
+    if (!v || !v[0]) return false;
+    const std::string s(v);
+    return s[0] == '1' || s[0] == 'y' || s[0] == 'Y' || s[0] == 't' || s[0] == 'T' || s == "on";
 }
 
 // Largest HTTP request body accepted (explorer imports / merges of exports).
@@ -279,6 +309,64 @@ void Session::serve_http() {
         return;
     }
 
+    // A call's audio (/net/audio/<file>.wav): only files the audio store
+    // made. Byte ranges are supported (Safari requires them for media, and
+    // they make seeking work); a recording still in progress is served as far
+    // as it has got.
+    if (target.rfind("/net/audio/", 0) == 0 && target != "/net/audio/on" && target != "/net/audio/off" &&
+        http_req_.method() == http::verb::get && stats_) {
+        const std::string path = stats_->assoc().audio_path(target.substr(11));
+        std::string data;
+        if (!path.empty()) {
+            std::ifstream f(path, std::ios::binary);
+            data.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+        }
+        if (path.empty() || data.size() < 44) {
+            res->result(http::status::not_found);
+            res->set(http::field::content_type, "text/plain; charset=utf-8");
+            res->body() = "no such audio\n";
+        } else {
+            std::size_t a = 0, z = data.size() - 1;
+            bool partial = false;
+            const std::string range(http_req_[http::field::range]);
+            if (range.rfind("bytes=", 0) == 0 && range.find(',') == std::string::npos) {
+                const std::string spec = range.substr(6);
+                const std::size_t dash = spec.find('-');
+                if (dash != std::string::npos) {
+                    const std::string lo = spec.substr(0, dash), hi = spec.substr(dash + 1);
+                    if (lo.empty() && !hi.empty()) {                         // last N bytes
+                        const std::size_t nlast = std::min<std::size_t>(std::strtoull(hi.c_str(), nullptr, 10), data.size());
+                        a = data.size() - nlast;
+                    } else {
+                        a = std::strtoull(lo.c_str(), nullptr, 10);
+                        if (!hi.empty()) z = std::min<std::size_t>(std::strtoull(hi.c_str(), nullptr, 10), data.size() - 1);
+                    }
+                    partial = true;
+                }
+            }
+            if (partial && (a > z || a >= data.size())) {
+                res->result(http::status::range_not_satisfiable);
+                res->set(http::field::content_range, "bytes */" + std::to_string(data.size()));
+            } else {
+                res->result(partial ? http::status::partial_content : http::status::ok);
+                res->set(http::field::content_type, "audio/wav");
+                res->set(http::field::accept_ranges, "bytes");
+                res->set(http::field::cache_control, "no-store");
+                if (partial)
+                    res->set(http::field::content_range, "bytes " + std::to_string(a) + "-" + std::to_string(z) + "/" +
+                                                         std::to_string(data.size()));
+                res->body() = partial ? data.substr(a, z - a + 1) : std::move(data);
+            }
+        }
+        res->prepare_payload();
+        auto self = shared_from_this();
+        http::async_write(ws_.next_layer(), *res, [self, res](beast::error_code, std::size_t) {
+            beast::error_code ig;
+            beast::get_lowest_layer(self->ws_).socket().shutdown(tcp::socket::shutdown_send, ig);
+        });
+        return;
+    }
+
     const bool post = http_req_.method() == http::verb::post;
     if (post && target == "/net/import") {
         // Explorer Import...: add an export (body, JSON or gzip) as a layer on
@@ -362,6 +450,21 @@ void Session::serve_http() {
         res->result(ok ? http::status::ok : http::status::internal_server_error);
         res->set(http::field::content_type, "application/json");
         res->body() = stats_ ? net_rec_json(stats_->assoc().recording()) : std::string("{}");
+    } else if (target == "/net/audio/on" || target == "/net/audio/off") {
+        // Explorer Audio switch: record each call's decoded voice (off by
+        // default; see net_audio_dir and the DSD_NET_AUDIO_* settings).
+        bool ok = true;
+        if (stats_) {
+            if (target == "/net/audio/on") {
+                ok = stats_->assoc().start_audio(net_audio_dir(), net_audio_max_bytes(), net_audio_max_age_ms());
+                std::cerr << (ok ? "net audio: recording calls into " : "net audio: cannot write to ") << net_audio_dir() << "\n";
+            } else {
+                stats_->assoc().stop_audio();
+            }
+        }
+        res->result(ok ? http::status::ok : http::status::internal_server_error);
+        res->set(http::field::content_type, "application/json");
+        res->body() = stats_ ? net_audio_json(stats_->assoc().audio_status()) : std::string("{}");
     } else if (target == "/net/imports/remove" || target == "/net/imports/clear") {
         // Remove one import (?id=N) or all of them; the live data stays.
         bool ok = true;
@@ -1149,6 +1252,18 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         }
 #endif // DSD_USE_DSDCC_BACKEND
 
+        // Network explorer per-call audio (off unless enabled): every slot's
+        // decoded voice, before the client's mono mix. A session with a key
+        // hears encrypted calls in the clear, so those may be recorded.
+        if (stats_ && stats_id_) {
+            auto st = stats_;
+            const std::uint64_t sid = stats_id_;
+            const bool keyed = key_type_enum != KeyType::None;
+            dcfg.on_slot_audio = [st, sid, keyed](int slot, const int16_t* pcm, std::size_t n) {
+                st->assoc().audio(sid, slot, pcm, n, keyed);
+            };
+        }
+
         bool ok = dsd_.start(dcfg, on_event, on_audio);
         if (!ok) {
             send_text(json::Writer().field("type", std::string("error"))
@@ -1387,6 +1502,14 @@ Server::Server(net::io_context& ioc, const tcp::endpoint& endpoint)
             std::cerr << "net recording: writing " << stats_->assoc().recording().path << "\n";
         else
             std::cerr << "net recording: could not create a file in " << net_log_dir() << "\n";
+    }
+
+    // DSD_NET_AUDIO=1: record each call's decoded voice from startup.
+    if (env_on("DSD_NET_AUDIO")) {
+        if (stats_->assoc().start_audio(net_audio_dir(), net_audio_max_bytes(), net_audio_max_age_ms()))
+            std::cerr << "net audio: recording calls into " << net_audio_dir() << "\n";
+        else
+            std::cerr << "net audio: cannot write to " << net_audio_dir() << "\n";
     }
 
     acceptor_.open(endpoint.protocol(), ec);

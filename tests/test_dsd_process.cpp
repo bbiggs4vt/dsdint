@@ -84,6 +84,11 @@ int main(int argc, char** argv) {
     // mode_flag stays at its default -- that the default decodes DMR is
     // exactly one of the things this test exists to pin (the original
     // guessed default selected D-STAR).
+    // Per-slot tap (network explorer audio): left/right as slots 1/2.
+    std::atomic<std::size_t> slot_samples[3] = {{0}, {0}, {0}};
+    cfg.on_slot_audio = [&](int slot, const int16_t*, std::size_t n) {
+        if (slot >= 0 && slot <= 2) slot_samples[slot] += n;
+    };
 
     bool started = proc.start(
         cfg,
@@ -191,6 +196,25 @@ int main(int argc, char** argv) {
           "received a substantial amount of mono audio (>100k samples)");
     check(audio_samples.load() < 300000,
           "mono audio volume is plausible (<300k samples)");
+    // The per-slot tap sees the same stereo split into its two slots: each
+    // slot gets one sample per L/R pair (as many as the mono stream), and
+    // nothing arrives as unslotted mono in this stereo mode.
+    std::printf("  per-slot tap: slot1 %zu, slot2 %zu, mono %zu samples\n", slot_samples[1].load(),
+                slot_samples[2].load(), slot_samples[0].load());
+    check(slot_samples[1].load() == audio_samples.load() && slot_samples[2].load() == audio_samples.load() &&
+              slot_samples[0].load() == 0,
+          "per-slot audio tap: both DMR slots, each as long as the client's mono stream");
+    {
+        // dsd-fme's single-channel modes send mono: no stereo split there.
+        DsdProcessConfig c1;
+        c1.mode_flag = "1";
+        DsdProcessConfig c2;
+        c2.mode_flag = "2";
+        DsdProcessConfig ci;
+        ci.mode_flag = "i";
+        check(!c1.stereo_audio() && !ci.stereo_audio() && c2.stereo_audio() && cfg.stereo_audio(),
+              "stereo_audio(): DMR / P25p2 stereo, P25p1 / NXDN mono");
+    }
 
     if (g_failures == 0) {
         std::printf("\nALL DSD-FME PROCESS TESTS PASSED\n");

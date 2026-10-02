@@ -189,6 +189,7 @@ bool DsdccDecoder::start(const DsdccConfig& cfg, EventCallback on_event, AudioCa
     cfg_ = cfg;
     on_event_ = std::move(on_event);
     on_audio_ = std::move(on_audio);
+    on_slot_audio_ = cfg.on_slot_audio;
 
     // DSDcc's input rate is fixed at 48 kHz (README; its symbol timing
     // assumes 10 samples/symbol at DMR's 4800 baud). Feeding any other
@@ -298,6 +299,7 @@ bool DsdccDecoder::write_audio(const int16_t* pcm, std::size_t n) {
         int nb1 = 0;
         short* audio1 = decoder_->getAudio1(nb1);
         if (nb1 > 0) {
+            if (on_slot_audio_) on_slot_audio_(1, audio1, static_cast<std::size_t>(nb1));
             if (on_audio_ && following_slot_ != 2) on_audio_(audio1, static_cast<std::size_t>(nb1));
             decoder_->resetAudio1();
         }
@@ -305,6 +307,7 @@ bool DsdccDecoder::write_audio(const int16_t* pcm, std::size_t n) {
         int nb2 = 0;
         short* audio2 = decoder_->getAudio2(nb2);
         if (nb2 > 0) {
+            if (on_slot_audio_) on_slot_audio_(2, audio2, static_cast<std::size_t>(nb2));
             if (on_audio_ && following_slot_ != 1) on_audio_(audio2, static_cast<std::size_t>(nb2));
             decoder_->resetAudio2();
         }

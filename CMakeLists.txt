@@ -224,6 +224,17 @@ target_compile_options(test_assoc_merge PRIVATE -Wall -Wextra)
 add_test(NAME assoc_merge_test COMMAND test_assoc_merge)
 set_tests_properties(assoc_merge_test PROPERTIES TIMEOUT 30)
 
+# Per-call audio for the network explorer (assoc_audio.hpp, AssocModel::audio).
+add_executable(test_assoc_audio EXCLUDE_FROM_ALL
+  src/dsd_process.cpp
+  tests/test_assoc_audio.cpp
+)
+target_include_directories(test_assoc_audio PRIVATE src)
+target_link_libraries(test_assoc_audio PRIVATE Threads::Threads ZLIB::ZLIB)
+target_compile_options(test_assoc_audio PRIVATE -Wall -Wextra)
+add_test(NAME assoc_audio_test COMMAND test_assoc_audio)
+set_tests_properties(assoc_audio_test PROPERTIES TIMEOUT 30)
+
 # net-replay: replay a network-explorer recording offline (tools/net_replay.cpp).
 add_executable(net-replay tools/net_replay.cpp)
 target_include_directories(net-replay PRIVATE src)

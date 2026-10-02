@@ -206,6 +206,12 @@ inline std::string render_net_page_html() {
            background: #1f2327; color: var(--heading); border: 1px solid var(--info); border-radius: 6px;
            padding: .6rem .9rem; font-size: .85rem; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
   .gzoom { display: inline-flex; gap: .3rem; }
+  .play { appearance: none; cursor: pointer; display: inline-flex; align-items: center; gap: .3rem; font: inherit;
+          font-size: .78rem; color: var(--info); background: rgba(91,192,222,.12); border: 1px solid rgba(91,192,222,.35);
+          border-radius: 12px; padding: .05rem .55rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .play:hover { background: rgba(91,192,222,.22); }
+  .play.on { color: #fff; background: var(--info); border-color: var(--info); }
+  @media (pointer: coarse) { .play { min-height: 36px; padding: .2rem .75rem; font-size: .85rem; } }
   /* Details: a drawer over the page instead of a column below it. */
   @media (max-width: 1050px) {
     .side { position: fixed; z-index: 30; top: 0; right: 0; bottom: 0; width: min(400px, 92vw); max-height: none;
@@ -336,6 +342,7 @@ inline std::string render_net_page_html() {
     <button id="more" class="btn" type="button" aria-haspopup="true" aria-expanded="false" title="Actions">&#9776; Menu</button>
     <div class="acts" id="acts">
     <button id="rec" class="btn live-only" type="button" title="Record everything the explorer receives, to replay and analyse offline">&#9679; Record</button>
+    <button id="aud" class="btn live-only" type="button" title="Record each call's decoded voice, to play back here (off by default)">&#9835; Audio</button>
     <button id="pause" class="btn live-only" type="button">Pause</button>
     <button id="clear" class="btn live-only" type="button" title="Forget everything learned so far">Clear</button>
     <span class="dropdown live-only">
@@ -573,6 +580,7 @@ function table(cont, view, cols, rows, empty, onRow, selFn, card) {
   // test for a value) or only repeat what the details show (hideMd).
   cols.forEach(function (c, i) { c.i = i; });
   var all = cols;
+  cols = cols.filter(function (c) { return !c.hideEmpty || rows.some(c.hideEmpty); });
   if (drawer())
     cols = cols.filter(function (c) {
       if (c.hideMd && mq('(max-width: 900px)')) return false;
@@ -651,12 +659,44 @@ function typeBadges(c) {
     c.emerg ? badge('b-emerg', 'EMERGENCY') : null, c.enc ? badge('b-enc', 'ENCRYPTED') : null,
     c.streams > 1 ? h('span', { class: 'badge b-group', title: rx, 'data-tip': rx }, c.streams + ' RX') : null]);
 }
+// ---------- call audio ----------
+var PLAYER = { a: null, name: null };
+function mmss(ms) { var s = Math.round(ms / 1000); return Math.floor(s / 60) + ':' + p2(s % 60); }
+function syncPlay() {
+  document.querySelectorAll('.play[data-audio]').forEach(function (b) {
+    var on = b.getAttribute('data-audio') === PLAYER.name;
+    b.classList.toggle('on', on);
+    b.firstChild.textContent = on ? '\u25A0' : '\u25B6';
+  });
+}
+function playAudio(name) {
+  if (!PLAYER.a) {
+    PLAYER.a = new Audio();
+    PLAYER.a.addEventListener('ended', function () { PLAYER.name = null; syncPlay(); });
+    PLAYER.a.addEventListener('error', function () { if (PLAYER.name) toast('This call\'s audio is no longer available.'); PLAYER.name = null; syncPlay(); });
+  }
+  if (PLAYER.name === name) { PLAYER.a.pause(); PLAYER.name = null; syncPlay(); return; }
+  PLAYER.name = name;
+  PLAYER.a.src = '/net/audio/' + encodeURIComponent(name);
+  var p = PLAYER.a.play();
+  if (p && p.catch) p.catch(function () {});
+  syncPlay();
+}
+function playBtn(c) {
+  if (!c.audio || S.file) return null;
+  return h('button', { class: 'play' + (PLAYER.name === c.audio ? ' on' : ''), type: 'button', 'data-audio': c.audio,
+                       title: 'Play this call\'s audio' + (c.audio_ms ? ' (' + mmss(c.audio_ms) + ')' : ''),
+                       onclick: function (e) { e.stopPropagation(); playAudio(c.audio); } },
+           [h('span', { text: PLAYER.name === c.audio ? '\u25A0' : '\u25B6' }), c.audio_ms ? mmss(c.audio_ms) : '']);
+}
 // A call as a card (phones).
 function callCard(c) {
   return h('div', { class: 'ccard' }, [
-    h('div', { class: 'r1' }, [h('span', { class: 't mono', text: hms(c.start) }), durCell(c), typeBadges(c)]),
+    h('div', { class: 'r1' }, [h('span', { class: 't mono', text: hms(c.start) }), durCell(c), typeBadges(c), playBtn(c)]),
     h('div', { class: 'r2' }, [c.src ? rlink(c.src, c.alias || null) : '—', ' \u2192 ', toCell(c)]),
-    h('div', { class: 'r3' }, [c.net ? netc(c.net) : null, c.freq ? h('span', { class: 'mono', text: mhz(c.freq) + ' MHz' }) : null,
+    h('div', { class: 'r3' }, [c.net ? netc(c.net) : null,
+                               c.freq && !(IX.netByKey[c.net] && IX.netByKey[c.net].label.indexOf(mhz(c.freq)) >= 0)
+                                 ? h('span', { class: 'mono', text: mhz(c.freq) + ' MHz' }) : null,
                                c.slot ? h('span', { text: 'slot ' + c.slot }) : null]),
     c.text ? h('div', { class: 'tx', text: c.text }) : null]);
 }
@@ -673,6 +713,8 @@ function viewCalls() {
     { label: 'From', k: function (c) { return c.src; }, cell: function (c) { return c.src ? rlink(c.src, c.alias || null) : '—'; } },
     { label: 'To', cls: 'tgcell', k: function (c) { return c.tgt; }, cell: toCell },
     { label: 'Type', cls: 'nowrap ctype', cell: typeBadges },
+    { label: 'Audio', cls: 'nowrap', cell: function (c) { return playBtn(c) || ''; },
+      hideEmpty: function (c) { return !!c.audio && !S.file; } },
     { label: 'Text', cls: 'wrap', cell: function (c) { return c.text || ''; } }
   ], rows, 'No calls heard yet' + (S.net !== '*' || S.q ? ' for this filter.' : '.'), null, null, callCard);
 }
@@ -818,11 +860,12 @@ function recent(filter) {
   if (!cs.length) return h('div', { class: 'hint', text: 'No calls in the recent buffer.' });
   var ul = h('ul', { class: 'lst' });
   cs.forEach(function (c) {
+    var pb = playBtn(c);
     ul.appendChild(h('li', null, [
       h('div', null, [c.src ? rlink(c.src, c.alias || null) : '?', ' → ', c.tgt ? (c.priv ? rlink(c.tgt) : tlink(c.tgt)) : '?',
                       c.emerg ? h('span', null, [' ', badge('b-emerg', 'EMERG')]) : null,
                       c.text ? h('div', { class: 'alias', text: '“' + c.text + '”' }) : null]),
-      h('span', { class: 'c', text: live(c) ? 'live' : hms(c.start) })]));
+      h('span', { class: 'c' }, [pb, pb ? ' ' : '', live(c) ? 'live' : hms(c.start)])]));
   });
   return ul;
 }
@@ -1455,11 +1498,30 @@ $('rec').addEventListener('click', function () {
   }).then(updateRec).catch(function () {});
 });
 
+// ---------- per-call audio switch ----------
+function updateAudio(a) {
+  S.audio = a || {};
+  var b = $('aud');
+  b.classList.toggle('on', !!S.audio.on);
+  b.textContent = S.audio.on ? '\u266B Audio on' : '\u266B Audio';
+  b.title = S.audio.on
+    ? 'Recording each call\'s voice into ' + S.audio.dir + ' (' + mb(S.audio.bytes || 0) + ' of ' + mb(S.audio.cap_bytes || 0) +
+      ', ' + (S.audio.files || 0) + ' files). Click to stop.'
+    : 'Record each call\'s decoded voice, to play back here (off by default; encrypted calls are never recorded)';
+}
+$('aud').addEventListener('click', function () {
+  fetch(S.audio && S.audio.on ? '/net/audio/off' : '/net/audio/on', { cache: 'no-store' }).then(function (r) {
+    if (!r.ok) alert('Could not start recording audio \u2014 check that DSD_NET_AUDIO_DIR (or DSD_NET_LOG_DIR) is writable.');
+    return r.json();
+  }).then(updateAudio).catch(function () {});
+});
+
 function poll() {
   if (S.paused || S.file || document.hidden) { setTimeout(poll, POLL); return; }
   fetch('/net.json', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
     S.skew = d.now - Date.now();
     updateRec(d.rec);
+    updateAudio(d.audio);
     updateImports(d.imports);
     var changed = !S.d || d.version !== S.d.version;
     S.d = d;

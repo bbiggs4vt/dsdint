@@ -218,6 +218,21 @@ struct DsdProcessConfig {
     // association model needs. Called on the stdout reader thread; does not
     // change what clients receive. Unset = no-op.
     std::function<void(const DsdEvent&)> on_suppressed;
+
+    // Observer for decoded voice per TDMA slot, BEFORE the mono collapse
+    // above: (1, left) and (2, right) in dsd-fme's stereo modes, (0, pcm) in
+    // its mono ones. 8 kHz s16. Called on the UDP reader thread; feeds the
+    // network explorer's per-call audio and doesn't change what clients get.
+    std::function<void(int slot, const int16_t* pcm, std::size_t n)> on_slot_audio;
+
+    // Whether dsd-fme's UDP audio is stereo (slot 1 left, slot 2 right) for
+    // this mode: DMR ('s'), auto ('a'), X2-TDMA ('x'), 't' and P25 Phase 2
+    // ('2') -- dsd-fme sets pulse_digi_out_channels = 2 for those and 1 for
+    // the single-channel protocols (P25p1, NXDN, dPMR, D-STAR, YSF, EDACS,
+    // ProVoice), whose packets are plain mono (dsd_main.c / dsd_audio2.c).
+    bool stereo_audio() const {
+        return mode_flag == "s" || mode_flag == "a" || mode_flag == "x" || mode_flag == "t" || mode_flag == "2";
+    }
 };
 
 // Emit filter for the subprocess backend: whether a classified event should

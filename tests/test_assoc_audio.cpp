@@ -1,0 +1,344 @@
+// test_assoc_audio.cpp
+//
+// Per-call audio for the network explorer (AssocModel::audio, assoc_audio.hpp):
+// decoded voice goes to the right call (per TDMA slot, per stream), audio heard
+// just before its call is decoded is kept, silence and encrypted calls are not
+// recorded, two receivers' copies of one call make one recording, the WAV files
+// are valid, the disk cap holds, only the store's own files are served, and
+// audio never leaks into what a recording replays or an export imports.
+// Each test block feeds samples of a distinct value, then reads the files back.
+
+#include "../src/assoc_replay.hpp"
+#include "../src/dsd_process.hpp"
+
+#include <unistd.h>
+#include <zlib.h>
+
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <string>
+#include <vector>
+
+using namespace dsdsrv;
+namespace fs = std::filesystem;
+
+static int g_failures = 0;
+static void check(bool c, const std::string& what) {
+    std::printf("  %s: %s\n", c ? "OK" : "FAIL", what.c_str());
+    if (!c) ++g_failures;
+}
+static void line(AssocModel& m, std::uint64_t sid, const std::string& l, std::int64_t t) {
+    m.ingest(sid, classify_dsd_fme_line(l), t);
+}
+static void tone(AssocModel& m, std::uint64_t sid, int slot, int16_t v, std::int64_t t, std::size_t n = 160,
+                 bool keyed = false) {
+    std::vector<int16_t> pcm(n, v);
+    m.audio(sid, slot, pcm.data(), pcm.size(), keyed, t);
+}
+static std::string slurp(const std::string& p) {
+    std::ifstream f(p, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+}
+static std::uint32_t le32(const std::string& s, std::size_t at) {
+    return static_cast<std::uint32_t>(static_cast<unsigned char>(s[at])) | static_cast<std::uint32_t>(static_cast<unsigned char>(s[at + 1])) << 8 |
+           static_cast<std::uint32_t>(static_cast<unsigned char>(s[at + 2])) << 16 | static_cast<std::uint32_t>(static_cast<unsigned char>(s[at + 3])) << 24;
+}
+// The samples of a WAV file (checks the header first).
+static bool wav(const std::string& path, std::vector<int16_t>& out) {
+    const std::string s = slurp(path);
+    if (s.size() < 44 || s.compare(0, 4, "RIFF") || s.compare(8, 8, "WAVEfmt ") || s.compare(36, 4, "data")) return false;
+    const std::uint32_t data = le32(s, 40);
+    if (le32(s, 4) != 36 + data || data != s.size() - 44 || le32(s, 24) != 8000) return false;
+    out.resize(data / 2);
+    for (std::size_t i = 0; i < out.size(); ++i)
+        out[i] = static_cast<int16_t>(static_cast<unsigned char>(s[44 + 2 * i]) | static_cast<unsigned char>(s[45 + 2 * i]) << 8);
+    return true;
+}
+static bool all_eq(const std::vector<int16_t>& v, int16_t x) {
+    for (int16_t s : v) if (s != x) return false;
+    return !v.empty();
+}
+// The model's calls (family f) as (src, audio file) pairs.
+struct C { std::string src, tgt, audio; std::uint64_t ms; };
+static std::vector<C> calls(const AssocModel& m, const char* f, std::int64_t now) {
+    mjson::V j;
+    mjson::parse(m.to_json(now), j);
+    std::vector<C> out;
+    const mjson::V* fs = j.get("families");
+    const mjson::V* F = fs ? fs->get(f) : nullptr;
+    const mjson::V* cs = F ? F->get("calls") : nullptr;
+    if (cs) for (const auto& c : cs->a) out.push_back({c.str("src"), c.str("tgt"), c.str("audio"), static_cast<std::uint64_t>(c.num("audio_ms"))});
+    return out;
+}
+static const C* by_src(const std::vector<C>& v, const std::string& src) {
+    for (const auto& c : v) if (c.src == src) return &c;
+    return nullptr;
+}
+
+static const char* kCC = "19:54:55 Sync: +DMR  slot1  [SLOT1] | Color Code=04 | VC6 ";
+
+int main() {
+    std::printf("test_assoc_audio\n");
+    const fs::path dir = fs::temp_directory_path() / ("assoc_audio_test_" + std::to_string(::getpid()));
+    fs::remove_all(dir);
+
+    // ---- off by default: nothing recorded ----
+    {
+        AssocModel m;
+        m.begin_stream(1, "dmr", 0);
+        for (int k = 0; k < 2; ++k) line(m, 1, kCC, 1000 + k);
+        line(m, 1, " SLOT 1 TGT=9 SRC=100 Group Call ", 1100);
+        tone(m, 1, 1, 1111, 1120);
+        check(!m.audio_status().on && calls(m, "dmr", 1200).at(0).audio.empty() && !fs::exists(dir),
+              "off: audio is not recorded unless enabled");
+    }
+
+    const auto file = [&](const std::string& sub, const std::string& name) { return (dir / sub / name).string(); };
+
+    // ---- DMR: two calls at once, one per slot; each gets only its slot ----
+    {
+        AssocModel m;
+        m.set_identity("abcdef0123456789", "t");
+        check(m.start_audio((dir / "a").string(), 1 << 30, 0, 1000) && m.audio_status().on, "enable: audio store on");
+        m.begin_stream(1, "dmr", 0);
+        for (int k = 0; k < 2; ++k) line(m, 1, kCC, 1000 + k);
+        line(m, 1, " SLOT 1 TGT=9 SRC=100 Group Call ", 1100);
+        line(m, 1, " SLOT 2 TGT=10 SRC=200 Group Call ", 1105);
+        for (int f = 0; f < 50; ++f) {                        // 1 s of each slot
+            tone(m, 1, 1, 1111, 1120 + 20 * f);
+            tone(m, 1, 2, 2222, 1120 + 20 * f);
+        }
+        auto cs = calls(m, "dmr", 2200);
+        const C* pa = by_src(cs, "100");
+        const C* pb = by_src(cs, "200");
+        const C A = pa ? *pa : C{}, B = pb ? *pb : C{};       // copies: `cs` is reassigned below
+        const C* a = pa ? &A : nullptr;
+        const C* b = pb ? &B : nullptr;
+        check(a && b && !a->audio.empty() && !b->audio.empty() && a->audio != b->audio,
+              "slots: each of two concurrent calls has its own audio file");
+        check(a && a->ms == 1000 && b && b->ms == 1000, "slots: /net.json gives each call's audio length (1.000 s)");
+        std::vector<int16_t> s1, s2;
+        check(a && b && wav(m.audio_path(a->audio, 1LL << 40), s1) && wav(m.audio_path(b->audio, 1LL << 40), s2),
+              "wav: valid RIFF/WAVE, 8 kHz, sizes current while the call is still open");
+        check(all_eq(s1, 1111) && s1.size() == 8000 && all_eq(s2, 2222) && s2.size() == 8000,
+              "slots: slot 1's call holds only slot-1 audio, slot 2's only slot-2 audio");
+        check(a && a->audio.find("abcdef01") != std::string::npos && CallAudioStore::valid_name(a->audio),
+              "names: call_<start>_<instance>_<id>.wav");
+
+        // The call ends (a new call on slot 1 closes it); later audio goes to the new call.
+        line(m, 1, " SLOT 1 TGT=11 SRC=300 Group Call ", 2300);
+        tone(m, 1, 1, 3333, 2320);
+        cs = calls(m, "dmr", 2400);
+        const C* c = by_src(cs, "300");
+        std::vector<int16_t> s3, s1b;
+        check(c && wav(m.audio_path(c->audio, 1LL << 40), s3) && all_eq(s3, 3333) && wav(m.audio_path(a->audio, 1LL << 40), s1b) && s1b.size() == 8000,
+              "slots: a new call on the slot gets the audio from then on; the earlier file is final");
+        check(by_src(cs, "100") && by_src(cs, "100")->ms == 1000, "slots: a finished call still reports its audio length");
+
+        // A slot whose call went quiet long ago doesn't get stray audio.
+        tone(m, 1, 2, 4444, 9000);
+        std::vector<int16_t> s2b;
+        check(wav(m.audio_path(b->audio, 1LL << 40), s2b) && s2b.size() == 8000, "slots: audio long after a call ended is not added to it");
+        m.end_stream(1, 9100);
+    }
+
+    // ---- audio that arrives just before its call is decoded ----
+    {
+        AssocModel m;
+        m.start_audio((dir / "b").string(), 1 << 30, 0, 1000);
+        m.begin_stream(1, "dmr", 0);
+        for (int k = 0; k < 2; ++k) line(m, 1, kCC, 1000 + k);   // stream is live, no call yet
+        tone(m, 1, 1, 0, 1010);                                   // silence: never kept
+        for (int f = 0; f < 10; ++f) tone(m, 1, 1, 500, 1020 + 20 * f);
+        line(m, 1, " SLOT 1 TGT=9 SRC=100 Group Call ", 1250);
+        for (int f = 0; f < 5; ++f) tone(m, 1, 1, 600, 1260 + 20 * f);
+        const C* c = nullptr;
+        auto cs = calls(m, "dmr", 1400);
+        c = by_src(cs, "100");
+        std::vector<int16_t> s;
+        bool ok = c && wav(m.audio_path(c->audio, 1LL << 40), s) && s.size() == 15 * 160;
+        for (std::size_t i = 0; ok && i < s.size(); ++i) ok = s[i] == (i < 1600 ? 500 : 600);
+        check(ok, "pre-roll: the 200 ms heard before the call line start the call's recording, in order");
+
+        // Silence alone on a call makes no file.
+        line(m, 1, " SLOT 2 TGT=10 SRC=200 Group Call ", 1500);
+        for (int f = 0; f < 5; ++f) tone(m, 1, 2, 0, 1510 + 20 * f);
+        cs = calls(m, "dmr", 1700);
+        check(by_src(cs, "200") && by_src(cs, "200")->audio.empty(), "silence: a call with only silent audio has no file");
+        // Pre-roll older than a second is dropped.
+        m.end_stream(1, 2000);
+        m.begin_stream(2, "dmr", 3000);
+        for (int k = 0; k < 2; ++k) line(m, 2, kCC, 3000 + k);
+        tone(m, 2, 1, 700, 3010);
+        line(m, 2, " SLOT 1 TGT=9 SRC=101 Group Call ", 5000);
+        tone(m, 2, 1, 800, 5010);
+        cs = calls(m, "dmr", 5100);
+        std::vector<int16_t> s2;
+        check(by_src(cs, "101") && wav(m.audio_path(by_src(cs, "101")->audio, 1LL << 40), s2) && all_eq(s2, 800),
+              "pre-roll: audio from more than a second before the call isn't attached to it");
+    }
+
+    // ---- encrypted calls: never recorded (unless the session has the key) ----
+    {
+        AssocModel m;
+        m.start_audio((dir / "c").string(), 1 << 30, 0, 1000);
+        m.begin_stream(1, "p25p1", 0);
+        line(m, 1, "17:30:46 Sync: +P25p1 NAC/CC: 293;  LDU1", 1000);
+        line(m, 1, "P25 TGT: 00000100; SRC: 00012001; NAC: 293; ", 1100);
+        line(m, 1, " HDU  ALG ID: 0x84 KEY ID: 0x0001 MI: 0x0123456789ABCDEF", 1110);
+        for (int f = 0; f < 5; ++f) tone(m, 1, 0, 900, 1120 + 20 * f);
+        auto cs = calls(m, "p25", 1300);
+        check(by_src(cs, "12001") && by_src(cs, "12001")->audio.empty(), "encrypted: no audio file");
+
+        // Flagged encrypted only after audio started: the file is deleted.
+        m.begin_stream(2, "p25p1", 2000);
+        line(m, 2, "17:30:46 Sync: +P25p1 NAC/CC: 294;  LDU1", 2000);
+        line(m, 2, "P25 TGT: 00000200; SRC: 00012002; NAC: 294; ", 2100);
+        tone(m, 2, 0, 901, 2110);
+        cs = calls(m, "p25", 2150);
+        const std::string early = by_src(cs, "12002") ? by_src(cs, "12002")->audio : std::string();
+        line(m, 2, " HDU  ALG ID: 0x84 KEY ID: 0x0001 MI: 0x0123456789ABCDEF", 2120);
+        tone(m, 2, 0, 901, 2130);
+        cs = calls(m, "p25", 2200);
+        check(!early.empty() && by_src(cs, "12002")->audio.empty() && !fs::exists(file("c", early)) &&
+                  m.audio_path(early, 2200).empty(),
+              "encrypted: a call found to be encrypted after its audio began loses the file");
+
+        // With the key, the session hears it in the clear: recorded.
+        m.begin_stream(3, "p25p1", 3000);
+        line(m, 3, "17:30:46 Sync: +P25p1 NAC/CC: 295;  LDU1", 3000);
+        line(m, 3, "P25 TGT: 00000300; SRC: 00012003; NAC: 295; ", 3100);
+        line(m, 3, " HDU  ALG ID: 0x84 KEY ID: 0x0001 MI: 0x0123456789ABCDEF", 3110);
+        tone(m, 3, 0, 902, 3120, 160, true);
+        cs = calls(m, "p25", 3200);
+        check(by_src(cs, "12003") && !by_src(cs, "12003")->audio.empty(), "encrypted: recorded when the session has the key");
+    }
+
+    // ---- one call heard by two receivers: one recording ----
+    {
+        AssocModel m;
+        m.start_audio((dir / "d").string(), 1 << 30, 0, 1000);
+        for (std::uint64_t sid : {1, 2}) {
+            m.begin_stream(sid, "p25p1", 0);
+            line(m, sid, "17:30:46 Sync: +P25p1 NAC/CC: 717; RFSS: 001; Site: 097;  TSBK", 1000);
+            m.ingest(sid, classify_dsd_fme_line(" LRA [00] CFVA [3] RFSS[001] SITE [097] SYSID [715]"), 1010);
+            line(m, sid, " CHAN-T [52E6] CHAN-R [50D7] SSC [70] WACN [BEE0A]", 1020);
+        }
+        line(m, 1, "P25 TGT: 00000100; SRC: 00002048; NAC: 717; ", 1100);
+        tone(m, 1, 0, 111, 1110);
+        line(m, 2, "P25 TGT: 00000100; SRC: 00002048; NAC: 717; ", 1120);   // the same call on stream 2
+        for (int f = 0; f < 5; ++f) { tone(m, 2, 0, 222, 1130 + 20 * f); tone(m, 1, 0, 111, 1130 + 20 * f); }
+        auto cs = calls(m, "p25", 1300);
+        std::vector<int16_t> s;
+        check(cs.size() == 1 && !cs[0].audio.empty() && wav(m.audio_path(cs[0].audio, 1LL << 40), s) && all_eq(s, 111) && s.size() == 6 * 160,
+              "twins: one call, one recording (the first receiver's), no interleaving");
+    }
+
+    // ---- single-channel protocols: mono audio goes to the stream's call ----
+    {
+        AssocModel m;
+        m.start_audio((dir / "e").string(), 1 << 30, 0, 1000);
+        // dsd-fme sends single-channel protocols as mono ("slot 0"); DSDcc
+        // decodes them into its slot-1 buffer. Either reaches the call.
+        const std::pair<std::uint64_t, int> streams[] = {{1, 0}, {2, 1}};
+        for (const auto& st : streams) {
+            const std::uint64_t sid = st.first;
+            m.begin_stream(sid, "nxdn48", 0);
+            line(m, sid, "12:00:01 Sync: +NXDN48 RAN 01 VOICE", 1000);
+            line(m, sid, " VCALL - TGT: 00000300 SRC: 0000432" + std::to_string(sid), 1100);
+            tone(m, sid, st.second, static_cast<int16_t>(1230 + sid), 1110);
+            tone(m, sid, st.second, static_cast<int16_t>(1230 + sid), 1130);
+        }
+        auto cs = calls(m, "nxdn", 1200);
+        std::vector<int16_t> s0, s1;
+        check(by_src(cs, "4321") && wav(m.audio_path(by_src(cs, "4321")->audio, 1LL << 40), s0) && s0.size() == 320 && all_eq(s0, 1231) &&
+                  by_src(cs, "4322") && wav(m.audio_path(by_src(cs, "4322")->audio, 1LL << 40), s1) && s1.size() == 320 && all_eq(s1, 1232),
+              "mono: a single-channel protocol's audio (dsd-fme's mono, DSDcc's slot 1) goes to its call");
+    }
+
+    // ---- serving: only the store's own files ----
+    {
+        AssocModel m;
+        m.start_audio((dir / "f").string(), 1 << 30, 0, 1000);
+        m.begin_stream(1, "dmr", 0);
+        for (int k = 0; k < 2; ++k) line(m, 1, kCC, 1000 + k);
+        line(m, 1, " SLOT 1 TGT=9 SRC=100 Group Call ", 1100);
+        tone(m, 1, 1, 77, 1110);
+        const std::string name = calls(m, "dmr", 1200).at(0).audio;
+        std::ofstream((dir / "f" / "notes.txt").string()) << "x";
+        check(!m.audio_path(name, 1200).empty(), "serve: a call's file resolves");
+        bool none = true;
+        for (const char* bad : {"../f/notes.txt", "notes.txt", "call_1_x_1.wav", "call_../../etc/passwd.wav",
+                                "/etc/passwd", "call_1_x_1.wav/..", ""})
+            none = none && m.audio_path(bad, 1200).empty();
+        check(none, "serve: other names, unknown files and path tricks are refused");
+    }
+
+    // ---- disk cap: oldest finished files go first, files being written never ----
+    {
+        AssocModel m;
+        m.start_audio((dir / "g").string(), 20000, 0, 1000);     // ~1.2 s of audio
+        m.begin_stream(1, "dmr", 0);
+        for (int k = 0; k < 2; ++k) line(m, 1, kCC, 1000 + k);
+        std::vector<std::string> names;
+        for (int i = 0; i < 4; ++i) {
+            const std::int64_t t = 2000 + 1000 * i;
+            line(m, 1, " SLOT 1 TGT=9 SRC=" + std::to_string(100 + i) + " Group Call ", t);
+            for (int f = 0; f < 25; ++f) tone(m, 1, 1, static_cast<int16_t>(10 + i), t + 10 + 20 * f);   // 0.5 s = 8 KB
+            names.push_back(by_src(calls(m, "dmr", t + 600), std::to_string(100 + i))->audio);
+        }
+        const auto st = m.audio_status();
+        check(st.bytes <= 20000 && !fs::exists(file("g", names[0])) && fs::exists(file("g", names[3])) &&
+                  m.audio_path(names[0], 6000).empty(),
+              "cap: total stays under the cap; the oldest file was deleted, the newest kept");
+        // A restart finds the files already there and counts them.
+        m.stop_audio();
+        AssocModel m2;
+        m2.start_audio((dir / "g").string(), 20000, 0, 7000);
+        check(m2.audio_status().files == st.files && !m2.audio_path(names[3], 7000).empty(),
+              "restart: earlier runs' files are counted against the cap and still play");
+    }
+
+    // ---- audio never reaches a recording's snapshots or an import ----
+    {
+        AssocModel m;
+        m.set_identity("1122334455667788", "rx");
+        m.set_since(500);
+        m.start_audio((dir / "h").string(), 1 << 30, 0, 1000);
+        m.start_recording(dir.string(), 0, false, 1000);
+        const std::string rpath = m.recording().path;
+        m.begin_stream(1, "dmr", 1000);
+        for (int k = 0; k < 2; ++k) line(m, 1, kCC, 1001 + k);
+        line(m, 1, " SLOT 1 TGT=9 SRC=100 Group Call ", 1100);
+        for (int f = 0; f < 5; ++f) tone(m, 1, 1, 55, 1110 + 20 * f);
+        const std::string live = m.to_json(1300);
+        m.stop_recording(1300);
+        AssocModel r;
+        ReplayResult rr;
+        replay_log(rpath, r, rr);
+        check(live.find("\"audio\":\"call_") != std::string::npos && rr.stop_model.find("\"audio\":\"call_") == std::string::npos &&
+                  families_of(r.to_json(1300)) == families_of(rr.stop_model),
+              "replay: snapshots leave audio out, so a replay still matches byte for byte");
+        const std::string ex = m.to_export_json(1300);
+        Dataset d;
+        dataset_from_export_text(ex, "x", d, nullptr);
+        check(ex.find("\"audio\":\"call_") != std::string::npos && d.fams["dmr"].calls.size() == 1 && d.fams["dmr"].calls[0].audio.empty(),
+              "export: says which calls had audio; an import elsewhere doesn't point at files it hasn't got");
+        // Clear finishes the open files; they stay playable.
+        const std::string name = calls(m, "dmr", 1300).at(0).audio;
+        m.clear(1400);
+        std::vector<int16_t> s;
+        check(wav(m.audio_path(name, 1LL << 40), s) && s.size() == 800 && !m.audio_path(name, 1500).empty(),
+              "clear: the explorer forgets the call; its finished file stays (until the cap)");
+    }
+
+    fs::remove_all(dir);
+    if (g_failures) {
+        std::printf("\n%d CHECK(S) FAILED\n", g_failures);
+        return 1;
+    }
+    std::printf("\nALL ASSOC AUDIO TESTS PASSED\n");
+    return 0;
+}

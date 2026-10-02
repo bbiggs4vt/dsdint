@@ -35,11 +35,13 @@
 
 #pragma once
 
+#include "assoc_audio.hpp"
 #include "assoc_log.hpp"
 #include "assoc_merge.hpp"
 #include "dsd_backend_types.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cstdint>
@@ -88,6 +90,8 @@ public:
     static constexpr std::size_t kMaxEdgesPerNode = 300;
     static constexpr std::size_t kMaxAliases = 5;
     static constexpr std::size_t kMaxFreqs = 64;       // channels listed per network
+    static constexpr std::int64_t kPrerollMs = 1000;   // audio held before its call is decoded
+    static constexpr std::size_t kPrerollSamples = 8000;
 
     static std::int64_t now_ms() {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -441,6 +445,100 @@ public:
         return head + families_json(view) + "}";
     }
 
+    // ---- per-call audio (see assoc_audio.hpp) -----------------------------
+    // Record decoded voice per call, into `dir`. Off by default.
+    bool start_audio(const std::string& dir, std::uint64_t cap_bytes, std::int64_t max_age_ms,
+                     std::int64_t now = now_ms()) {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (audio_.on()) return true;
+        const bool ok = audio_.enable(dir, cap_bytes, max_age_ms, now);
+        audio_on_ = ok;
+        ++version_;
+        return ok;
+    }
+    void stop_audio() {
+        std::lock_guard<std::mutex> lk(mu_);
+        audio_on_ = false;
+        audio_.disable();
+        for (auto& sk : sess_) sk.second.preroll.clear();
+        ++version_;
+    }
+    CallAudioStore::Status audio_status() const {
+        std::lock_guard<std::mutex> lk(mu_);
+        return audio_.status();
+    }
+    // A served file's path ("" if `name` isn't one of the store's files).
+    std::string audio_path(const std::string& name, std::int64_t now = now_ms()) {
+        std::lock_guard<std::mutex> lk(mu_);
+        return audio_.path_for(name, now);
+    }
+
+    // Decoded voice from session `sid`'s decoder: `slot` is the DMR TDMA slot
+    // the samples belong to (1 or 2), or 0 for a single-channel decoder. They
+    // go to the call open on that slot of that stream -- or, for a protocol
+    // without TDMA slots, its current call. Audio that arrives just before
+    // its call is decoded is held (up to 1 s) and put at the start. Nothing
+    // is recorded for an encrypted call, unless the session has a key
+    // (`keyed`) and so hears it in the clear. Audio never changes the call
+    // records themselves (what a recording replays), only adds its file.
+    void audio(std::uint64_t sid, int slot, const int16_t* pcm, std::size_t n, bool keyed = false,
+               std::int64_t now = now_ms()) {
+        if (!audio_on_.load(std::memory_order_relaxed) || !n) return;
+        std::lock_guard<std::mutex> lk(mu_);
+        if (!audio_.on()) return;
+        auto sit = sess_.find(sid);
+        if (sit == sess_.end() || !sit->second.live) return;
+        Ctx& c = sit->second;
+        auto fit = fam_.find(c.family);
+        if (fit == fam_.end()) return;
+        Family& F = fit->second;
+        Call* k = nullptr;
+        if (slot == 1 || slot == 2) {
+            k = fresh_call(c, F, std::to_string(slot), now);
+            if (!k && slot == 1) k = fresh_call(c, F, std::string(), now);   // slot-less protocol in a stereo mode
+        } else {
+            k = fresh_call(c, F, std::string(), now);
+            for (const char* s : {"1", "2"})
+                if (Call* x = fresh_call(c, F, s, now); x && (!k || x->last_ms > k->last_ms)) k = x;
+        }
+        bool silent = true;
+        for (std::size_t i = 0; i < n && silent; ++i) silent = pcm[i] == 0;
+        if (!k) {
+            if (silent) return;
+            Ctx::Preroll& p = c.preroll[slot];
+            if (now - p.last > kPrerollMs) p.pcm.clear();
+            p.pcm.insert(p.pcm.end(), pcm, pcm + n);
+            if (p.pcm.size() > kPrerollSamples) p.pcm.erase(p.pcm.begin(), p.pcm.end() - kPrerollSamples);
+            p.last = now;
+            return;
+        }
+        if (k->no_audio) return;
+        if (k->encrypted && !keyed) {
+            k->no_audio = true;
+            if (!k->audio.empty()) { audio_.discard(k->audio); k->audio.clear(); ++version_; }
+            return;
+        }
+        if (k->audio.empty()) {
+            if (silent && c.preroll[slot].pcm.empty()) return;            // no file for silence alone
+            const std::string name = CallAudioStore::make_name(k->start_ms, instance_, k->id);
+            if (!audio_.open(name, now)) return;
+            k->audio = name;
+            k->audio_sid = sid;
+            k->audio_slot = slot;
+            Ctx::Preroll& p = c.preroll[slot];
+            if (!p.pcm.empty() && now - p.last <= kPrerollMs) {
+                audio_.append(name, p.pcm.data(), p.pcm.size(), now);
+                k->audio_samples += p.pcm.size();
+            }
+            p.pcm.clear();
+            ++version_;
+        } else if (k->audio_sid != sid || k->audio_slot != slot) {
+            return;                                   // another receiver's copy of this call: one recording
+        }
+        audio_.append(k->audio, pcm, n, now);
+        k->audio_samples += n;
+    }
+
     // ---- export / import ----------------------------------------------------
     // What the explorer shows (live data plus imports), as a self-describing
     // file that the explorer can open or import again -- format
@@ -571,17 +669,24 @@ private:
         im += "]";
         return "{\"version\":" + std::to_string(version_) + ",\"now\":" + std::to_string(now) +
                ",\"instance\":" + assocjson::q(instance_) + ",\"name\":" + assocjson::q(name_) +
-               ",\"since\":" + std::to_string(since_) + ",\"rec\":" + rec_json_locked() + ",\"imports\":" + im +
+               ",\"since\":" + std::to_string(since_) + ",\"rec\":" + rec_json_locked() +
+               ",\"audio\":" + audio_json_locked() + ",\"imports\":" + im +
                ",\"families\":";
+    }
+    std::string audio_json_locked() const {
+        const auto a = audio_.status();
+        return std::string("{\"on\":") + (a.on ? "true" : "false") + ",\"dir\":" + assocjson::q(a.dir) +
+               ",\"bytes\":" + std::to_string(a.bytes) + ",\"cap_bytes\":" + std::to_string(a.cap_bytes) +
+               ",\"files\":" + std::to_string(a.files) + ",\"recording\":" + std::to_string(a.open) + "}";
     }
     std::string snapshot_json_locked(std::int64_t now) const {
         return "{\"version\":" + std::to_string(version_) + ",\"now\":" + std::to_string(now) +
-               ",\"rec\":" + rec_json_locked() + ",\"families\":" + families_json(dataset_locked(now)) + "}";
+               ",\"rec\":" + rec_json_locked() + ",\"families\":" + families_json(dataset_locked(now, false)) + "}";
     }
     DsSource live_source_locked(std::int64_t now) const { return DsSource{instance_, name_, since_, now}; }
 
     // The live model in plain form. Calls newest first.
-    Dataset dataset_locked(std::int64_t now) const {
+    Dataset dataset_locked(std::int64_t now, bool with_audio = true) const {
         Dataset d;
         d.label = "live";
         d.exported = now;
@@ -614,6 +719,10 @@ private:
                 const Call& k = *it;
                 DsCall c;
                 c.id = k.id; c.session = k.session; c.streams = k.streams; c.freq = k.freq;
+                if (with_audio && !k.audio.empty()) {
+                    c.audio = k.audio;
+                    c.audio_ms = k.audio_samples * 1000 / CallAudioStore::kRate;
+                }
                 c.net = k.net; c.site = k.site; c.slot = k.slot; c.src = k.src; c.tgt = k.tgt;
                 c.alias = k.alias; c.text = k.text;
                 c.priv = k.priv; c.voice = k.voice; c.data = k.data; c.emerg = k.emergency; c.enc = k.encrypted;
@@ -657,6 +766,9 @@ private:
     // protocol and running state. The live data's span restarts at `now`. Call ids restart, so a recording begun after a clear
     // replays to identical output.
     void clear_locked(std::int64_t now) {
+        for (auto& fk : fam_)
+            for (auto& k : fk.second.calls)
+                if (!k.audio.empty()) audio_.finish(k.audio);   // the files stay on disk
         fam_.clear();
         imports_.clear();
         since_ = now;
@@ -680,6 +792,11 @@ private:
         std::string net, site, slot, src, tgt, alias, text;
         bool priv = false, voice = false, data = false, emergency = false, encrypted = false;
         bool open = true, counted = false;
+        std::string audio;                              // its audio file ("" = none; see audio())
+        std::uint64_t audio_sid = 0;                    // the stream + slot the audio comes from
+        int audio_slot = -1;
+        std::uint64_t audio_samples = 0;                // its length (8 kHz samples)
+        bool no_audio = false;                          // encrypted: never record
         std::int64_t start_ms = 0, last_ms = 0;
         std::uint32_t frames = 0;
         std::uint32_t streams = 1;                      // receivers that heard it (see adopt_twin)
@@ -730,6 +847,10 @@ private:
         std::map<std::string, std::uint64_t> last_slot_call; // slot -> latest call id
         // Weak-anchor values seen but not yet believed: key -> (value, times in a row).
         std::map<std::string, std::pair<std::string, int>> pending;
+        // Audio that arrived on a slot before its call was decoded (per audio
+        // slot 0/1/2), kept briefly so the call's recording starts with it.
+        struct Preroll { std::vector<int16_t> pcm; std::int64_t last = 0; };
+        std::map<int, Preroll> preroll;
     };
 
     // ---- string helpers -------------------------------------------------
@@ -1211,6 +1332,16 @@ private:
         twin.start_ms = std::min(twin.start_ms, dup.start_ms);
         twin.last_ms = std::max(twin.last_ms, dup.last_ms);
         ++twin.streams;
+        // One recording per call: the twin's, else the duplicate's.
+        if (!dup.audio.empty()) {
+            if (twin.audio.empty()) {
+                twin.audio = dup.audio; twin.audio_sid = dup.audio_sid; twin.audio_slot = dup.audio_slot;
+                twin.audio_samples = dup.audio_samples;
+            } else {
+                audio_.discard(dup.audio);
+            }
+            dup.audio.clear();
+        }
         const std::uint64_t dup_id = dup.id, twin_id = twin.id;
         for (auto& kv : c.active) if (kv.second == dup_id) kv.second = twin_id;
         for (auto& kv : c.last_slot_call) if (kv.second == dup_id) kv.second = twin_id;
@@ -1258,6 +1389,10 @@ private:
     void close_call(Family& F, Call& k) {
         if (!k.open) return;
         k.open = false;
+        if (!k.audio.empty()) {
+            if (k.encrypted) { audio_.discard(k.audio); k.audio.clear(); }   // flagged encrypted late
+            else audio_.finish(k.audio);
+        }
         if (!k.counted || k.priv) return;
         auto t = F.tgs.find(k.tgt);
         if (t == F.tgs.end()) return;
@@ -1344,6 +1479,8 @@ private:
     std::vector<Dataset> imports_;
     std::uint64_t next_import_ = 0;
     bool per_receiver_ = default_per_receiver();
+    CallAudioStore audio_;
+    std::atomic<bool> audio_on_{false};
 };
 
 } // namespace dsdsrv

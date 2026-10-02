@@ -346,6 +346,8 @@ struct DsCall {
     bool priv = false, voice = false, data = false, emerg = false, enc = false, open = false;
     std::int64_t start = 0, last = 0;
     std::int64_t freq = 0;
+    std::string audio;                          // live server only: its audio file (see /net/audio/)
+    std::uint64_t audio_ms = 0;
 };
 struct DsFamily {
     std::map<std::string, DsNetwork> networks;
@@ -425,7 +427,9 @@ inline std::string families_json(const Dataset& d) {
               << ",\"tgt\":" << q(k.tgt) << ",\"alias\":" << q(k.alias) << ",\"text\":" << q(k.text)
               << ",\"priv\":" << b(k.priv) << ",\"voice\":" << b(k.voice) << ",\"data\":" << b(k.data)
               << ",\"emerg\":" << b(k.emerg) << ",\"enc\":" << b(k.enc) << ",\"open\":" << b(k.open)
-              << ",\"streams\":" << k.streams << ",\"start\":" << k.start << ",\"last\":" << k.last << "}";
+              << ",\"streams\":" << k.streams << ",\"start\":" << k.start << ",\"last\":" << k.last;
+            if (!k.audio.empty()) o << ",\"audio\":" << q(k.audio) << ",\"audio_ms\":" << k.audio_ms;
+            o << "}";
         }
         o << "]}";
     }
@@ -702,6 +706,7 @@ inline void fold_call(DsCall& twin, const DsCall& dup) {
         twin.text = twin.text.empty() ? dup.text : twin.text + " | " + dup.text;
     if (twin.slot.empty()) twin.slot = dup.slot;
     if (twin.site.empty()) twin.site = dup.site;
+    if (twin.audio.empty()) { twin.audio = dup.audio; twin.audio_ms = dup.audio_ms; }
     twin.start = std::min(twin.start, dup.start);
     twin.last = std::max(twin.last, dup.last);
     twin.streams += dup.streams;

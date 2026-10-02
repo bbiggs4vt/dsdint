@@ -84,6 +84,11 @@ struct DsdccConfig {
     // "encrypted" flag), so pointing it at an unencrypted DMR stream
     // garbles the audio; leave it 0 unless the channel actually uses BP.
     unsigned bp_key = 0;
+
+    // Observer for decoded voice per TDMA slot before the follow-one-slot
+    // filter: (1, slot-1 audio), (2, slot-2 audio); single-channel protocols
+    // decode into slot 1. Feeds the network explorer's per-call audio.
+    std::function<void(int slot, const int16_t* pcm, std::size_t n)> on_slot_audio;
 };
 
 class DsdccDecoder {
@@ -134,6 +139,7 @@ private:
     DsdccConfig cfg_;
     EventCallback on_event_;
     AudioCallback on_audio_;
+    std::function<void(int, const int16_t*, std::size_t)> on_slot_audio_;
     std::atomic<bool> running_{false};
 
     // Last-reported state for change detection: DSDcc's 26-char status

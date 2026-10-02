@@ -1030,7 +1030,10 @@ the same way regardless of which one answered:
   slot the decoder currently reports voice/call activity on, and falls
   back to an (L+R) downmix while no slot is known yet (nothing decoded, or
   concurrent voice on both slots). One WebSocket frame per UDP packet
-  (typically tag + 320 bytes = 20 ms after the downmix).
+  (typically tag + 320 bytes = 20 ms after the downmix). The other
+  stereo modes (auto `-fa`, P25 Phase 2, X2-TDMA) are handled the same
+  way; the single-channel modes (P25 Phase 1, NXDN, dPMR, D-STAR, YSF,
+  EDACS/ProVoice) already emit mono and are relayed unchanged.
 - **`dsd-server-dsdcc`**: **8000 Hz mono** natively, one frame per decoded
   voice burst (typically tag + 320 bytes = 20 ms). It likewise follows one
   slot's voice, so two concurrent DMR calls don't interleave into one
@@ -1098,6 +1101,9 @@ over HTTP and the connection closed:
 | `GET /net/log/on` | starts recording every input of the explorer's model to `net_<UTC>.jsonl.gz` (`?clear=1` clears the model first so the recording replays exactly); returns the recording status |
 | `GET /net/log/off` | stops recording (the file ends with a snapshot of the model); returns the recording status |
 | `GET /net/log/download` | `application/gzip` — the current or most recent recording; `404` if there is none |
+| `GET /net/audio/on` | starts recording each call's decoded voice (off by default; see `/net.json` `audio`); returns the audio status |
+| `GET /net/audio/off` | stops recording call audio (finished files stay playable); returns the audio status |
+| `GET /net/audio/<file>.wav` | `audio/wav` — a call's audio (the `audio` file a call lists); supports `Range` (`206`); `404` for any name the server didn't create |
 | `POST /net/import?name=<label>` | body: an explorer export (JSON, or gzip) — added to the live view as an import layer; returns `{"name","status","message","id"}` (below); `400` if it isn't an export |
 | `GET /net/imports/remove?id=N` | removes one import (`404` if no such id); `GET /net/imports/clear` removes all; return `{"ok":…}` |
 | `POST /net/merge` | body `{"files":[{"name":…,"text":…}]}` (each export's text verbatim) — merges them without touching the live data; returns `{"report":[{"name","status","message"}],"export":{…merged export…}}` |
@@ -1183,6 +1189,7 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
  "instance": "3f9a0c1d22b4e871", "name": "rx-north", "since": 1789999000000,
  "rec": {"on": false, "truncated": false, "file": "net_20261001_214359.jsonl.gz",
          "path": "/captures/net_20261001_214359.jsonl.gz", "bytes": 86317, "file_bytes": 9466},
+ "audio": {"on": true, "dir": "/captures/net_audio", "bytes": 52428800, "cap_bytes": 1073741824, "files": 412, "recording": 1},
  "imports": [{"id": 1, "label": "south.json", "exported": 1789998000000,
               "sources": [{"instance": "a71e…", "name": "rx-south", "since": 1789990000000, "through": 1789998000000}],
               "networks": 2, "talkgroups": 14, "radios": 40, "calls": 120}],
@@ -1210,6 +1217,16 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
   began (server start or the last Clear). `imports` lists the exports imported
   into the view (see *Merging* below); `families` shows the live data and the
   imports merged.
+- `audio` is the per-call audio status: `on`, the directory, bytes used of
+  `cap_bytes`, the number of files, and how many calls are recording now.
+  A call with audio carries `"audio": "<file>.wav"` (play it from
+  `GET /net/audio/<file>.wav`) and `"audio_ms"` (its length so far); calls
+  without audio have neither key. Audio is recorded per DMR slot (each of
+  two concurrent calls gets only its own slot), starts with up to 1 s heard
+  just before the call was decoded, keeps one recording when two receivers
+  hear one call, and is never recorded for an encrypted call unless the
+  session has the key. Recording snapshots and imported exports never
+  carry audio (an import's calls refer to files on another server).
 - `rec` is the recording status: `on`, the current / most recent `file`
   (and full `path`), uncompressed `bytes` written, compressed `file_bytes` on
   disk, and `truncated` once the size cap was hit. The file format is

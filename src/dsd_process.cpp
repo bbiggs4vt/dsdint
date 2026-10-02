@@ -420,6 +420,9 @@ void DsdProcess::udp_reader_loop() {
     // slot 1 on the left channel, slot 2 on the right (verified against
     // real dsd-fme; see DsdProcessConfig::udp_audio_port).
     //
+    // (The single-channel modes -- P25p1, NXDN, dPMR, D-STAR, YSF, EDACS --
+    // send MONO packets; see DsdProcessConfig::stereo_audio.)
+    //
     // With mono_follow_slot (the default) we collapse that to one mono
     // stream so on_audio matches the DSDcc backend: pick the channel for
     // whichever slot is currently active (published by the stdout reader),
@@ -433,10 +436,23 @@ void DsdProcess::udp_reader_loop() {
             if (n < 0 && errno == EINTR) continue;
             break;
         }
-        if (!on_audio_) continue;
         const int16_t* pcm = reinterpret_cast<const int16_t*>(buf.data());
         std::size_t nsamp = static_cast<std::size_t>(n) / sizeof(int16_t);
-        if (!cfg_.mono_follow_slot) {
+        const bool stereo = cfg_.stereo_audio();
+        if (cfg_.on_slot_audio) {
+            if (stereo) {
+                stereo_to_mono_for_slot(pcm, nsamp, 1, mono);
+                cfg_.on_slot_audio(1, mono.data(), mono.size());
+                stereo_to_mono_for_slot(pcm, nsamp, 2, mono);
+                cfg_.on_slot_audio(2, mono.data(), mono.size());
+            } else {
+                cfg_.on_slot_audio(0, pcm, nsamp);
+            }
+        }
+        if (!on_audio_) continue;
+        // The single-channel modes already send mono: relay it as is
+        // (splitting it as stereo would keep every other sample).
+        if (!cfg_.mono_follow_slot || !stereo) {
             on_audio_(pcm, nsamp);
             continue;
         }

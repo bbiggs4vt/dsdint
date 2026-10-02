@@ -507,6 +507,7 @@ session exactly as before; anything else is answered over HTTP:
 | `/net/export.json`, `/net/export.graphml` | export what the explorer shows: native (re-openable) / GraphML |
 | `POST /net/import`, `/net/imports/remove`, `/net/imports/clear`, `POST /net/merge` | add exports to the live view, remove them; merge exports without the live data |
 | `/net/log/on`, `/net/log/off`, `/net/log/download` | record the explorer's inputs (`?clear=1` clears first); stop; download the current / last recording |
+| `/net/audio/on`, `/net/audio/off`, `/net/audio/<file>.wav` | record each call's decoded voice; stop; play a call's audio |
 
 The live update is a tiny `/status.json` poll that patches the page in
 place — cheap on the server (no decode work, just a mutex-guarded snapshot
@@ -699,6 +700,34 @@ with the reason; importing a server's own export into it is skipped. Data
 from before and after a Clear are separate spans and merge fine. Name each
 receiver with `DSD_SERVER_NAME` (default: the host name) so its networks are
 easy to tell apart.
+
+### Call audio
+
+The explorer can keep each call's decoded voice and play it back: switch on
+**♫ Audio** in the explorer header (in the **Menu** on small screens), or start
+the server with `DSD_NET_AUDIO=1`. It is **off by default**. Calls with audio
+then get a **▶** button (with their length) in the Calls view and in a radio's
+or talkgroup's recent calls.
+
+- Each call is one WAV file (8 kHz, mono, 16-bit). On DMR each TDMA slot is
+  recorded separately, so two calls at once each get only their own audio;
+  audio heard just before the call was decoded (up to 1 s) is included; when
+  two receivers hear the same call, one recording is kept.
+- **Encrypted calls are never recorded** (unless the session was started with
+  the key, so the call is heard in the clear). A call found to be encrypted
+  after its audio began loses the file.
+- Files go to `DSD_NET_AUDIO_DIR`, else `net_audio/` under the recording
+  directory (`/captures/net_audio` in the Docker image). The total is capped
+  by `DSD_NET_AUDIO_MAX_MB` (default 1024 MB, about 18 hours of speech): the
+  oldest files are deleted first. `DSD_NET_AUDIO_MAX_AGE_H` also deletes files
+  older than that many hours. Files from earlier runs in the directory count
+  toward the cap and stay playable.
+- Audio stays on the server that recorded it: exports note which calls had
+  audio, but imports and merged views have no audio to play. Explorer
+  recordings (for replay) don't include audio either.
+
+Rules on keeping intercepted communications differ from place to place;
+check what applies to you before switching it on.
 
 ### Recording explorer data for analysis
 
