@@ -1107,6 +1107,8 @@ over HTTP and the connection closed:
 | `GET /net/asr/config.json` | `application/json` — the explorer's speech-to-text assets (`DSD_NET_ASR_DIR`): `{"local","lib","models":[…],"model","language","dir"}` — `local` when the library and at least one model are present |
 | `GET /net/asr/<path>` | a file of that folder (`transformers.min.js`, `ort/…`, `models/<org>/<name>/…`), streamed; `ETag` / `If-None-Match` (`304`); `404` for anything else (no `..` or hidden names) |
 | `GET /net/asr_worker.js` | `text/javascript` — the explorer's speech-to-text Web Worker |
+| `GET /ui/<path>` | the Angular web UI (`webui/`), when `DSD_WEBUI_DIR` points at its build: its files (hashed bundles `Cache-Control: immutable`, others revalidated by `ETag`); any other path without a file extension is the app's own route and answers `index.html`; `404` when the UI isn't installed. With it installed, `GET /`, `/status`, `/status.html`, `/net`, `/net.html` answer `302` to `/ui/` / `/ui/net` |
+| `GET /classic`, `GET /classic/net` | the built-in status page and explorer, always |
 | `POST /net/import?name=<label>` | body: an explorer export (JSON, or gzip) — added to the live view as an import layer; returns `{"name","status","message","id"}` (below); `400` if it isn't an export |
 | `GET /net/imports/remove?id=N` | removes one import (`404` if no such id); `GET /net/imports/clear` removes all; return `{"ok":…}` |
 | `POST /net/merge` | body `{"files":[{"name":…,"text":…}]}` (each export's text verbatim) — merges them without touching the live data; returns `{"report":[{"name","status","message"}],"export":{…merged export…}}` |

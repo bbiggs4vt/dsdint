@@ -44,7 +44,9 @@ formats are in the [README](../README.md#network-explorer) and
    client (DMR, P25, NXDN, dPMR, D-STAR, YSF, TETRA, EDACS / ProVoice,
    X2-TDMA). Paging (POCSAG / FLEX) is not shown in the explorer.
 2. Open `http://<server>:<port>/net` in a browser — the same address and port
-   as the status page (which links to it).
+   as the status page (which links to it). Where the Angular web UI is
+   installed (`DSD_WEBUI_DIR`, as in the Docker image) this takes you to
+   `/ui/net`; it looks and works the same.
 3. As traffic is decoded, a tab appears for each protocol and the views fill
    in. A channel with nothing on it, noise, or the wrong protocol selected
    leaves no trace.

@@ -6,3 +6,8 @@ build/
 build-*/
 cmake-build-*/
 *.patch
+
+# web UI build products (the image builds its own)
+webui/node_modules
+webui/dist
+webui/.angular

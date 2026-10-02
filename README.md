@@ -554,6 +554,16 @@ curl http://localhost:22600/status.json
 # open http://localhost:22600/ in a browser for the live view
 ```
 
+## Web UI (Angular)
+
+The status page and the network explorer are also an Angular 22 application,
+in [`webui/`](webui/README.md), with the same looks and features. Build it
+(`cd webui && npm ci && npm run build`) and start the server with
+`DSD_WEBUI_DIR=webui/dist/webui/browser`: the app is served under `/ui/`, and
+`/` and `/net` redirect to it (`/ui/`, `/ui/net`); the built-in pages stay at
+`/classic` and `/classic/net`. Without `DSD_WEBUI_DIR` the server serves its
+built-in pages as before. The Docker image includes the app.
+
 ## Network explorer
 
 > **User manual:** [docs/NET_EXPLORER.md](docs/NET_EXPLORER.md) — a tour of

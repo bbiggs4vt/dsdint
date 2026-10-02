@@ -51,6 +51,13 @@
 
 #include <boost/asio/connect.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/beast/core.hpp>
+#include <boost/beast/http.hpp>
+
+#include <unistd.h>
+
+#include <filesystem>
+#include <fstream>
 
 #include <thread>
 #include <vector>
@@ -378,6 +385,80 @@ void test_decoder_children_inherit_no_sockets() {
     bystander.close();
 }
 
+// A plain HTTP GET: status, a header and the body.
+struct HttpReply { int status = 0; std::string location, type, cache, coop, body; };
+HttpReply http_get(const std::string& target) {
+    namespace beast = boost::beast;
+    namespace http = beast::http;
+    HttpReply r;
+    try {
+        net::io_context ioc;
+        tcp::socket sock(ioc);
+        sock.connect(tcp::endpoint(net::ip::make_address("127.0.0.1"), kTestPort));
+        http::request<http::empty_body> req{http::verb::get, target, 11};
+        req.set(http::field::host, "localhost");
+        http::write(sock, req);
+        beast::flat_buffer buf;
+        http::response<http::string_body> res;
+        http::read(sock, buf, res);
+        r.status = static_cast<int>(res.result_int());
+        r.location = std::string(res[http::field::location]);
+        r.type = std::string(res[http::field::content_type]);
+        r.cache = std::string(res[http::field::cache_control]);
+        r.coop = std::string(res["Cross-Origin-Opener-Policy"]);
+        r.body = res.body();
+    } catch (const std::exception& e) {
+        note(std::string("GET ") + target + " failed: " + e.what());
+    }
+    return r;
+}
+
+// The Angular web UI (DSD_WEBUI_DIR): its files under /ui/, app routes,
+// redirects of / and /net, the built-in pages at /classic -- and nothing of
+// that when it isn't installed.
+void test_web_ui_routes() {
+    std::printf("\n[test_web_ui_routes]\n");
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / ("dsd_webui_test_" + std::to_string(::getpid()));
+    fs::create_directories(dir / "media");
+    std::ofstream(dir / "index.html") << "<!doctype html><title>app</title><app-root></app-root>";
+    std::ofstream(dir / "main-AB12CD34.js") << "console.log(1)";
+    std::ofstream(dir / "media" / "logo.svg") << "<svg/>";
+
+    unsetenv("DSD_WEBUI_DIR");
+    check(http_get("/").body.find("dsd-server status") != std::string::npos, "no web UI: / is the built-in status page");
+    check(http_get("/ui/").status == 404, "no web UI: /ui/ is 404");
+
+    setenv("DSD_WEBUI_DIR", dir.c_str(), 1);
+    HttpReply r = http_get("/ui/");
+    check(r.status == 200 && r.body.find("<app-root>") != std::string::npos && r.type.rfind("text/html", 0) == 0,
+          "/ui/ serves the app's index.html");
+    check(r.cache == "no-cache" && r.coop == "same-origin", "index.html is revalidated and cross-origin isolated");
+    r = http_get("/ui/net");
+    check(r.status == 200 && r.body.find("<app-root>") != std::string::npos, "/ui/net (an app route) serves index.html");
+    r = http_get("/ui/main-AB12CD34.js");
+    check(r.status == 200 && r.body == "console.log(1)" && r.type == "text/javascript" && r.cache.find("immutable") != std::string::npos,
+          "a hashed bundle is served as JavaScript, cached for good");
+    r = http_get("/ui/media/logo.svg");
+    check(r.status == 200 && r.type == "image/svg+xml" && r.cache == "no-cache", "other files: their type, revalidated");
+    check(http_get("/ui/missing.js").status == 404, "a missing file is 404");
+    r = http_get("/ui/../../etc/passwd");
+    check(r.body.find("root:") == std::string::npos, "no path tricks out of the folder");
+    check(http_get("/ui/.hidden").status != 200 || http_get("/ui/.hidden").body.find("<app-root>") != std::string::npos,
+          "hidden names are never served as files");
+    r = http_get("/");
+    check(r.status == 302 && r.location == "/ui/", "/ redirects to /ui/");
+    r = http_get("/net");
+    check(r.status == 302 && r.location == "/ui/net", "/net redirects to /ui/net");
+    check(http_get("/ui").location == "/ui/", "/ui redirects to /ui/");
+    check(http_get("/classic").body.find("dsd-server status") != std::string::npos, "/classic: the built-in status page");
+    check(http_get("/classic/net").body.find("network explorer") != std::string::npos, "/classic/net: the built-in explorer");
+    check(http_get("/status.json").type == "application/json", "the JSON endpoints are unchanged");
+
+    unsetenv("DSD_WEBUI_DIR");
+    fs::remove_all(dir);
+}
+
 } // namespace
 
 int main() {
@@ -418,6 +499,7 @@ int main() {
     test_audio_pipeline_relays_events_and_audio();
     test_tetra_protocol_routes_to_tetra_backend();
     test_decoder_children_inherit_no_sockets();
+    test_web_ui_routes();
 
     server_ioc.stop();
     for (auto& t : pool) t.join();

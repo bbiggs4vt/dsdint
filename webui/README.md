@@ -1,59 +1,74 @@
-# Webui
+# dsd-server web UI (Angular)
 
-This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 22.2.1.
+The browser UI of dsd-server -- the **status page** and the **network
+explorer** -- as an Angular 22 application. It replaces the two pages built
+into the server (`src/status_page.hpp`, `src/net_page.hpp`), with the same
+looks and features, and talks to the server's existing JSON endpoints
+(`/status.json`, `/log.json`, `/net.json`, `/net/...`; see `../PROTOCOL.md`).
 
-## Development server
+The user manual for the explorer is `../docs/NET_EXPLORER.md`.
 
-To start a local development server, run:
-
-```bash
-ng serve
-```
-
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
-
-## Code scaffolding
-
-Angular CLI includes powerful code scaffolding tools. To generate a new component, run:
+## Use it with dsd-server
 
 ```bash
-ng generate component component-name
+cd webui
+npm ci                 # once; needs Node >= 22.22.3 (or 24 LTS)
+npm run build          # -> dist/webui/browser
+DSD_WEBUI_DIR=$PWD/dist/webui/browser ../build/dsd-server 0.0.0.0 22600 4
 ```
 
-For a complete list of available schematics (such as `components`, `directives`, or `pipes`), run:
+With `DSD_WEBUI_DIR` set (to a folder holding the build's `index.html`),
+dsd-server serves the app under **`/ui/`**: `/` and `/net` redirect to
+`/ui/` (status) and `/ui/net` (explorer), and the built-in pages stay
+available at `/classic` and `/classic/net`. Without it nothing changes --
+the server keeps serving its built-in pages, so it never depends on Node.
+The Docker image builds the app and sets `DSD_WEBUI_DIR` for you.
+
+The app is static files: hashed bundles are cached by the browser for good,
+`index.html` is revalidated, so a new build is picked up on reload. The
+explorer's pages are served cross-origin isolated (as before) so
+speech-to-text can use several threads on HTTPS / localhost.
+
+## Develop
 
 ```bash
-ng generate --help
+npm start              # ng serve on http://localhost:4200/ui/, proxying the
+                       # server's endpoints to DSD_SERVER (default
+                       # http://localhost:22600) -- see proxy.conf.mjs
+npm test               # unit tests (Vitest, jsdom), once: npx ng test --watch=false
+npm run build
 ```
 
-## Building
+## Layout
 
-To build the project run:
-
-```bash
-ng build
+```
+src/app/
+  core/            models of the server's JSON, formatting helpers, HTTP services
+  status/          the status page
+  net/
+    logic/         the explorer's pure logic: indexing, filters and sorting,
+                   communities and detail lists, call rate, Pause list,
+                   transcript cleaning, zip / CSV, export checks, graph model
+                   and force layout, sharing unchanged data between polls
+    state/         NetStore: the explorer's state as signals
+    services/      audio player, speech-to-text (Web Worker), breakpoints, toast
+    components/    the views (calls, talkgroups, radios, graph, links,
+                   networks), details panel, now-playing bar, the generic
+                   sortable table and small entity widgets
+    net-page.*     the explorer shell: header actions, file / import bars,
+                   protocol tabs, cards, network chips, polling
 ```
 
-This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
+Standalone components, signals, zoneless change detection, OnPush
+throughout. The stylesheet (`src/styles.css`) is the built-in explorer's,
+unchanged, so both UIs look the same.
 
-## Running unit tests
+**Performance.** Every poll (1.5 s) brings the whole model; `logic/share.ts`
+keeps the previous poll's objects for everything unchanged, so only new or
+changed calls re-render (5000 calls: ~80 ms of main-thread work per poll in
+Chrome, against ~130 ms for the built-in page).
 
-To execute unit tests with the [Vitest](https://vitest.dev/) test runner, use the following command:
-
-```bash
-ng test
-```
-
-## Running end-to-end tests
-
-For end-to-end (e2e) testing, run:
-
-```bash
-ng e2e
-```
-
-Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
-
-## Additional Resources
-
-For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.
+**Tests** cover the logic (exhaustively), the services (audio player and
+speech-to-text with a fake worker / audio element), the generic table, and
+the two pages end to end against a mocked server (`HttpTestingController`).
+`*.spec-helper.ts` files hold shared fixtures.

@@ -207,6 +207,20 @@ RUN cmake --build /opt/dsd-server/build -j"$(nproc)" --target \
     && cd /opt/dsd-server/build \
     && DSD_TEST_PACE_MS=${DSD_TEST_PACE_MS} ctest --output-on-failure
 
+# -------------------------------------------------------------- web UI
+# The Angular web UI (webui/), built here and copied into the runtime image,
+# where dsd-server serves it under /ui/ (DSD_WEBUI_DIR) -- Node is only needed
+# for the build. `docker build --target webui-test .` runs its unit tests.
+FROM node:24-bookworm-slim AS webui
+WORKDIR /opt/webui
+COPY webui/package.json webui/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY webui/ ./
+RUN npx ng build
+
+FROM webui AS webui-test
+RUN npx ng test --watch=false
+
 # -------------------------------------------------------------- runtime
 FROM debian:bookworm-slim AS runtime
 
@@ -243,6 +257,11 @@ COPY --from=build /usr/local/bin/multimon-ng /usr/local/bin/
 COPY --from=build /opt/dsd-server/build/dsd-server /usr/local/bin/
 COPY --from=build /opt/dsd-server/build/dsd-server-dsdcc /usr/local/bin/
 RUN ldconfig
+
+# The web UI: / and /net redirect to it (/ui/); the built-in pages stay at
+# /classic and /classic/net.
+COPY --from=webui /opt/webui/dist/webui/browser /opt/dsd-server/webui
+ENV DSD_WEBUI_DIR=/opt/dsd-server/webui
 
 # Make IQ capture work out of the box. The runtime sets no WORKDIR, so the
 # container's cwd is / -- which the non-root `dsd` user can't write to, so the
