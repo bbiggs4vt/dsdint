@@ -529,8 +529,12 @@ Decoded voice arrives per stream and per slot (DMR's two slots are the left and
 right channels of dsd-fme's audio). It goes to the open call on that stream and
 slot. Audio heard just before a call is decoded (up to 1 s) is held and put at
 the start of the call. Data-only calls never get audio. While only one DMR slot
-carries voice, dsd-fme copies that voice to both channels, and a copy that
-lands on a data call on the other slot is given back to the voice call.
+carries voice, dsd-fme copies that voice to both channels. The copy goes to
+the slot that last showed voice (a voice frame or voice burst), not to the
+slot of the last line. On a Capacity Plus or trunked channel the other slot
+sends control bursts nonstop, and following those would cut holes in the
+call. A copy that lands on a data call on the other slot is given back to the
+voice call.
 Encrypted calls are not recorded (unless the session has the key).
 
 ---

@@ -254,6 +254,14 @@ bool dsd_fme_forward_event(const DsdEvent& ev, bool forward_unknown);
 std::size_t stereo_to_mono_for_slot(const int16_t* pcm, std::size_t nsamp,
                                     int slot, std::vector<int16_t>& out);
 
+// The TDMA slot (1 or 2) whose VOICE this decoded line shows, or 0 if it
+// shows none: a voice frame, or a voice burst's sync ("| VC3", "| VLC").
+// Picks the slot dsd-fme's audio belongs to. Only voice may move it: on a
+// Capacity Plus / trunked channel the other slot sends control bursts
+// (CSBK) without a break, and following those would file the voice
+// under the wrong slot.
+int voice_slot_of(const DsdEvent& ev);
+
 // Split one dsd-fme stereo DMR packet into per-slot audio for the network
 // explorer. dsd-fme (DMR_STEREO_OUTPUT, dsd_audio2.c playSynthesizedVoiceSS3)
 // COPIES the voice of a lone active slot into both channels; only when both

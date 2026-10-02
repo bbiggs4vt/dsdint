@@ -490,6 +490,42 @@ int main() {
         check(out[0] == 10 && out[1] == 30, "odd length: left channel of the two full pairs");
     }
 
+    // ---- voice_slot_of: only voice picks the audio's slot ----
+    {
+        // A Capacity Plus rest channel: voice on slot 1, CSBK on slot 2 nonstop.
+        DmrSlotCarry carry;
+        int active = 0;
+        int wrong = 0;
+        const char* lines[] = {
+            "21:21:28 Sync: +DMR  [SLOT1]  slot2  | Color Code=05 | VC2 ",
+            " AMBE 3820400504A500 err = [0] [0] ",
+            "21:21:28 Sync: +DMR   slot1  [slot2] | Color Code=05 | CSBK",
+            " Capacity Plus Channel Status - FL: 3 TS: 1 RS: 0 - Rest LSN: 5 - Single Block",
+            " Bank One F80 Private or Data Call(s) -  LSN 04: TGT 18413;",
+            "21:21:28 Sync: +DMR  [SLOT1]  slot2  | Color Code=05 | VC3 ",
+            " SLOT 1 TGT=15 SRC=9527 FLCO=0x00 FID=0x10 SVC=0x20 Group TXI Call  ",
+            " AMBE 3829A605E46280 err = [0] [0] ",
+            "21:21:29 Sync: +DMR   slot1  [slot2] | Color Code=05 | CSBK",
+        };
+        for (const char* l : lines) {
+            DsdEvent e = classify_dsd_fme_line(l);
+            carry.apply(e);
+            if (int v = voice_slot_of(e)) active = v;
+            if (active != 1) ++wrong;
+        }
+        check(wrong == 0, "voice slot: slot 2's CSBK bursts don't take slot 1's voice");
+        check(voice_slot_of(classify_dsd_fme_line("21:21:28 Sync: +DMR   slot1  [slot2] | Color Code=05 | CSBK")) == 0,
+              "voice slot: a CSBK sync shows no voice");
+        check(voice_slot_of(classify_dsd_fme_line("19:54:55 Sync: +DMR  slot1  [SLOT2] | Color Code=04 | VLC ")) == 2,
+              "voice slot: a voice header sync names its slot");
+        check(voice_slot_of(classify_dsd_fme_line(" AMBE 3829A605E46280 err = [0] [0] ")) == 0,
+              "voice slot: a voice frame without a known slot names none");
+        check(classify_dsd_fme_line(" Capacity Plus Channel Status - FL: 3 TS: 1 RS: 0 - Rest LSN: 5").slot.empty(),
+              "Cap+ status: its TS is the reported channel's, not this burst's slot");
+        check(classify_dsd_fme_line(" Connect Plus Group Voice Channel Grant; Target: 100; Source: 2048; LCN: 3; TS: 1;").slot.empty(),
+              "Con+ grant: its TS is the granted channel's, not this burst's slot");
+    }
+
     // ---- DmrSlotCarry: carry the sync's slot onto the unmarked call lines
     // that follow it (real lines from a Con+/trunked DMR capture) ----
     {

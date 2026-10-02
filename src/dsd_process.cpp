@@ -386,15 +386,25 @@ void DsdProcess::stdout_reader_loop() {
     }
 }
 
-// Track which TDMA slot is currently carrying traffic, for mono_follow_slot.
-// Only slot-attributed voice/sync/call lines move it; burst/unknown/data
-// lines (and lines with no slot) leave the last value in place so the mono
-// channel stays put through the brief gaps between a call's bursts.
+int voice_slot_of(const DsdEvent& ev) {
+    if (ev.slot != "1" && ev.slot != "2") return 0;
+    bool voice = ev.kind == "voice";
+    if (!voice && ev.kind == "sync") {
+        std::string up = ev.raw_line;
+        for (auto& ch : up) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        for (const char* v : {"| VC", "| VLC", "VOICE", "LDU", "HDU", "4V", "2V"})
+            if (up.find(v) != std::string::npos) { voice = true; break; }
+    }
+    return voice ? ev.slot[0] - '0' : 0;
+}
+
+// Track which TDMA slot is carrying voice, for the audio's slot (the mono
+// mix's channel, and the network explorer's per-call audio). Only voice
+// moves it (voice_slot_of); every other line leaves the last value in place,
+// so it stays put through the other slot's bursts and between a call's.
 void DsdProcess::publish_active_slot(const DsdEvent& ev) {
-    if (!cfg_.mono_follow_slot) return;
-    if (ev.kind != "voice" && ev.kind != "sync" && ev.kind != "call") return;
-    if (ev.slot == "1") active_slot_.store(1, std::memory_order_relaxed);
-    else if (ev.slot == "2") active_slot_.store(2, std::memory_order_relaxed);
+    if (!cfg_.mono_follow_slot && !cfg_.on_slot_audio) return;
+    if (const int s = voice_slot_of(ev)) active_slot_.store(s, std::memory_order_relaxed);
 }
 
 std::size_t stereo_to_mono_for_slot(const int16_t* pcm, std::size_t nsamp,
@@ -725,8 +735,11 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     if (ev.talkgroup.empty() && std::regex_search(line, m, target_re))
         ev.talkgroup = strip_leading_zeros(m[1].str());
     if (std::regex_search(line, m, src_re)) ev.source_id = strip_leading_zeros(m[1].str());
+    // A Capacity Plus channel status or a Connect Plus grant names a slot
+    // ("TS: 1") of the channel it reports on, not the burst it came in.
+    static const std::regex other_ts_re(R"(Capacity Plus Channel Status|\bLCN\b)", std::regex::icase);
     if (std::regex_search(line, m, slot_bracket_re)) ev.slot = m[1].str();
-    else if (std::regex_search(line, m, slot_re)) ev.slot = m[1].str();
+    else if (std::regex_search(line, m, slot_re) && !std::regex_search(line, other_ts_re)) ev.slot = m[1].str();
     if (std::regex_search(line, m, cc_re)) {
         // dsd-fme zero-pads ("Color Code=04"); normalize to match the
         // DSDcc backend's bare decimal so clients see one format.
