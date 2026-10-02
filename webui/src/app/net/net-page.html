@@ -1,0 +1,120 @@
+<header><div class="wrap hdr">
+  <div>
+    <h1><span class="accent">dsd-server</span> network explorer</h1>
+    <div class="sub"><span data-test="live">{{ liveLabel() }}</span><span class="desc"> &middot; calls, talkgroups &amp; radios, associated per protocol</span>
+      &middot; <a routerLink="/">status page</a></div>
+  </div>
+  <div class="hdr-actions">
+    <input type="search" data-test="q" placeholder="Find radio, talkgroup, alias, text…" autocomplete="off" [value]="store.q()"
+           (input)="search($any($event.target).value)">
+    @if (rec().file) {
+      <span class="recst live-only" [title]="rec().path || ''">
+        @if (rec().on) {<span class="live">REC </span>{{ rec().file }} · {{ mb(rec().file_bytes || 0) }}@if (rec().truncated) { · size cap reached} · }
+        @else {Last recording: {{ rec().file }} · }
+        <a href="/net/log/download" [attr.download]="rec().file">Download</a></span>
+    }
+    <button id="more" class="btn" type="button" aria-haspopup="true" [attr.aria-expanded]="menuOpen()" title="Actions"
+            (click)="menuOpen.set(!menuOpen()); $event.stopPropagation()">☰ Menu</button>
+    <div class="acts" [class.open]="menuOpen()" (click)="$any($event.target).closest('.btn:not(#exp), .menu a') && menuOpen.set(false)">
+      <button class="btn live-only" type="button" data-test="rec" [class.recon]="!!rec().on" (click)="toggleRecording()"
+              title="Record everything the explorer receives, to replay and analyse offline">{{ rec().on ? '■ Stop recording' : '● Record' }}</button>
+      <button class="btn live-only" type="button" data-test="aud" [class.on]="!!audio().on" [title]="audioTitle()" (click)="toggleAudio()">{{ audio().on ? '♫ Audio on' : '♫ Audio' }}</button>
+      <button class="btn live-only" type="button" data-test="pause" [class.on]="store.paused()" (click)="togglePause()">{{ store.paused() ? 'Resume' : 'Pause' }}</button>
+      <button class="btn live-only" type="button" data-test="clear" title="Forget everything learned so far" (click)="clearAll()">Clear</button>
+      <span class="dropdown live-only">
+        <button id="exp" class="btn" type="button" title="Save what the explorer shows" (click)="exportOpen.set(!exportOpen()); $event.stopPropagation()">Export ▾</button>
+        @if (exportOpen()) {
+          <div class="menu">
+            <a href="/net/export.json" download>Explorer data (.json)<small>re-open later here with Open…</small></a>
+            <a href="/net/export.graphml" download>Association graph (.graphml)<small>Gephi · Cytoscape · yEd · networkx</small></a>
+          </div>
+        }
+      </span>
+      <button class="btn live-only" type="button" title="Add saved exports (e.g. from other receivers) to the live view" (click)="importInput.value = ''; importInput.click()">Import…</button>
+      <input #importInput type="file" accept=".json,.gz,application/json" multiple hidden (change)="importFiles(Array.from($any($event.target).files))">
+      <button class="btn" type="button" title="View saved explorer exports -- several are merged into one view (or drop them on the page)"
+              (click)="openInput.value = ''; openInput.click()">Open…</button>
+      <input #openInput type="file" accept=".json,.gz,application/json" multiple hidden (change)="openFiles(Array.from($any($event.target).files))">
+    </div>
+  </div>
+</div></header>
+
+<div class="wrap">
+  @if (store.file(); as f) {
+    <div class="filebar" data-test="filebar">
+      <span>{{ fileReport()?.report ? 'Viewing a merge of ' : 'Viewing export ' }}<b>{{ f.name }}</b></span>
+      <span class="m">{{ fileReport()?.report ? 'merged ' : 'exported ' }}{{ dt(f.exported) }}@if (!fileReport()?.report && f.source) { by {{ f.source }}} · times are relative to the export</span>
+      @if (fileReport()?.sources?.length) {<span class="m">sources: {{ fileReport()!.sources.join(', ') }}</span>}
+      @if (fileReport()?.savedUrl) {<a [href]="fileReport()!.savedUrl" download="net_merged.json">Save merged (.json)</a>}
+      <a href="#" data-test="back" (click)="$event.preventDefault(); backToLive()">Back to live</a>
+      @if (fileReport()?.report; as rep) {
+        <ul class="report">@for (r of rep; track $index) {<li><span class="st" [class]="statusClass(r.status)">{{ r.status }}</span><b>{{ r.name }}</b>@if (r.message && r.message !== r.status) { — {{ r.message }}}</li>}</ul>
+      }
+    </div>
+  }
+  @if (imports().length) {
+    <div class="filebar imp live-only" data-test="impbar">
+      <span>Including <b>{{ imports().length }} import{{ imports().length > 1 ? 's' : '' }}</b>:</span>
+      @for (x of imports(); track x.id) {
+        <span class="imp-item" [title]="importSources(x)">{{ x.label }}<span class="m"> ({{ importNames(x) }})</span>
+          <a href="#" title="Remove this import" (click)="$event.preventDefault(); removeImport(x.id)">✕</a></span>
+      }
+      <a href="#" (click)="$event.preventDefault(); clearImports()">Remove all</a>
+    </div>
+  }
+  @if (importNote(); as note) {
+    <div class="filebar imp live-only" data-test="impnote">
+      @if (note.busy) {<span class="m">Importing…</span>} @else {
+        <span><b>Import</b></span><span class="x" title="Dismiss" (click)="importNote.set(null)">✕</span>
+        <ul class="report">@for (r of note.results; track $index) {<li><span class="st" [class]="statusClass(r.status)">{{ r.status }}</span><b>{{ r.name }}</b>@if (r.message && r.message !== r.status) { — {{ r.message }}}</li>}</ul>
+      }
+    </div>
+  }
+  <div class="tabs famtabs" data-test="famtabs">
+    @for (t of famTabs(); track t.f) {
+      <button class="tab" type="button" [class.active]="t.f === store.activeFam()" (click)="store.setFam(t.f)">{{ t.name }} <span class="count">{{ t.count }}</span></button>
+    }
+  </div>
+  @if (!store.families().length) {
+    <div class="emptybig" data-test="empty"><b>Waiting for digital-voice traffic</b>
+      Start a decode session (DMR, P25, NXDN, dPMR, D-STAR, YSF, TETRA, EDACS) and its calls, talkgroups,
+      radios and networks will appear here as they are heard. Associations are kept per protocol.</div>
+  } @else {
+    <div class="cards" data-test="cards">
+      @for (c of cards(); track c.l) {
+        <div class="card" [class.live]="c.live" [title]="c.tip || ''" [attr.data-tip]="c.tip || null"><div class="n">{{ c.n }}</div><div class="l">{{ c.l }}</div></div>
+      }
+    </div>
+    <div class="netbar" data-test="netbar">
+      <span class="lbl">Network</span>
+      <span class="chip" [class.active]="store.activeNet() === ALL" (click)="store.setNet(ALL)">All networks</span>
+      @for (n of chips(); track n.key) {
+        <span class="chip" [class.active]="store.activeNet() === n.key" [title]="n.label + ' — ' + n.confidence + ' identity'"
+              (click)="store.setNet(store.activeNet() === n.key ? ALL : n.key); store.select('net', n.key, bp.drawer())">
+          <app-swatch [key]="n.key" />{{ n.label }}<span class="n">{{ n.calls }}</span></span>
+      }
+    </div>
+    <div class="layout">
+      <div>
+        <div class="tabs" data-test="viewtabs">
+          @for (v of VIEWS; track v) {
+            <button class="tab" type="button" [class.active]="store.view() === v" (click)="store.setView(v)">{{ VIEW_LABELS[v] }}@if (counts()[v] !== undefined) {{{ ' ' }}<span class="count">{{ counts()[v] }}</span>}</button>
+          }
+        </div>
+        <div class="panel">
+          @switch (store.view()) {
+            @case ('calls') {<app-calls-view />}
+            @case ('tgs') {<app-tgs-view />}
+            @case ('radios') {<app-radios-view />}
+            @case ('graph') {<app-graph-view />}
+            @case ('links') {<app-links-view />}
+            @case ('nets') {<app-nets-view />}
+          }
+        </div>
+      </div>
+      <aside class="panel side"><app-details /></aside>
+    </div>
+  }
+</div>
+<app-now-playing />
+@if (toast.text(); as t) {<div class="toast" role="status">{{ t }}</div>}

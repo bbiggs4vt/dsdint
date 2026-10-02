@@ -1,0 +1,87 @@
+<div class="sheet-x"><button class="btn" type="button" (click)="close()">✕ Close</button></div>
+@if (!sel()) {
+  <div class="hint"><h3>Associations</h3>Click a radio, talkgroup or network anywhere on the page to see what it is tied to: the talkgroups a radio uses,
+    who talks on a talkgroup, which talkgroups share radios, private-call partners, and the networks they were heard on.</div>
+} @else if (sel()!.type === 'tg') {
+  <h3>Talkgroup {{ sel()!.id }}</h3>
+  @if (tg(); as t) {
+    <div class="tagrow">@for (k of t.networks; track k) {<app-net [key]="k" />}</div>
+    <div class="kv">
+      <div><b>{{ t.calls }}</b><span>Calls</span></div><div><b>{{ keys(t.radios).length }}</b><span>Radios</span></div>
+      <div><b>{{ t.emerg }}</b><span>Emergency</span></div><div><b>{{ t.enc }}</b><span>Encrypted</span></div>
+      <div><b>{{ ago(t.first, store.now()) }}</b><span>First</span></div><div><b>{{ ago(t.last, store.now()) }}</b><span>Last</span></div>
+    </div>
+    <h4>Radios on this talkgroup</h4>
+    <app-rank-list [items]="tgRadios()" kind="radio" />
+    <h4>Linked talkgroups (shared radios)</h4>
+    <app-rank-list [items]="tgLinked()" kind="tg" [label]="sharedLabel" />
+    <h4>Recent calls</h4>
+    <ng-container *ngTemplateOutlet="recentTpl" />
+  } @else {<div class="hint">Not in the current data.</div>}
+} @else if (sel()!.type === 'radio') {
+  <h3>Radio {{ sel()!.id }}</h3>
+  @if (radio(); as r) {
+    @if (r.aliases.length) {<div class="alias">Alias: {{ r.aliases.join(' / ') }}</div>}
+    <div class="tagrow">@for (k of r.networks; track k) {<app-net [key]="k" />}</div>
+    <div class="kv">
+      <div><b>{{ r.calls }}</b><span>Calls</span></div><div><b>{{ keys(r.tgs).length }}</b><span>Talkgroups</span></div>
+      <div><b>{{ keys(r.peers).length }}</b><span>Private peers</span></div><div><b>{{ r.networks.length }}</b><span>Networks</span></div>
+      <div><b>{{ ago(r.first, store.now()) }}</b><span>First</span></div><div><b>{{ ago(r.last, store.now()) }}</b><span>Last</span></div>
+    </div>
+    <h4>Talkgroups used</h4>
+    <app-rank-list [items]="radioTgs()" kind="tg" />
+    <h4>Private calls with</h4>
+    <app-rank-list [items]="radioPeers()" kind="radio" />
+    <h4>Shares talkgroups with</h4>
+    <app-rank-list [items]="radioShares()" kind="radio" [max]="20" [label]="tgsLabel" />
+    <h4>Recent calls</h4>
+    <ng-container *ngTemplateOutlet="recentTpl" />
+  } @else {<div class="hint">Not in the current data.</div>}
+} @else {
+  @if (net(); as n) {
+    <h3><app-swatch [key]="n.key" /> {{ n.label }}</h3>
+    <div class="tagrow"><app-conf [c]="n.confidence" />
+      <button class="btn" type="button" data-test="net-only" (click)="toggleNetFilter(n.key)">{{ netOnly() ? 'Show all networks' : 'Show only this network' }}</button></div>
+    <div class="kv">
+      <div><b>{{ n.calls }}</b><span>Calls</span></div><div><b>{{ ix()?.netTg?.[n.key] || 0 }}</b><span>Talkgroups</span></div>
+      <div><b>{{ ix()?.netRad?.[n.key] || 0 }}</b><span>Radios</span></div><div><b>{{ n.sessions }}</b><span>Streams</span></div>
+      <div><b>{{ ago(n.first, store.now()) }}</b><span>First</span></div><div><b>{{ ago(n.last, store.now()) }}</b><span>Last</span></div>
+    </div>
+    <h4>Identifiers</h4>
+    <div class="ids">{{ ids(n.ids) }}</div>
+    <h4>Sites</h4>
+    <div>{{ n.sites.join(', ') || 'None reported.' }}</div>
+    <h4>Channels</h4>
+    <div class="mono">{{ channels(n.freqs) }}</div>
+    @if (n.confidence !== 'strong') {
+      <div class="hint" style="margin-top:.6rem;font-size:.8rem">
+        @switch (n.confidence) {
+          @case ('channel') {Channel identity: a short code (color code / NAC / RAN), or nothing, heard on a known frequency -- in practice one conventional channel or repeater. Every stream on that frequency with that code shares it, and merged data from other receivers joins it too (unless DSD_NET_CHANNEL_MERGE=receiver).}
+          @case ('weak') {Weak identity: only a short code (color code / NAC / RAN) was seen, which unrelated systems can share, and the stream's frequency is unknown, so this bucket covers just one stream. Talkgroups and radios it shares with other buckets are listed under Links.}
+          @default {No network identity has been decoded on this stream yet.}
+        }
+      </div>
+    }
+    <h4>Busiest talkgroups</h4>
+    <app-rank-list [items]="busiest().tgs" kind="tg" [max]="15" />
+    <h4>Busiest radios</h4>
+    <app-rank-list [items]="busiest().radios" kind="radio" [max]="15" />
+  } @else {
+    <h3>Network</h3><div class="hint">Not in the current data.</div>
+  }
+}
+
+<ng-template #recentTpl>
+  @if (recent().length) {
+    <ul class="lst">
+      @for (c of recent(); track c.start + '|' + c.session + '|' + c.slot) {
+        <li><div>@if (c.src) {<app-radio [id]="c.src" [alias]="c.alias" />} @else {?} →
+            @if (!c.tgt) {?} @else if (c.priv) {<app-radio [id]="c.tgt" />} @else {<app-tg [id]="c.tgt" />}
+            @if (c.emerg) {{{ ' ' }}<span class="badge b-emerg">EMERG</span>}
+            @if (c.text) {<div class="alias">“{{ c.text }}”</div>}
+            <app-stt [c]="c" [block]="true" /></div>
+          <span class="c"><app-call-audio [c]="c" [download]="false" /> {{ live(c) ? 'live' : hms(c.start) }}</span></li>
+      }
+    </ul>
+  } @else {<div class="hint">No calls in the recent buffer.</div>}
+</ng-template>

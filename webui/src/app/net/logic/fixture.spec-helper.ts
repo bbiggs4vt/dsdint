@@ -34,7 +34,7 @@ export function family(): NetFamily {
     ],
     calls: [
       call({ id: 5, src: '300', tgt: '400', priv: true, start: 1_290_000, last: 1_291_000, audio: 'call_1290000_ab_5.wav', audio_ms: 2600 }),
-      call({ id: 4, src: '100', tgt: '9', alias: 'K. REYES', start: 1_280_000, last: 1_285_000, open: true }),
+      call({ id: 4, src: '100', tgt: '9', alias: 'K. REYES', start: 1_280_000, last: 1_299_000, open: true }),
       call({ id: 3, src: '200', tgt: '10', slot: '2', start: 1_270_000, last: 1_271_000, enc: true }),
       call({ id: 2, src: '200', tgt: '9', net: 'cc:1@434425000', freq: 434425000, start: 1_100_000, last: 1_101_000, text: 'en route' }),
       call({ id: 1, src: '100', tgt: '9', start: 1_000_000, last: 1_002_000, emerg: true }),

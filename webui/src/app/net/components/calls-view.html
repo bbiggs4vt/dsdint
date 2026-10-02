@@ -1,0 +1,50 @@
+<div class="callbar">
+  <button class="btn live-only" type="button" data-test="hold" [class.on]="!!store.hold()" (click)="toggleHold()"
+          title="Stop the list moving while you read it (new calls are still counted)">{{ store.hold() ? '▶ Resume list' : '❚❚ Pause list' }}</button>
+  @if (store.hold()) {
+    <span class="held live-only" data-test="held">Paused · {{ fresh() }} new call{{ fresh() === 1 ? '' : 's' }} since</span>
+  }
+  <label class="audctl" [class.off]="!hasAudio()" title="List only calls whose voice was recorded">
+    <input type="checkbox" data-test="audonly" [checked]="store.audioOnly()" (change)="store.setAudioOnly($any($event.target).checked)"> With audio only</label>
+  <span class="grow"></span>
+  <label class="audctl live-only" [class.off]="!hasAudio()" title="Turn each call's speech into text when you play it (runs in this browser)">
+    <input type="checkbox" data-test="asron" [checked]="asr.on()" (change)="setAsrOn($any($event.target).checked)"> Transcribe on play</label>
+  <select class="audctl live-only" [class.off]="!hasAudio()" aria-label="Spoken language" title="Spoken language" [hidden]="englishOnly()"
+          (change)="asr.setLang($any($event.target).value)">
+    @for (l of LANGUAGES; track l[0]) {<option [value]="l[0]" [selected]="l[0] === asr.currentLang()">{{ l[1] }}</option>}
+  </select>
+  <select class="audctl live-only" [class.off]="!hasAudio()" aria-label="Speech-to-text model" [hidden]="asr.models().length < 2"
+          title="Speech-to-text model: larger is more accurate but slower" (change)="asr.setModel($any($event.target).value)">
+    @for (m of asr.models(); track m) {<option [value]="m" [selected]="m === asr.currentModel()">{{ m.replace('Xenova/', '') }}</option>}
+  </select>
+  <button class="btn audctl live-only" type="button" data-test="zip" [class.off]="!hasAudio()" [disabled]="!!zipping()" (click)="zip()"
+          title="Download the audio of the listed calls (up to 25 MB), with a calls.csv of who, when and what was said">{{ zipping() || '⤓ Audio (.zip)' }}</button>
+</div>
+<div class="scroll">
+  <app-table [rows]="rows()" view="calls" [empty]="emptyText()" [trackBy]="key" [hasSub]="withTranscript">
+    <ng-template appCol="Start (UTC)" cls="mono nowrap" [sortKey]="byStart" let-c>{{ hms(c.start) }}</ng-template>
+    <ng-template appCol="Duration" cls="nowrap" [sortKey]="byDuration" let-c><app-call-dur [c]="c" /></ng-template>
+    <ng-template appCol="Network" let-c>@if (c.net) {<app-net [key]="c.net" [hz]="c.freq" />} @else {-}</ng-template>
+    <ng-template appCol="MHz" cls="mono nowrap" [sortKey]="byFreq" [dropEmpty]="hasFreq" let-c>{{ mhz(c.freq) || '—' }}</ng-template>
+    <ng-template appCol="Slot" cls="num" [sortKey]="bySlot" [dropEmpty]="hasSlot" let-c>{{ c.slot || '—' }}</ng-template>
+    <ng-template appCol="From" [sortKey]="bySrc" let-c>@if (c.src) {<app-radio [id]="c.src" [alias]="c.alias" />} @else {—}</ng-template>
+    <ng-template appCol="To" cls="tgcell" [sortKey]="byTgt" let-c><app-call-to [c]="c" /></ng-template>
+    <ng-template appCol="Type" cls="nowrap ctype" let-c><app-call-type [c]="c" /></ng-template>
+    <ng-template appCol="Audio" cls="nowrap" [sortKey]="byAudio" [hideEmpty]="withAudio" let-c><app-call-audio [c]="c" /></ng-template>
+    <ng-template appCol="Text" cls="wrap" [hideEmpty]="withText" let-c>{{ c.text }}</ng-template>
+    <ng-template appSub let-c><app-stt [c]="c" /></ng-template>
+    <ng-template appCard let-c>
+      <div class="ccard">
+        <div class="r1"><span class="t mono">{{ hms(c.start) }}</span><app-call-dur [c]="c" /><app-call-type [c]="c" /><app-call-audio [c]="c" /></div>
+        <div class="r2">@if (c.src) {<app-radio [id]="c.src" [alias]="c.alias" />} @else {—} → <app-call-to [c]="c" /></div>
+        <div class="r3">
+          @if (c.net) {<app-net [key]="c.net" />}
+          @if (c.freq && !netShowsFreq(c)) {<span class="mono">{{ mhz(c.freq) }} MHz</span>}
+          @if (c.slot) {<span>slot {{ c.slot }}</span>}
+        </div>
+        @if (c.text) {<div class="tx">{{ c.text }}</div>}
+        <app-stt [c]="c" [block]="true" />
+      </div>
+    </ng-template>
+  </app-table>
+</div>

@@ -90,6 +90,26 @@ std::string net_asr_dir() {
     const char* d = std::getenv("DSD_NET_ASR_DIR");
     return (d && d[0]) ? std::string(d) : (std::filesystem::path(net_log_dir()) / "net_asr").string();
 }
+// The Angular web UI's build (webui/ -> dist/webui/browser), served under
+// /ui/ when DSD_WEBUI_DIR points at it ("" = not installed: the built-in
+// pages are served as before). When it is installed, / and /net redirect to
+// it; the built-in pages stay at /classic and /classic/net.
+std::string net_webui_dir() {
+    const char* d = std::getenv("DSD_WEBUI_DIR");
+    if (!d || !d[0]) return std::string();
+    std::error_code ec;
+    return std::filesystem::is_regular_file(std::filesystem::path(d) / "index.html", ec) ? std::string(d) : std::string();
+}
+// A build output name with a content hash ("main-AB12CD34.js"): never changes.
+bool webui_hashed(const std::string& rel) {
+    const std::size_t dot = rel.rfind('.');
+    if (dot == std::string::npos || dot < 9 || rel[dot - 9] != '-') return false;
+    const std::string ext = rel.substr(dot);
+    if (ext != ".js" && ext != ".css") return false;
+    for (std::size_t i = dot - 8; i < dot; ++i)
+        if (!std::isdigit(static_cast<unsigned char>(rel[i])) && !std::isupper(static_cast<unsigned char>(rel[i]))) return false;
+    return true;
+}
 // A path under the asset folder that may be served: plain names only (no
 // "..", no hidden files, no absolute paths).
 bool asr_rel_ok(const std::string& rel) {
@@ -152,6 +172,12 @@ std::string asr_content_type(const std::string& rel) {
     if (ends(".wasm")) return "application/wasm";
     if (ends(".json")) return "application/json";
     if (ends(".txt")) return "text/plain; charset=utf-8";
+    if (ends(".html")) return "text/html; charset=utf-8";
+    if (ends(".css")) return "text/css; charset=utf-8";
+    if (ends(".svg")) return "image/svg+xml";
+    if (ends(".png")) return "image/png";
+    if (ends(".ico")) return "image/x-icon";
+    if (ends(".woff2")) return "font/woff2";
     return "application/octet-stream";
 }
 
@@ -402,20 +428,20 @@ void Session::serve_http() {
         return;
     }
 
-    // Speech-to-text assets (/net/asr/<path>, see net_asr_dir): the library,
-    // its WebAssembly and the model files -- tens of MB, streamed from disk.
-    // Revalidated by ETag, so a browser downloads them once. Served with the
-    // explorer's cross-origin isolation headers (multi-threaded WebAssembly).
-    if (target.rfind("/net/asr/", 0) == 0 && target != "/net/asr/config.json" && http_req_.method() == http::verb::get) {
+    // A static file from disk, streamed: revalidated by ETag (or cached for
+    // good, `immutable`), with the explorer's cross-origin isolation headers
+    // (multi-threaded WebAssembly for speech-to-text). `ok` = the path was
+    // checked to be one that may be served.
+    auto send_static = [this, res](const std::filesystem::path& path, bool ok, const std::string& ctype,
+                                   bool immutable, const char* missing) {
         namespace fs = std::filesystem;
-        const std::string rel = target.substr(9);
         std::error_code ec;
-        const fs::path path = fs::path(net_asr_dir()) / rel;
-        const bool ok = asr_rel_ok(rel) && fs::is_regular_file(path, ec);
+        ok = ok && fs::is_regular_file(path, ec);
         const std::uint64_t size = ok ? fs::file_size(path, ec) : 0;
         const auto mtime = ok ? fs::last_write_time(path, ec).time_since_epoch().count() : 0;
         char tag[64];
         std::snprintf(tag, sizeof tag, "\"%llx-%llx\"", static_cast<unsigned long long>(size), static_cast<unsigned long long>(mtime));
+        const char* cache = immutable ? "public, max-age=31536000, immutable" : "no-cache";
         auto finish = [this](auto r) {
             r->set(http::field::server, "dsd-server/1.0");
             r->set("Cross-Origin-Opener-Policy", "same-origin");
@@ -432,7 +458,7 @@ void Session::serve_http() {
         if (ok && std::string(http_req_[http::field::if_none_match]) == tag) {
             res->result(http::status::not_modified);
             res->set(http::field::etag, tag);
-            res->set(http::field::cache_control, "no-cache");
+            res->set(http::field::cache_control, cache);
             finish(res);
             return;
         }
@@ -442,16 +468,58 @@ void Session::serve_http() {
         if (!ok || fec) {
             res->result(http::status::not_found);
             res->set(http::field::content_type, "text/plain; charset=utf-8");
-            res->body() = "no such file -- see tools/get_asr_assets.sh\n";
+            res->body() = missing;
             finish(res);
             return;
         }
         auto fres = std::make_shared<http::response<http::file_body>>(
             std::piecewise_construct, std::make_tuple(std::move(body)), std::make_tuple(http::status::ok, http_req_.version()));
-        fres->set(http::field::content_type, asr_content_type(rel));
+        fres->set(http::field::content_type, ctype);
         fres->set(http::field::etag, tag);
-        fres->set(http::field::cache_control, "no-cache");
+        fres->set(http::field::cache_control, cache);
         finish(fres);
+    };
+
+    // Speech-to-text assets (/net/asr/<path>, see net_asr_dir): the library,
+    // its WebAssembly and the model files -- tens of MB, so revalidated, not
+    // re-sent.
+    if (target.rfind("/net/asr/", 0) == 0 && target != "/net/asr/config.json" && http_req_.method() == http::verb::get) {
+        const std::string rel = target.substr(9);
+        send_static(std::filesystem::path(net_asr_dir()) / rel, asr_rel_ok(rel), asr_content_type(rel), false,
+                    "no such file -- see tools/get_asr_assets.sh\n");
+        return;
+    }
+
+    // The web UI (Angular app, webui/; DSD_WEBUI_DIR): its files under /ui/.
+    // Paths that aren't files are the app's own routes (/ui/net), answered
+    // with index.html. Hashed bundles never change, so they are cached for
+    // good; index.html is revalidated so a new build is picked up.
+    if ((target == "/ui" || target.rfind("/ui/", 0) == 0) && http_req_.method() == http::verb::get) {
+        const std::string dir = net_webui_dir();
+        if (target == "/ui" || dir.empty()) {
+            res->result(dir.empty() ? http::status::not_found : http::status::found);
+            if (dir.empty()) {
+                res->set(http::field::content_type, "text/plain; charset=utf-8");
+                res->body() = "web UI not installed -- build webui/ and set DSD_WEBUI_DIR (see webui/README.md)\n";
+            } else {
+                res->set(http::field::location, "/ui/");
+            }
+            res->prepare_payload();
+            auto self = shared_from_this();
+            http::async_write(ws_.next_layer(), *res, [self, res](beast::error_code, std::size_t) {
+                beast::error_code ig;
+                beast::get_lowest_layer(self->ws_).socket().shutdown(tcp::socket::shutdown_send, ig);
+            });
+            return;
+        }
+        std::string rel = target.substr(4);
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const bool file = !rel.empty() && asr_rel_ok(rel) && fs::is_regular_file(fs::path(dir) / rel, ec);
+        const std::string last = rel.substr(rel.rfind('/') == std::string::npos ? 0 : rel.rfind('/') + 1);
+        if (!file && last.find('.') == std::string::npos) rel = "index.html";      // an app route
+        const bool hashed = webui_hashed(rel);
+        send_static(fs::path(dir) / rel, asr_rel_ok(rel), asr_content_type(rel), hashed, "not found\n");
         return;
     }
 
@@ -540,7 +608,12 @@ void Session::serve_http() {
         res->result(http::status::method_not_allowed);
         res->set(http::field::content_type, "text/plain; charset=utf-8");
         res->body() = "405 method not allowed\n";
-    } else if (target == "/" || target == "/status" || target == "/status.html") {
+    } else if (!net_webui_dir().empty() && (target == "/" || target == "/status" || target == "/status.html" ||
+                                            target == "/net" || target == "/net.html")) {
+        // The web UI is installed: it serves these pages.
+        res->result(http::status::found);
+        res->set(http::field::location, target.rfind("/net", 0) == 0 ? "/ui/net" : "/ui/");
+    } else if (target == "/" || target == "/status" || target == "/status.html" || target == "/classic") {
         res->result(http::status::ok);
         res->set(http::field::content_type, "text/html; charset=utf-8");
         res->body() = stats_ ? render_status_html(stats_->snapshot()) : std::string("no stats\n");
@@ -559,7 +632,7 @@ void Session::serve_http() {
         res->result(http::status::ok);
         res->set(http::field::content_type, "application/json");
         res->body() = std::string("{\"log\":[]}");
-    } else if (target == "/net" || target == "/net.html") {
+    } else if (target == "/net" || target == "/net.html" || target == "/classic/net") {
         // Network explorer: calls, talkgroups, radios and their associations.
         res->result(http::status::ok);
         res->set(http::field::content_type, "text/html; charset=utf-8");

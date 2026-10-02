@@ -1,0 +1,19 @@
+<div class="gbar">
+  <label>Nodes <select id="g-cap" (change)="cap.set(+$any($event.target).value)">
+    @for (n of [100, 250, 500, 1000]; track n) {<option [value]="n" [selected]="n === cap()">{{ n }}</option>}
+  </select></label>
+  <label><input type="checkbox" [checked]="priv()" (change)="priv.set($any($event.target).checked)"> Private-call links</label>
+  <label><input type="checkbox" [checked]="labels()" (change)="labels.set($any($event.target).checked)"> Radio labels</label>
+  <span class="gzoom"><button class="btn" type="button" title="Zoom out" aria-label="Zoom out" (click)="zoom(1 / 1.4)">&minus;</button><button class="btn"
+    type="button" title="Zoom in" aria-label="Zoom in" (click)="zoom(1.4)">+</button></span>
+  <button class="btn" type="button" (click)="fit()">Fit</button>
+  <span style="color:var(--muted)" data-test="g-note">{{ note() }}</span>
+</div>
+<div id="gwrap"><svg #svg id="gsvg"></svg></div>
+<div class="legend">
+  <span><svg width="14" height="14" viewBox="-7 -7 14 14"><rect x="-5" y="-5" width="10" height="10" rx="2" fill="#c8c8c8" /></svg>talkgroup (size = calls)</span>
+  <span><svg width="14" height="14" viewBox="-7 -7 14 14"><circle r="4.5" fill="#c8c8c8" /></svg>radio</span>
+  <span><svg width="14" height="14" viewBox="-7 -7 14 14"><line x1="-6" y1="0" x2="6" y2="0" stroke="#f89406" stroke-dasharray="3 2" stroke-width="2" /></svg>private call</span>
+  <span><svg width="14" height="14" viewBox="-7 -7 14 14"><circle r="4.5" fill="#7a8288" stroke="#fff" stroke-dasharray="3 2" stroke-width="1.5" /></svg>on 2+ networks</span>
+  @for (n of nets(); track n.key) {<span><app-swatch [key]="n.key" /> {{ n.label }}</span>}
+</div>

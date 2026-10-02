@@ -1,0 +1,43 @@
+<div class="scroll links" style="max-height:78vh">
+  <div class="section">Talk communities — radios tied together through shared talkgroups / private calls ({{ total() }})</div>
+  @if (!comms().length) {<div class="note">No linked radios yet.</div>}
+  <div class="grid2">
+    @for (c of comms(); track c.n) {
+      <div class="comm">
+        <h5>Community {{ c.n }}</h5>
+        <div class="meta">{{ c.radios }} radios · {{ c.tgCount }} talkgroups · <app-nets [keys]="c.nets" /></div>
+        @if (c.tgs.length) {<div class="ents">@for (t of c.tgs.slice(0, 30); track t) {<app-tg [id]="t" />}</div>}
+        <div style="height:.35rem"></div>
+        <div class="ents">@for (r of c.rads.slice(0, 40); track r) {<app-radio [id]="r" />}
+          @if (c.rads.length > 40) {<span class="alias">+{{ c.rads.length - 40 }} more</span>}</div>
+      </div>
+    }
+  </div>
+  <div class="section">Seen on more than one network — possible links between networks ({{ cross().tgs.length + cross().radios.length }})</div>
+  @if (!cross().tgs.length && !cross().radios.length) {
+    <div class="note">Nothing shared between networks yet. A talkgroup or radio heard on two networks shows up here.</div>
+  } @else {
+    <div class="grid2">
+      @for (t of cross().tgs; track t.id) {
+        <div class="comm"><h5><app-tg [id]="t.id" /></h5>
+          <div class="meta">{{ t.calls }} calls · {{ keys(t.radios).length }} radios · <app-nets [keys]="t.networks" /></div></div>
+      }
+      @for (r of cross().radios; track r.id) {
+        <div class="comm"><h5><app-radio [id]="r.id" /></h5><div class="meta">{{ r.calls }} calls · <app-nets [keys]="r.networks" /></div></div>
+      }
+    </div>
+  }
+  <div class="section">Hub radios — active on 3+ talkgroups (dispatchers, supervisors, scanning radios) ({{ hubCount() }})</div>
+  @if (!hubs().length) {
+    <div class="note">None yet.</div>
+  } @else {
+    <div class="grid2">
+      @for (h of hubs(); track h.r.id) {
+        <div class="comm"><h5><app-radio [id]="h.r.id" /></h5>
+          <div class="meta">{{ h.tgs.length }} talkgroups · {{ h.r.calls }} calls</div>
+          <div class="ents">@for (t of h.tgs.slice(0, 20); track t.id) {<app-tg [id]="t.id" />}</div></div>
+      }
+    </div>
+  }
+  <div style="height:.8rem"></div>
+</div>

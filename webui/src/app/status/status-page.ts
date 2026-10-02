@@ -1,4 +1,4 @@
-import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, computed, inject, signal, ChangeDetectionStrategy } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { humanDuration, protocolTrail } from '../core/format';
@@ -16,6 +16,7 @@ const IQ_NOTE_ON = 'capturing IQ for active & new sessions';
  * Polls /status.json every second (and /log.json while the Log tab is open).
  */
 @Component({
+  changeDetection: ChangeDetectionStrategy.OnPush,
   selector: 'app-status-page',
   imports: [RouterLink],
   templateUrl: './status-page.html',

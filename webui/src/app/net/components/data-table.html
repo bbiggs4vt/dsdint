@@ -1,0 +1,49 @@
+@if (bp.phone()) {
+  <div class="sortbar">
+    <span>Sort</span>
+    <select aria-label="Sort by" (change)="sortMenu($any($event.target).value)">
+      <option value="">Default order</option>
+      @for (c of shown(); track c) {
+        @if (c.sortKey()) {
+          <option [value]="index(c) + ':' + c.dir()" [selected]="sortState()?.i === index(c) && sortState()?.dir === c.dir()">{{ c.label() }} {{ c.dir() > 0 ? '▲' : '▼' }}</option>
+          <option [value]="index(c) + ':' + -c.dir()" [selected]="sortState()?.i === index(c) && sortState()?.dir === -c.dir()">{{ c.label() }} {{ c.dir() > 0 ? '▼' : '▲' }}</option>
+        }
+      }
+    </select>
+    <span>{{ sorted().length }} {{ sorted().length === 1 ? 'row' : 'rows' }}</span>
+  </div>
+}
+@if (phoneCards()) {
+  <div class="clist">
+    @for (r of visible(); track key(r)) {
+      <ng-container *ngTemplateOutlet="card()!.tpl; context: { $implicit: r }" />
+    } @empty {
+      <div class="empty">{{ empty() }}</div>
+    }
+  </div>
+} @else {
+  <table>
+    <thead><tr>
+      @for (c of shown(); track c) {
+        <th [class.num]="isNum(c)" [class.sortable]="!!c.sortKey()" (click)="sortBy(c)">{{ c.label() }}{{ arrow(c) }}</th>
+      }
+    </tr></thead>
+    <tbody>
+      @for (r of visible(); track key(r); let i = $index) {
+        <tr [class.click]="clickable()" [class.sel]="selected(r)" [class.alt]="i % 2 === 1" [class.hassub]="subFor(r)" (click)="click(r)">
+          @for (c of shown(); track c) {
+            <td [class]="c.cls()" [attr.data-label]="c.label()"><ng-container *ngTemplateOutlet="c.tpl; context: { $implicit: r }" /></td>
+          }
+        </tr>
+        @if (subFor(r)) {
+          <tr class="sub" [class.alt]="i % 2 === 1"><td [attr.colspan]="shown().length"><ng-container *ngTemplateOutlet="sub()!.tpl; context: { $implicit: r }" /></td></tr>
+        }
+      } @empty {
+        <tr><td class="empty" [attr.colspan]="shown().length">{{ empty() }}</td></tr>
+      }
+    </tbody>
+  </table>
+}
+@if (sorted().length > limit()) {
+  <div class="more">Showing {{ limit() }} of {{ sorted().length }} — narrow it with the search box or a network filter.</div>
+}
