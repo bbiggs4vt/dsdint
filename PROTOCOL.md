@@ -1225,7 +1225,9 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
   two concurrent calls gets only its own slot), starts with up to 1 s heard
   just before the call was decoded, keeps one recording when two receivers
   hear one call, and is never recorded for an encrypted call unless the
-  session has the key. Recording snapshots and imported exports never
+  session has the key. A recording starts only with audible audio (peak
+  above about -54 dBFS) and is deleted at the call's end if under 0.2 s, so
+  there are no empty files. Recording snapshots and imported exports never
   carry audio (an import's calls refer to files on another server).
 - `rec` is the recording status: `on`, the current / most recent `file`
   (and full `path`), uncompressed `bytes` written, compressed `file_bytes` on

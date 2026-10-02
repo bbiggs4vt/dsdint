@@ -713,6 +713,9 @@ or talkgroup's recent calls.
   recorded separately, so two calls at once each get only their own audio;
   audio heard just before the call was decoded (up to 1 s) is included; when
   two receivers hear the same call, one recording is kept.
+- No empty files: a recording starts only with audible audio (silence or
+  near-silence never creates one), and one shorter than 0.2 s is deleted
+  when its call ends. Calls without voice (SMS, data) never get a file.
 - **Encrypted calls are never recorded** (unless the session was started with
   the key, so the call is heard in the clear). A call found to be encrypted
   after its audio began loses the file.

@@ -414,6 +414,22 @@ std::size_t stereo_to_mono_for_slot(const int16_t* pcm, std::size_t nsamp,
     return npairs;
 }
 
+void route_stereo_slots(const int16_t* pcm, std::size_t nsamp, int active_slot, std::vector<int16_t>& scratch,
+                        const std::function<void(int, const int16_t*, std::size_t)>& out) {
+    const std::size_t npairs = nsamp / 2;
+    bool same = true;
+    for (std::size_t i = 0; same && i < npairs; ++i) same = pcm[2 * i] == pcm[2 * i + 1];
+    if (same) {
+        stereo_to_mono_for_slot(pcm, nsamp, 1, scratch);
+        out(active_slot == 1 || active_slot == 2 ? active_slot : 0, scratch.data(), scratch.size());
+        return;
+    }
+    stereo_to_mono_for_slot(pcm, nsamp, 1, scratch);
+    out(1, scratch.data(), scratch.size());
+    stereo_to_mono_for_slot(pcm, nsamp, 2, scratch);
+    out(2, scratch.data(), scratch.size());
+}
+
 void DsdProcess::udp_reader_loop() {
     // dsd-fme's decoded voice PCM here is 8000 Hz, 16-bit signed, and (in
     // the DMR "-f s" mode this backend uses) STEREO interleaved -- TDMA
@@ -441,10 +457,7 @@ void DsdProcess::udp_reader_loop() {
         const bool stereo = cfg_.stereo_audio();
         if (cfg_.on_slot_audio) {
             if (stereo) {
-                stereo_to_mono_for_slot(pcm, nsamp, 1, mono);
-                cfg_.on_slot_audio(1, mono.data(), mono.size());
-                stereo_to_mono_for_slot(pcm, nsamp, 2, mono);
-                cfg_.on_slot_audio(2, mono.data(), mono.size());
+                route_stereo_slots(pcm, nsamp, active_slot_.load(std::memory_order_relaxed), mono, cfg_.on_slot_audio);
             } else {
                 cfg_.on_slot_audio(0, pcm, nsamp);
             }

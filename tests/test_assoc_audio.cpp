@@ -180,6 +180,68 @@ int main() {
               "pre-roll: audio from more than a second before the call isn't attached to it");
     }
 
+    // ---- no empty or blip-only files ----
+    {
+        AssocModel m;
+        m.start_audio((dir / "q").string(), 1 << 30, 0, 1000);
+        m.begin_stream(1, "dmr", 0);
+        for (int k = 0; k < 2; ++k) line(m, 1, kCC, 1000 + k);
+        // Near-silence (decoder fade / comfort noise, peak < 64) on a call: no file.
+        line(m, 1, " SLOT 1 TGT=9 SRC=100 Group Call ", 1100);
+        for (int f = 0; f < 50; ++f) tone(m, 1, 1, 20, 1110 + 20 * f);
+        auto cs = calls(m, "dmr", 2200);
+        check(by_src(cs, "100") && by_src(cs, "100")->audio.empty(), "audible: a call with only near-silent audio gets no file");
+        // A 0.1 s blip: recorded while the call runs, deleted when it ends.
+        line(m, 1, " SLOT 2 TGT=10 SRC=200 Group Call ", 3000);
+        for (int f = 0; f < 5; ++f) tone(m, 1, 2, 3000, 3010 + 20 * f);
+        cs = calls(m, "dmr", 3200);
+        const std::string blip = by_src(cs, "200") ? by_src(cs, "200")->audio : std::string();
+        m.end_stream(1, 3300);
+        cs = calls(m, "dmr", 3400);
+        check(!blip.empty() && by_src(cs, "200")->audio.empty() && !fs::exists(file("q", blip)) && m.audio_status().files == 0,
+              "min length: a recording under 0.2 s is deleted when its call ends (no stub files left)");
+        // Every file left in the directory is a real recording.
+        bool real = true;
+        for (const auto& e : fs::directory_iterator(dir / "q")) real = real && fs::file_size(e.path()) > 44 + 2 * 1600;
+        check(real, "min length: nothing but recordings of at least 0.2 s on disk");
+    }
+
+    // ---- slot not yet known (DMR direct mode before the first call line) ----
+    {
+        AssocModel m;
+        m.start_audio((dir / "u").string(), 1 << 30, 0, 1000);
+        m.begin_stream(1, "dmr", 0);
+        line(m, 1, "19:50:50 Sync: +DMR MS/DM MODE/MONO | Color Code=01 | VC* ", 1000);
+        line(m, 1, "19:50:50 Sync: +DMR MS/DM MODE/MONO | Color Code=01 | VC* ", 1010);
+        for (int f = 0; f < 10; ++f) tone(m, 1, 0, 400, 1020 + 20 * f);    // slot unknown, no call yet
+        line(m, 1, " SLOT 1 TGT=9 SRC=100 Group Call ", 1230);
+        for (int f = 0; f < 5; ++f) tone(m, 1, 0, 500, 1240 + 20 * f);     // still unknown: same stream's call
+        for (int f = 0; f < 10; ++f) tone(m, 1, 1, 600, 1340 + 20 * f);    // now slot 1
+        auto cs = calls(m, "dmr", 1600);
+        std::vector<int16_t> s;
+        bool ok = by_src(cs, "100") && wav(m.audio_path(by_src(cs, "100")->audio, 1LL << 40), s) && s.size() == 25 * 160;
+        for (std::size_t i = 0; ok && i < s.size(); ++i) ok = s[i] == (i < 1600 ? 400 : i < 2400 ? 500 : 600);
+        check(ok, "slot unknown: audio from before the decoder knew the slot is kept, in order, then the slot's own");
+    }
+
+    // ---- dsd-fme stereo: a lone slot's voice is copied to both channels ----
+    {
+        std::vector<std::pair<int, std::size_t>> got;
+        std::vector<int16_t> scratch;
+        auto out = [&](int slot, const int16_t*, std::size_t n) { got.push_back({slot, n}); };
+        std::vector<int16_t> dup(320), split(320);
+        for (std::size_t i = 0; i < 160; ++i) { dup[2 * i] = dup[2 * i + 1] = static_cast<int16_t>(i); split[2 * i] = 100; split[2 * i + 1] = 200; }
+        route_stereo_slots(dup.data(), dup.size(), 2, scratch, out);
+        check(got.size() == 1 && got[0].first == 2 && got[0].second == 160,
+              "stereo: identical channels (dsd-fme copying one slot's voice) go once, to the active slot");
+        got.clear();
+        route_stereo_slots(dup.data(), dup.size(), 0, scratch, out);
+        check(got.size() == 1 && got[0].first == 0, "stereo: ...or as slot-unknown when no slot is active yet");
+        got.clear();
+        route_stereo_slots(split.data(), split.size(), 1, scratch, out);
+        check(got.size() == 2 && got[0].first == 1 && got[1].first == 2, "stereo: different channels (voice on both slots) go to their own slots");
+    }
+
     // ---- encrypted calls: never recorded (unless the session has the key) ----
     {
         AssocModel m;
@@ -286,7 +348,7 @@ int main() {
         for (int i = 0; i < 4; ++i) {
             const std::int64_t t = 2000 + 1000 * i;
             line(m, 1, " SLOT 1 TGT=9 SRC=" + std::to_string(100 + i) + " Group Call ", t);
-            for (int f = 0; f < 25; ++f) tone(m, 1, 1, static_cast<int16_t>(10 + i), t + 10 + 20 * f);   // 0.5 s = 8 KB
+            for (int f = 0; f < 25; ++f) tone(m, 1, 1, static_cast<int16_t>(1000 + i), t + 10 + 20 * f);   // 0.5 s = 8 KB
             names.push_back(by_src(calls(m, "dmr", t + 600), std::to_string(100 + i))->audio);
         }
         const auto st = m.audio_status();
@@ -312,7 +374,7 @@ int main() {
         m.begin_stream(1, "dmr", 1000);
         for (int k = 0; k < 2; ++k) line(m, 1, kCC, 1001 + k);
         line(m, 1, " SLOT 1 TGT=9 SRC=100 Group Call ", 1100);
-        for (int f = 0; f < 5; ++f) tone(m, 1, 1, 55, 1110 + 20 * f);
+        for (int f = 0; f < 5; ++f) tone(m, 1, 1, 5500, 1110 + 20 * f);
         const std::string live = m.to_json(1300);
         m.stop_recording(1300);
         AssocModel r;

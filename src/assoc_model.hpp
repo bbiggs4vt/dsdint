@@ -92,6 +92,12 @@ public:
     static constexpr std::size_t kMaxFreqs = 64;       // channels listed per network
     static constexpr std::int64_t kPrerollMs = 1000;   // audio held before its call is decoded
     static constexpr std::size_t kPrerollSamples = 8000;
+    // A call's recording starts only with audible audio (peak at least this,
+    // about -54 dBFS -- above decoder fade / comfort noise), and is deleted
+    // when the call ends if it is shorter than kMinAudioSamples (0.2 s): no
+    // empty or blip-only files.
+    static constexpr int kAudiblePeak = 64;
+    static constexpr std::uint64_t kMinAudioSamples = 1600;
 
     static std::int64_t now_ms() {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -501,12 +507,14 @@ public:
             for (const char* s : {"1", "2"})
                 if (Call* x = fresh_call(c, F, s, now); x && (!k || x->last_ms > k->last_ms)) k = x;
         }
-        bool silent = true;
-        for (std::size_t i = 0; i < n && silent; ++i) silent = pcm[i] == 0;
+        int peak = 0;
+        for (std::size_t i = 0; i < n; ++i) peak = std::max(peak, pcm[i] < 0 ? -static_cast<int>(pcm[i]) : static_cast<int>(pcm[i]));
+        const bool silent = peak == 0, audible = peak >= kAudiblePeak;
         if (!k) {
             if (silent) return;
             Ctx::Preroll& p = c.preroll[slot];
-            if (now - p.last > kPrerollMs) p.pcm.clear();
+            if (now - p.last > kPrerollMs) { p.pcm.clear(); p.audible = false; }
+            p.audible = p.audible || audible;
             p.pcm.insert(p.pcm.end(), pcm, pcm + n);
             if (p.pcm.size() > kPrerollSamples) p.pcm.erase(p.pcm.begin(), p.pcm.end() - kPrerollSamples);
             p.last = now;
@@ -519,21 +527,35 @@ public:
             return;
         }
         if (k->audio.empty()) {
-            if (silent && c.preroll[slot].pcm.empty()) return;            // no file for silence alone
+            // Held audio: this slot's, and audio from before the decoder
+            // knew the slot (slot 0, e.g. DMR direct mode until the first
+            // call line) -- oldest first.
+            std::vector<Ctx::Preroll*> held;
+            for (int ps : {0, slot})
+                if (auto pit = c.preroll.find(ps); pit != c.preroll.end() && !pit->second.pcm.empty() &&
+                                                   now - pit->second.last <= kPrerollMs &&
+                                                   (held.empty() || ps != 0 || slot != 0))
+                    held.push_back(&pit->second);
+            if (held.size() == 2 && held[0] == held[1]) held.pop_back();
+            std::sort(held.begin(), held.end(), [](const Ctx::Preroll* x, const Ctx::Preroll* y) { return x->last < y->last; });
+            bool held_audible = false;
+            for (const auto* h : held) held_audible = held_audible || h->audible;
+            if (!audible && !held_audible) return;                        // no file without audible audio
             const std::string name = CallAudioStore::make_name(k->start_ms, instance_, k->id);
             if (!audio_.open(name, now)) return;
             k->audio = name;
             k->audio_sid = sid;
             k->audio_slot = slot;
-            Ctx::Preroll& p = c.preroll[slot];
-            if (!p.pcm.empty() && now - p.last <= kPrerollMs) {
-                audio_.append(name, p.pcm.data(), p.pcm.size(), now);
-                k->audio_samples += p.pcm.size();
+            for (Ctx::Preroll* h : held) {
+                audio_.append(name, h->pcm.data(), h->pcm.size(), now);
+                k->audio_samples += h->pcm.size();
             }
-            p.pcm.clear();
+            for (int ps : {0, slot}) { c.preroll[ps].pcm.clear(); c.preroll[ps].audible = false; }
             ++version_;
-        } else if (k->audio_sid != sid || k->audio_slot != slot) {
-            return;                                   // another receiver's copy of this call: one recording
+        } else if (k->audio_sid != sid || (k->audio_slot != slot && k->audio_slot != 0 && slot != 0)) {
+            return;                                   // another receiver's / slot's copy of this call: one recording
+        } else if (k->audio_slot == 0 && slot != 0) {
+            k->audio_slot = slot;                     // the decoder now knows the slot
         }
         audio_.append(k->audio, pcm, n, now);
         k->audio_samples += n;
@@ -849,7 +871,7 @@ private:
         std::map<std::string, std::pair<std::string, int>> pending;
         // Audio that arrived on a slot before its call was decoded (per audio
         // slot 0/1/2), kept briefly so the call's recording starts with it.
-        struct Preroll { std::vector<int16_t> pcm; std::int64_t last = 0; };
+        struct Preroll { std::vector<int16_t> pcm; std::int64_t last = 0; bool audible = false; };
         std::map<int, Preroll> preroll;
     };
 
@@ -1390,8 +1412,14 @@ private:
         if (!k.open) return;
         k.open = false;
         if (!k.audio.empty()) {
-            if (k.encrypted) { audio_.discard(k.audio); k.audio.clear(); }   // flagged encrypted late
-            else audio_.finish(k.audio);
+            // Flagged encrypted late, or too short to be worth a file: delete.
+            if (k.encrypted || k.audio_samples < kMinAudioSamples) {
+                audio_.discard(k.audio);
+                k.audio.clear();
+                k.audio_samples = 0;
+            } else {
+                audio_.finish(k.audio);
+            }
         }
         if (!k.counted || k.priv) return;
         auto t = F.tgs.find(k.tgt);

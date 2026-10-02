@@ -220,8 +220,10 @@ struct DsdProcessConfig {
     std::function<void(const DsdEvent&)> on_suppressed;
 
     // Observer for decoded voice per TDMA slot, BEFORE the mono collapse
-    // above: (1, left) and (2, right) in dsd-fme's stereo modes, (0, pcm) in
-    // its mono ones. 8 kHz s16. Called on the UDP reader thread; feeds the
+    // above: (1, left) and (2, right) in dsd-fme's stereo modes when both
+    // slots carry voice; a lone slot's voice (which dsd-fme copies to both
+    // channels) once, as that slot -- see route_stereo_slots; (0, pcm) in its
+    // mono modes. 8 kHz s16. Called on the UDP reader thread; feeds the
     // network explorer's per-call audio and doesn't change what clients get.
     std::function<void(int slot, const int16_t* pcm, std::size_t n)> on_slot_audio;
 
@@ -251,6 +253,16 @@ bool dsd_fme_forward_event(const DsdEvent& ev, bool forward_unknown);
 // dsd-fme (see tests/test_dsd_fme_parse.cpp).
 std::size_t stereo_to_mono_for_slot(const int16_t* pcm, std::size_t nsamp,
                                     int slot, std::vector<int16_t>& out);
+
+// Split one dsd-fme stereo DMR packet into per-slot audio for the network
+// explorer. dsd-fme (DMR_STEREO_OUTPUT, dsd_audio2.c playSynthesizedVoiceSS3)
+// COPIES the voice of a lone active slot into both channels; only when both
+// slots carry voice at once are left and right different. So: different
+// channels -> (1, left) and (2, right); identical channels -> one copy, to
+// `active_slot` (the slot the decoder reports activity on), or to 0 (slot
+// unknown) when it isn't known.
+void route_stereo_slots(const int16_t* pcm, std::size_t nsamp, int active_slot, std::vector<int16_t>& scratch,
+                        const std::function<void(int, const int16_t*, std::size_t)>& out);
 
 class DsdProcess {
 public:

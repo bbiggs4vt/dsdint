@@ -196,14 +196,16 @@ int main(int argc, char** argv) {
           "received a substantial amount of mono audio (>100k samples)");
     check(audio_samples.load() < 300000,
           "mono audio volume is plausible (<300k samples)");
-    // The per-slot tap sees the same stereo split into its two slots: each
-    // slot gets one sample per L/R pair (as many as the mono stream), and
-    // nothing arrives as unslotted mono in this stereo mode.
-    std::printf("  per-slot tap: slot1 %zu, slot2 %zu, mono %zu samples\n", slot_samples[1].load(),
-                slot_samples[2].load(), slot_samples[0].load());
-    check(slot_samples[1].load() == audio_samples.load() && slot_samples[2].load() == audio_samples.load() &&
-              slot_samples[0].load() == 0,
-          "per-slot audio tap: both DMR slots, each as long as the client's mono stream");
+    // The per-slot tap: dsd-fme copies a lone slot's voice into both
+    // channels, so each such packet must reach ONE slot (the active one);
+    // only packets with different channels (voice on both slots at once)
+    // reach both. This capture's voice is mostly on slot 2.
+    const std::size_t s0 = slot_samples[0].load(), s1 = slot_samples[1].load(), s2 = slot_samples[2].load();
+    std::printf("  per-slot tap: slot1 %zu, slot2 %zu, slot-unknown %zu samples (client mono %zu)\n", s1, s2, s0,
+                audio_samples.load());
+    check(s0 + s1 + s2 >= audio_samples.load() && s0 + s1 + s2 < audio_samples.load() * 5 / 4,
+          "per-slot audio tap: every packet once (copies of a lone slot's voice are not doubled)");
+    check(s2 > s1 * 2, "per-slot audio tap: the voice lands on the slot that carries it (slot 2 here)");
     {
         // dsd-fme's single-channel modes send mono: no stereo split there.
         DsdProcessConfig c1;
