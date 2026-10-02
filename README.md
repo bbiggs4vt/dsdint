@@ -766,12 +766,12 @@ In the **Calls** view:
 With **Transcribe on play** ticked (the Calls toolbar), playing a call also
 turns its speech into text: it shows in the bar at the bottom and then in the
 call's **Text** column, and goes into the audio zip's `calls.csv`. It is done
-**in the browser**, with OpenAI's Whisper (the `base` model by default) run by
+**in the browser**, with OpenAI's Whisper (the `small` model by default) run by
 [Transformers.js](https://github.com/huggingface/transformers.js) -- the server
 does no speech work; it only serves the files:
 
-    tools/get_asr_assets.sh            # ~100 MB into ./net_asr (base)
-    tools/get_asr_assets.sh base small # also the larger, slower, more accurate model
+    tools/get_asr_assets.sh            # ~280 MB into ./net_asr (small)
+    tools/get_asr_assets.sh small base # also base: ~3x faster, but often wrong on radio voice
 
 Run it where dsd-server runs (or copy the folder there) and point the server
 at it with `DSD_NET_ASR_DIR` -- else it looks in `net_asr/` under the
@@ -781,21 +781,31 @@ Face (Xenova's ONNX conversions), else an npm mirror of the same files. With
 no files on the server the page offers to load them from the internet
 (jsDelivr, Hugging Face) instead -- only if you choose to.
 
-- **Speed.** The first call of a visit also loads the model (about 80 MB for
-  `base`; then cached). After that, measured on a 4-core cloud VM: about
-  2-5 s a call where the browser allows several threads, 7-11 s where it
-  doesn't; `small` about 14 s / 25-30 s. A desktop PC is usually faster.
-  Whisper's cost is per call, not per second of audio. Browsers allow threads
-  only on pages that are HTTPS or `localhost`: over plain `http://<server-ip>`
-  it runs on one thread (in Chrome, `chrome://flags/#unsafely-treat-insecure-origin-as-secure`
-  with the server's address lifts that).
+- **Which model.** Decoded radio voice (AMBE / IMBE vocoders, 8 kHz) is hard
+  for the small models: on a test call of someone counting 7 to 12, `small`
+  gave "Seven, eight, nine, ten, eleven, twelve.", `base` looped on "I'm
+  telling you, ..." and `tiny` gave "Yeah, that's a lot." The explorer uses
+  the most accurate model in the folder (`small.en` > `small` > `base.en` >
+  `base` > `tiny`); the toolbar's model list (shown when there are several)
+  picks another in that browser. `.en` models (from Hugging Face) are English
+  only and usually a little better at it -- copy a downloaded
+  `whisper-small.en` folder into `net_asr/models/Xenova/` to use one.
+- **Speed.** The first call of a visit also loads the model (`small` about
+  250 MB, `base` 80 MB; downloaded from the server once, then revalidated).
+  Then, measured on a 4-core cloud VM, per call: `small` about 12-17 s where
+  the browser allows several threads, 25-30 s where it doesn't; `base` 3-5 s /
+  7-11 s. A desktop PC is usually 2-3x faster. Whisper's cost is per call, not
+  per second of audio. Browsers allow threads only on pages that are HTTPS or
+  `localhost`: over plain `http://<server-ip>` it runs on one thread (in
+  Chrome, `chrome://flags/#unsafely-treat-insecure-origin-as-secure` with the
+  server's address lifts that).
 - **Language.** The toolbar's language list (default English, or
   `DSD_NET_ASR_LANG`; "Detect language" guesses, poorly on short calls).
   `.en` models are English only. `DSD_NET_ASR_MODEL` picks the default model
   when the folder has several (also a toolbar choice).
 - **Accuracy.** Fine on clear speech, unreliable on short or vocoder-mangled
   calls; Whisper also invents text for silence or noise ("you", "Thanks for
-  watching") -- the explorer drops those and collapses its word loops. Treat
+  watching") or gets stuck repeating a phrase -- the explorer drops those. Treat
   transcripts as a hint, not a record.
 - Transcripts are kept in that browser (`localStorage`, the last ~1000), not
   on the server; a call still in progress is transcribed again when replayed.

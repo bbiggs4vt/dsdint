@@ -831,7 +831,7 @@ function npText() {
   var r = ASR.tx[c.audio], j = ASR.job && ASR.job.name === c.audio ? ASR.job : ASR.next && ASR.next.name === c.audio ? ASR.next : null;
   if (r && !j) {
     el.className = 'tx' + (r.t ? '' : ' st');
-    el.appendChild(document.createTextNode(r.t || '(no speech recognized)'));
+    el.appendChild(document.createTextNode(r.t || '(no clear speech recognized)'));
     el.appendChild(h('span', { class: 'alias', text: '  · ' + r.m.replace(/^.*\//, '') + (r.ms ? ' · ' + (r.ms / 1000).toFixed(1) + ' s' : '') +
                                                   (r.p ? ' · partial (call still in progress)' : '') }));
     return;
@@ -875,12 +875,13 @@ function txSave() {
   Object.keys(ASR.tx).forEach(function (x) { if (!ASR.tx[x].p) keep[x] = ASR.tx[x]; });
   store('asr.tx', JSON.stringify(keep));
 }
-// Whisper's stock inventions on silence and noise, and its loops.
+// Whisper's stock inventions on silence and noise; its loops (below).
 var JUNK = /^(you|thank you|thanks for watching|thank you for watching|thank you so much for watching|please subscribe|subtitles by .*|.*amara\.org.*)$/i;
 function cleanTx(t) {
-  t = String(t || '').replace(/\[[^\]]*\]|\([^)]*\)|\*[^*]*\*|♪/g, ' ').replace(/\s+/g, ' ').trim();
-  t = t.replace(/(^|\s)(\S+(?:\s+\S+){0,2}?)(?:[\s,.!?]+\2(?=[\s,.!?]|$)){2,}/gi, '$1$2 …');
-  if (!/[0-9A-Za-zÀ-￿]/.test(t)) return '';
+  t = String(t || '').replace(/\[[^\]]*\]|\([^)]*\)|\*[^*]*\*|\u266A/g, ' ').replace(/\s+/g, ' ').trim();
+  // A phrase said 4+ times in a row is Whisper stuck in a loop, not speech.
+  if (/(^|\s)(\S+(?:\s+\S+){0,3}?)(?:[\s,.!?]+\2(?=[\s,.!?]|$)){3,}/i.test(t)) return '';
+  if (!/[0-9A-Za-z\u00C0-\uFFFF]/.test(t)) return '';
   return JUNK.test(t.replace(/[\s.!?,…]+$/, '')) ? '' : t;
 }
 function asrCfg() {
@@ -2053,7 +2054,11 @@ self.onmessage = async (e) => {
       postMessage({ type: 'ready', model: m.model, threads: threads, ms: Math.round(performance.now() - t0) });
     } else if (m.cmd === 'run') {
       const t0 = performance.now();
-      const opts = { chunk_length_s: 30, stride_length_s: 5, return_timestamps: false };
+      // At most ~8 tokens per second of audio: speech never needs more, and it
+      // stops Whisper's loops ("I'm telling you, I'm telling you, ...") from
+      // running to the 30 s window's limit, which can take half a minute.
+      const opts = { chunk_length_s: 30, stride_length_s: 5, return_timestamps: false,
+                     max_new_tokens: Math.min(440, Math.ceil(m.pcm.length / 16000 * 8) + 16) };
       if (m.language) { opts.language = m.language; opts.task = 'transcribe'; }
       const r = await asr(m.pcm, opts);
       postMessage({ type: 'result', id: m.id, text: String((r && r.text) || '').trim(), ms: Math.round(performance.now() - t0) });

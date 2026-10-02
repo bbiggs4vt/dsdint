@@ -84,7 +84,7 @@ std::string net_audio_json(const CallAudioStore::Status& a) {
 // browser runs Whisper itself (Transformers.js); the server only serves the
 // library and model files, from DSD_NET_ASR_DIR, else <net log dir>/net_asr
 // (tools/get_asr_assets.sh fills it). DSD_NET_ASR_MODEL picks the default
-// model (else Xenova/whisper-base when present), DSD_NET_ASR_LANG the default
+// model (else the most accurate one present), DSD_NET_ASR_LANG the default
 // language (else english; "auto" detects it).
 std::string net_asr_dir() {
     const char* d = std::getenv("DSD_NET_ASR_DIR");
@@ -132,8 +132,12 @@ std::string net_asr_config_json() {
     const char* el = std::getenv("DSD_NET_ASR_LANG");
     std::string model = (em && em[0]) ? em : "";
     if (model.empty()) {
-        model = "Xenova/whisper-base";
-        if (!models.empty() && std::find(models.begin(), models.end(), model) == models.end()) model = models.front();
+        // The most accurate model present: on vocoder audio small is right
+        // where base and tiny are badly wrong (it is also ~3x slower).
+        for (const char* m : {"Xenova/whisper-small.en", "Xenova/whisper-small", "Xenova/whisper-base.en",
+                              "Xenova/whisper-base", "Xenova/whisper-tiny.en", "Xenova/whisper-tiny"})
+            if (std::find(models.begin(), models.end(), m) != models.end()) { model = m; break; }
+        if (model.empty()) model = models.empty() ? "Xenova/whisper-small" : models.front();
     }
     std::string list = "[";
     for (std::size_t i = 0; i < models.size(); ++i) list += (i ? "," : "") + assocjson::q(models[i]);

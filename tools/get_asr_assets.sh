@@ -5,11 +5,17 @@
 #
 #   transformers.min.js                     Transformers.js (runs Whisper in the browser)
 #   ort/ort-wasm-simd-threaded.asyncify.*   its ONNX Runtime WebAssembly
-#   models/Xenova/whisper-base/...          the Whisper model (quantized ONNX)
+#   models/Xenova/whisper-small/...         the Whisper model (quantized ONNX)
 #
-#   tools/get_asr_assets.sh                  # base (the default)
-#   tools/get_asr_assets.sh base small       # base, and small (slower, more accurate)
-#   tools/get_asr_assets.sh base.en          # an English-only model (Hugging Face only)
+#   tools/get_asr_assets.sh                  # small (the default, ~250 MB)
+#   tools/get_asr_assets.sh small base       # also base: ~3x faster, but often wrong
+#   tools/get_asr_assets.sh small.en         # an English-only model (Hugging Face only)
+#
+# small is the default because it gets decoded radio voice right where base
+# and tiny don't (a call of someone counting 7..12: small "Seven, eight, nine,
+# ten, eleven, twelve."; base looped "I'm telling you, ..."; tiny "Yeah,
+# that's a lot."). The explorer uses the most accurate model present, and its
+# toolbar lets each browser pick another.
 #
 # Models: tiny, base, small (multilingual -- the explorer's Language setting
 # picks the language) or tiny.en, base.en, small.en (English only).
@@ -40,7 +46,7 @@ NPM=${NPM%/}
 DEST=${DEST:-${DSD_NET_ASR_DIR:-net_asr}}
 SOURCE=${MODEL_SOURCE:-hf}
 MODELS=("$@")
-[ ${#MODELS[@]} -eq 0 ] && MODELS=(base)
+[ ${#MODELS[@]} -eq 0 ] && MODELS=(small)
 HERE=$(cd "$(dirname "$0")" && pwd)
 for t in curl tar python3; do command -v $t >/dev/null || { echo "$t is required" >&2; exit 1; }; done
 mkdir -p "$DEST/ort" "$DEST/models/Xenova"
