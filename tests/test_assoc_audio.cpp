@@ -224,6 +224,52 @@ int main() {
         check(ok, "slot unknown: audio from before the decoder knew the slot is kept, in order, then the slot's own");
     }
 
+    // ---- a full list rolls off calls without audio first (and replays the same) ----
+    {
+        AssocModel m;
+        m.set_identity("99aa88bb77cc66dd", "rx");
+        m.set_since(500);
+        m.set_max_calls(20);
+        m.start_audio((dir / "k").string(), 1 << 30, 0, 1000);
+        m.start_recording(dir.string(), 0, false, 1000);
+        const std::string rpath = m.recording().path;
+        m.begin_stream(1, "dmr", 1000);
+        for (int k = 0; k < 2; ++k) line(m, 1, kCC, 1001 + k);
+        std::int64_t t = 2000;
+        auto call = [&](int src, bool with_audio) {
+            line(m, 1, " SLOT 1 TGT=9 SRC=" + std::to_string(src) + " Group Call ", t);
+            if (with_audio) for (int f = 0; f < 15; ++f) tone(m, 1, 1, 2000, t + 10 + 20 * f);   // 0.3 s
+            t += 1000;
+        };
+        for (int i = 0; i < 10; ++i) call(100 + i, true);       // 10 calls with audio
+        for (int i = 0; i < 30; ++i) call(200 + i, false);      // then 30 without
+        auto cs = calls(m, "dmr", t);
+        int with = 0, without = 0;
+        for (const auto& c : cs) (c.audio.empty() ? without : with)++;
+        check(cs.size() == 20 && with == 10 && by_src(cs, "100") && by_src(cs, "229") && !by_src(cs, "219"),
+              "priority: a full list keeps every call with audio (even the oldest) and drops the oldest without");
+        for (int i = 0; i < 15; ++i) call(300 + i, true);       // more audio calls than room
+        cs = calls(m, "dmr", t);
+        with = 0;
+        for (const auto& c : cs) if (!c.audio.empty()) ++with;
+        check(cs.size() == 20 && with == 20 && by_src(cs, "314") && !by_src(cs, "100") && !by_src(cs, "229"),
+              "priority: once only calls with audio are left, the oldest of those go");
+        m.stop_recording(t);
+        AssocModel r;
+        ReplayResult rr;
+        replay_log(rpath, r, rr);
+        check(rr.fresh && r.max_calls() == 20 && families_of(r.to_json(t)) == families_of(rr.stop_model),
+              "priority: the recording notes which calls had audio, so a replay drops the same calls");
+    }
+    {
+        std::vector<DsCall> C(10);
+        for (int i = 0; i < 10; ++i) { C[i].id = 10 - i; C[i].start = 100 - i; }   // newest first
+        C[7].audio = "a.wav"; C[8].audio = "b.wav"; C[9].audio = "c.wav";       // the three oldest
+        cap_calls(C, 5);
+        check(C.size() == 5 && C[0].id == 10 && C[1].id == 9 && C[2].audio == "a.wav" && C[4].audio == "c.wav",
+              "priority: a merged / imported view keeps calls with audio the same way");
+    }
+
     // ---- dsd-fme stereo: a lone slot's voice is copied to both channels ----
     {
         std::vector<std::pair<int, std::size_t>> got;

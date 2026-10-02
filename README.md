@@ -633,9 +633,21 @@ When a session ends (stop, disconnect, or a new `start`), any network it fed
 that never carried a call is dropped too, along with radios known only through
 it -- unless another running session is still on that network.
 
-Everything is in memory, bounded (last 400 calls per protocol; capped
-radios / talkgroups / networks), and resets on restart or with the page's
-**Clear** button. `GET /net.json` serves the same model for tooling.
+Everything is in memory, bounded, and resets on restart or with the page's
+**Clear** button. `GET /net.json` serves the same model for tooling (gzip-
+compressed when the client accepts it).
+
+- **Calls kept:** the newest 5000 per protocol (`DSD_NET_MAX_CALLS`). When the
+  list is full the oldest call goes -- but calls with recorded audio last: the
+  oldest call *without* audio is dropped first. Each extra 1000 calls costs
+  roughly 1 MB of JSON per explorer refresh (about 100 KB compressed), so
+  lower it on a slow link or a busy multi-protocol server.
+- **Calls / s:** the stat card shows calls per second over the last minute
+  (hover / tap for the 10-minute average and the total since start). It is
+  counted from every call, not just those still listed; with a network or
+  search filter it is worked out from the listed calls.
+- Radios, talkgroups and networks are capped too (3000 / 1500 / 200 per
+  protocol, least recently heard dropped first).
 
 ### Exporting and re-opening explorer data
 
@@ -722,7 +734,8 @@ or talkgroup's recent calls.
 - Files go to `DSD_NET_AUDIO_DIR`, else `net_audio/` under the recording
   directory (`/captures/net_audio` in the Docker image). The total is capped
   by `DSD_NET_AUDIO_MAX_MB` (default 1024 MB, about 18 hours of speech): the
-  oldest files are deleted first. `DSD_NET_AUDIO_MAX_AGE_H` also deletes files
+  oldest files are deleted first (and calls with audio stay in the explorer's
+  call list longest). `DSD_NET_AUDIO_MAX_AGE_H` also deletes files
   older than that many hours. Files from earlier runs in the directory count
   toward the cap and stay playable.
 - Audio stays on the server that recorded it: exports note which calls had

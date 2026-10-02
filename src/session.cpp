@@ -7,6 +7,7 @@
 
 #include <fstream>
 #include <iostream>
+#include <zlib.h>
 #include <iterator>
 #include <cstring>
 #include <cstdlib>
@@ -82,6 +83,21 @@ bool env_on(const char* name) {
     if (!v || !v[0]) return false;
     const std::string s(v);
     return s[0] == '1' || s[0] == 'y' || s[0] == 'Y' || s[0] == 't' || s[0] == 'T' || s == "on";
+}
+
+// gzip `in` into `out` (fast compression level: the explorer's poll).
+bool gzip_string(const std::string& in, std::string& out) {
+    z_stream z{};
+    if (deflateInit2(&z, 1, Z_DEFLATED, 16 + MAX_WBITS, 8, Z_DEFAULT_STRATEGY) != Z_OK) return false;
+    out.resize(deflateBound(&z, static_cast<uLong>(in.size())) + 32);
+    z.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(in.data()));
+    z.avail_in = static_cast<uInt>(in.size());
+    z.next_out = reinterpret_cast<Bytef*>(&out[0]);
+    z.avail_out = static_cast<uInt>(out.size());
+    const int rc = deflate(&z, Z_FINISH);
+    out.resize(z.total_out);
+    deflateEnd(&z);
+    return rc == Z_STREAM_END;
 }
 
 // Largest HTTP request body accepted (explorer imports / merges of exports).
@@ -422,6 +438,18 @@ void Session::serve_http() {
         res->result(http::status::ok);
         res->set(http::field::content_type, "application/json");
         res->body() = stats_ ? stats_->assoc().to_json() : std::string("{\"families\":{}}");
+        // The explorer polls this every 1.5 s and, with thousands of calls
+        // listed, it runs to megabytes: send it compressed (~10x smaller)
+        // when the client accepts gzip (every browser does).
+        const std::string ae(http_req_[http::field::accept_encoding]);
+        if (ae.find("gzip") != std::string::npos && res->body().size() > 1024) {
+            std::string gz;
+            if (gzip_string(res->body(), gz)) {
+                res->body() = std::move(gz);
+                res->set(http::field::content_encoding, "gzip");
+                res->set(http::field::vary, "Accept-Encoding");
+            }
+        }
     } else if (target == "/net/export.json" || target == "/net/export.graphml") {
         // Explorer Export: what the explorer shows, as a file to keep -- the
         // native format (re-openable in the explorer) or GraphML for graph tools.

@@ -83,13 +83,15 @@ public:
     // ---- tunables -------------------------------------------------------
     static constexpr std::int64_t kContinueMs = 4000; // gap that still continues a call
     static_assert(kContinueMs == kTwinGapMs, "merged twins follow the live rule");
-    static constexpr std::size_t kMaxCalls = 400;      // per family
+    // Calls kept per family: max_calls_ (DSD_NET_MAX_CALLS, default 5000;
+    // set_max_calls). When full, the oldest call without audio goes first.
     static constexpr std::size_t kMaxRadios = 3000;    // per family
     static constexpr std::size_t kMaxTalkgroups = 1500;
     static constexpr std::size_t kMaxNetworks = 200;
     static constexpr std::size_t kMaxEdgesPerNode = 300;
     static constexpr std::size_t kMaxAliases = 5;
     static constexpr std::size_t kMaxFreqs = 64;       // channels listed per network
+    static constexpr std::int64_t kRateWindowS = 600;  // calls/s averages: 1 and 10 minutes
     static constexpr std::int64_t kPrerollMs = 1000;   // audio held before its call is decoded
     static constexpr std::size_t kPrerollSamples = 8000;
     // A call's recording starts only with audible audio (peak at least this,
@@ -238,7 +240,8 @@ public:
         const bool fresh = fam_.empty() && next_call_ == 0;
         rec_.write("{\"op\":\"header\",\"v\":1,\"t\":" + std::to_string(now) +
                    ",\"fresh\":" + (fresh ? "true" : "false") + ",\"instance\":" + assoclog::q(instance_) +
-                   ",\"name\":" + assoclog::q(name_) + ",\"since\":" + std::to_string(since_) + "}", now);
+                   ",\"name\":" + assoclog::q(name_) + ",\"since\":" + std::to_string(since_) +
+                   ",\"max_calls\":" + std::to_string(max_calls_) + "}", now);
         for (const auto& kv : sess_) {
             if (!kv.second.running) continue;
             rec_.write("{\"op\":\"begin\",\"t\":" + std::to_string(now) + ",\"s\":" + std::to_string(kv.first) +
@@ -451,6 +454,25 @@ public:
         return head + families_json(view) + "}";
     }
 
+    // Calls kept per protocol (default DSD_NET_MAX_CALLS / 5000). A replay
+    // takes the recording's value.
+    void set_max_calls(std::size_t n) {
+        std::lock_guard<std::mutex> lk(mu_);
+        max_calls_ = n < 10 ? 10 : n;
+    }
+    std::size_t max_calls() const {
+        std::lock_guard<std::mutex> lk(mu_);
+        return max_calls_;
+    }
+    // Replay of a recording's "keep" op: call `id` of `family` got (or lost)
+    // audio, so it rolls off the list last -- as it did live.
+    void mark_keep(const std::string& family, std::uint64_t id, bool on) {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto fit = fam_.find(family);
+        if (fit == fam_.end()) return;
+        for (auto& k : fit->second.calls) if (k.id == id) { k.keep = on; break; }
+    }
+
     // ---- per-call audio (see assoc_audio.hpp) -----------------------------
     // Record decoded voice per call, into `dir`. Off by default.
     bool start_audio(const std::string& dir, std::uint64_t cap_bytes, std::int64_t max_age_ms,
@@ -524,6 +546,7 @@ public:
         if (k->encrypted && !keyed) {
             k->no_audio = true;
             if (!k->audio.empty()) { audio_.discard(k->audio); k->audio.clear(); ++version_; }
+            set_keep_locked(c.family, *k, false, now);
             return;
         }
         if (k->audio.empty()) {
@@ -546,6 +569,7 @@ public:
             k->audio = name;
             k->audio_sid = sid;
             k->audio_slot = slot;
+            set_keep_locked(c.family, *k, true, now);
             for (Ctx::Preroll* h : held) {
                 audio_.append(name, h->pcm.data(), h->pcm.size(), now);
                 k->audio_samples += h->pcm.size();
@@ -625,7 +649,7 @@ public:
         for (auto& fk : x.fams) {
             auto& C = fk.second.calls;
             std::stable_sort(C.begin(), C.end(), [](const DsCall& p, const DsCall& q) { return p.start > q.start; });
-            if (C.size() > kMergedCallsPerFamily) C.resize(kMergedCallsPerFamily);
+            cap_calls(C, max_calls_);
             for (std::size_t i = 0; i < C.size(); ++i) C[i].id = x.id * kImportIdStride + (C.size() - i);
         }
         r.id = x.id;
@@ -692,8 +716,34 @@ private:
         return "{\"version\":" + std::to_string(version_) + ",\"now\":" + std::to_string(now) +
                ",\"instance\":" + assocjson::q(instance_) + ",\"name\":" + assocjson::q(name_) +
                ",\"since\":" + std::to_string(since_) + ",\"rec\":" + rec_json_locked() +
-               ",\"audio\":" + audio_json_locked() + ",\"imports\":" + im +
+               ",\"audio\":" + audio_json_locked() + ",\"max_calls\":" + std::to_string(max_calls_) +
+               ",\"rates\":" + rates_json_locked(now) + ",\"imports\":" + im +
                ",\"families\":";
+    }
+    // Calls per second per protocol: averages over the last 1 and 10 minutes
+    // (over the time since the server started or was cleared, if shorter),
+    // and the number counted since then. Counted from every call, however
+    // many the list still holds.
+    std::string rates_json_locked(std::int64_t now) const {
+        std::string o = "{";
+        const std::int64_t sec = now / 1000, up = std::max<std::int64_t>(1, (now - since_) / 1000);
+        bool first = true;
+        for (const auto& fk : fam_) {
+            const Family& F = fk.second;
+            std::uint64_t n1 = 0, n10 = 0;
+            for (const auto& b : F.rate) {
+                if (b.first > sec - 60) n1 += b.second;
+                if (b.first > sec - kRateWindowS) n10 += b.second;
+            }
+            char b[160];
+            std::snprintf(b, sizeof b, "{\"per_s_1m\":%.2f,\"per_s_10m\":%.2f,\"total\":%llu}",
+                          static_cast<double>(n1) / static_cast<double>(std::min<std::int64_t>(60, up)),
+                          static_cast<double>(n10) / static_cast<double>(std::min<std::int64_t>(kRateWindowS, up)),
+                          static_cast<unsigned long long>(F.counted));
+            o += (first ? "" : ",") + assocjson::q(fk.first) + ":" + b;
+            first = false;
+        }
+        return o + "}";
     }
     std::string audio_json_locked() const {
         const auto a = audio_.status();
@@ -760,7 +810,7 @@ private:
         Dataset d = dataset_locked(now);
         if (imports_.empty()) return d;
         for (const auto& x : imports_) merge_into(d, x);
-        finalize_merge(d, false);
+        finalize_merge(d, false, max_calls_);
         return d;
     }
 
@@ -818,6 +868,7 @@ private:
         std::uint64_t audio_sid = 0;                    // the stream + slot the audio comes from
         int audio_slot = -1;
         std::uint64_t audio_samples = 0;                // its length (8 kHz samples)
+        bool keep = false;                              // has audio: rolls off the list last (recorded)
         bool no_audio = false;                          // encrypted: never record
         std::int64_t start_ms = 0, last_ms = 0;
         std::uint32_t frames = 0;
@@ -855,6 +906,8 @@ private:
         std::map<std::string, Talkgroup> tgs;
         std::map<std::string, Radio> radios;
         std::deque<Call> calls;                        // oldest at front
+        std::deque<std::pair<std::int64_t, std::uint32_t>> rate;   // calls counted per second (10 min)
+        std::uint64_t counted = 0;                     // calls counted since since_
     };
     struct Ctx {                                       // one per session stream
         std::string family;
@@ -1283,6 +1336,11 @@ private:
     // Both ends of the call are known: record the association once per call.
     void count_call(Family& F, Call& k, std::int64_t now) {
         k.counted = true;
+        ++F.counted;
+        const std::int64_t sec = now / 1000;
+        if (F.rate.empty() || F.rate.back().first != sec) F.rate.push_back({sec, 0});
+        ++F.rate.back().second;
+        while (!F.rate.empty() && F.rate.front().first <= sec - kRateWindowS) F.rate.pop_front();
         Radio& r = ensure_radio(F, k.src, now);
         r.last_ms = now;
         ++r.calls;
@@ -1364,6 +1422,7 @@ private:
             }
             dup.audio.clear();
         }
+        twin.keep = twin.keep || dup.keep;            // (from the flag: a replay has no files)
         const std::uint64_t dup_id = dup.id, twin_id = twin.id;
         for (auto& kv : c.active) if (kv.second == dup_id) kv.second = twin_id;
         for (auto& kv : c.last_slot_call) if (kv.second == dup_id) kv.second = twin_id;
@@ -1392,9 +1451,13 @@ private:
         // grants for several talkgroups -- may hold concurrent calls.)
         if (!slot.empty())
             if (Call* prev = fresh_call(c, F, slot, now)) close_call(F, *prev);
-        if (F.calls.size() >= kMaxCalls) {
-            close_call(F, F.calls.front());
-            F.calls.pop_front();
+        if (F.calls.size() >= max_calls_) {
+            // Roll off the oldest call -- but calls with audio last.
+            auto victim = F.calls.begin();
+            for (auto it = F.calls.begin(); it != F.calls.end(); ++it)
+                if (!it->keep) { victim = it; break; }
+            close_call(F, *victim);
+            F.calls.erase(victim);
         }
         Call k;
         k.id = ++next_call_;
@@ -1408,6 +1471,19 @@ private:
         c.last_slot_call[slot] = F.calls.back().id;
         return &F.calls.back();
     }
+    // A call got / lost audio: it rolls off the list last. Recorded, so a
+    // replay keeps the same calls.
+    void set_keep_locked(const std::string& family, Call& k, bool on, std::int64_t now) {
+        if (k.keep == on) return;
+        k.keep = on;
+        if (rec_.on())
+            rec_.write("{\"op\":\"keep\",\"t\":" + std::to_string(now) + ",\"f\":" + assoclog::q(family) +
+                       ",\"c\":" + std::to_string(k.id) + ",\"on\":" + (on ? "1" : "0") + "}", now);
+    }
+    void set_keep_locked(Family& F, Call& k, bool on) {
+        for (const auto& fk : fam_)
+            if (&fk.second == &F) { set_keep_locked(fk.first, k, on, k.last_ms); return; }
+    }
     void close_call(Family& F, Call& k) {
         if (!k.open) return;
         k.open = false;
@@ -1417,6 +1493,7 @@ private:
                 audio_.discard(k.audio);
                 k.audio.clear();
                 k.audio_samples = 0;
+                set_keep_locked(F, k, false);
             } else {
                 audio_.finish(k.audio);
             }
@@ -1507,6 +1584,7 @@ private:
     std::vector<Dataset> imports_;
     std::uint64_t next_import_ = 0;
     bool per_receiver_ = default_per_receiver();
+    std::size_t max_calls_ = max_calls_setting();
     CallAudioStore audio_;
     std::atomic<bool> audio_on_{false};
 };

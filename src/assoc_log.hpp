@@ -8,9 +8,10 @@
 // File format: gzip-compressed JSON Lines ("net_<UTC>.jsonl.gz"). Every line
 // is one flat object whose first key is "op":
 //
-//   {"op":"header","v":1,"t":<ms>,"fresh":true|false,"instance":..,"name":..,"since":<ms>}
+//   {"op":"header","v":1,"t":<ms>,"fresh":true|false,"instance":..,"name":..,"since":<ms>,"max_calls":N}
 //   {"op":"begin","t":<ms>,"s":<session>,"label":"p25p1"[,"freq":<Hz>][,"family":"p25","resumed":true]}
 //   {"op":"tune","t":<ms>,"s":<session>,"freq":<Hz>}   (the session's channel moved)
+//   {"op":"keep","t":<ms>,"f":"dmr","c":<call id>,"on":1|0}  (call got / lost audio: rolls off last)
 //   {"op":"ev","t":<ms>,"s":<session>,"kind":..,"tg":..,"src":..,"slot":..,"cc":..,
 //        "ran":..,"nac":..,"em":..,"alias":..,"crc":..,"msg":..,"extra":..,"raw":..}
 //   {"op":"end","t":<ms>,"s":<session>}        {"op":"remove","t":<ms>,"s":<session>}

@@ -257,7 +257,7 @@ inline std::string render_net_page_html() {
   @media (max-width: 900px) { th, td { padding-left: .5rem; padding-right: .5rem; } td .netc { max-width: 9.5rem; } }
   /* Compact stat cards, tabs and network chips: tablets and smaller. */
   @media (max-width: 1050px) {
-    .cards { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .5rem; }
+    .cards { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .5rem; }
     .card { min-width: 0; padding: .45rem .7rem; }
     .card .l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   }
@@ -265,7 +265,7 @@ inline std::string render_net_page_html() {
     .tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
     .tabs::-webkit-scrollbar { display: none; }
     .tab { flex: none; padding: .4rem .7rem; }
-    .cards { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .4rem; margin-bottom: .7rem; }
+    .cards { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .4rem; margin-bottom: .7rem; }
     .card { padding: .3rem .5rem; }
     .card .n { font-size: 1.15rem; }
     .card .l { font-size: .58rem; letter-spacing: .03em; }
@@ -277,7 +277,7 @@ inline std::string render_net_page_html() {
   @media (max-width: 640px) {
     .wrap { padding: 0 .75rem; }
     header { margin-bottom: .7rem; }
-    .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     /* Tables become stacked cards: the first column is the title, the rest
        label / value pairs. A sort menu replaces the column headers. */
     .sortbar { display: flex; gap: .5rem; align-items: center; padding: .5rem .75rem; border-bottom: 1px solid var(--table-bd);
@@ -1278,6 +1278,22 @@ function renderView() {
   else if (S.view === 'links') viewLinks();
   else if (S.view === 'graph') { legend(); buildGraph(); highlight(); run(); }
 }
+// Calls per second: the server's count for the whole protocol (every call,
+// however many are still listed) -- or, with a network / search filter or in
+// a file view, worked out from the listed calls of the last minute.
+function callRate(calls) {
+  var R = S.d.rates && S.d.rates[S.fam];
+  if (R && S.net === '*' && !S.q && !S.file)
+    return { text: R.per_s_1m.toFixed(1),
+             tip: 'Calls per second over the last minute: ' + R.per_s_1m.toFixed(2) + ' (last 10 minutes: ' +
+                  R.per_s_10m.toFixed(2) + '). ' + R.total + ' calls counted since the server started or was cleared.' };
+  var t = now(), n = 0, oldest = t;
+  calls.forEach(function (c) { if (c.start > t - 60000) ++n; if (c.start < oldest) oldest = c.start; });
+  var span = Math.max(1, Math.min(60, (t - oldest) / 1000));
+  return { text: (n / span).toFixed(1),
+           tip: 'Calls per second over the last minute, from the calls listed' + (S.net !== '*' ? ' on this network' : '') +
+                (S.q ? ' matching the search' : '') + ': ' + n + ' calls.' };
+}
 function famTotals(f) { var F = S.d.families[f]; return F.calls.length + F.talkgroups.length + F.radios.length; }
 function render() {
   var fams = Object.keys(S.d.families).sort(function (a, b) { return famTotals(b) - famTotals(a); });
@@ -1299,9 +1315,13 @@ function render() {
   IX.nets.forEach(function (n) { if (S.net === '*' || n.key === S.net) n.sites.forEach(function (s) { sites[n.key + s] = 1; }); });
   var cards = $('cards');
   cards.textContent = '';
+  var rate = callRate(calls);
+  var kept = 'The newest calls are listed (up to ' + (S.d.max_calls || 5000) + ' per protocol; calls with audio are kept longest).';
   [['Networks', S.net === '*' ? IX.nets.length : 1], ['Sites', Object.keys(sites).length], ['Talkgroups', tgs.length],
-   ['Radios', radios.length], ['Calls (recent)', calls.length], ['Live calls', lv]].forEach(function (c, i) {
-    cards.appendChild(h('div', { class: 'card' + (i === 5 && lv ? ' live' : '') }, [h('div', { class: 'n', text: String(c[1]) }), h('div', { class: 'l', text: c[0] })]));
+   ['Radios', radios.length], ['Calls (recent)', calls.length, kept], ['Calls / s', rate.text, rate.tip],
+   ['Live calls', lv]].forEach(function (c, i) {
+    cards.appendChild(h('div', { class: 'card' + (i === 6 && lv ? ' live' : ''), title: c[2] || null, 'data-tip': c[2] || null },
+      [h('div', { class: 'n', text: String(c[1]) }), h('div', { class: 'l', text: c[0] })]));
   });
   var nb = $('netbar');
   nb.textContent = '';

@@ -368,7 +368,15 @@ struct Dataset {
     std::map<std::string, DsFamily> fams;
 };
 
-constexpr std::size_t kMergedCallsPerFamily = 1000;
+// How many calls the explorer keeps per protocol (the live model's list and
+// a merged view): DSD_NET_MAX_CALLS, default 5000.
+constexpr std::size_t kDefaultMaxCalls = 5000;
+inline std::size_t max_calls_setting() {
+    const char* v = std::getenv("DSD_NET_MAX_CALLS");
+    const unsigned long n = (v && v[0]) ? std::strtoul(v, nullptr, 10) : kDefaultMaxCalls;
+    return n < 10 ? 10 : static_cast<std::size_t>(n);
+}
+constexpr std::size_t kMergedCallsPerFamily = kDefaultMaxCalls;
 // Two receivers' records of one call: same network, source, target and kind,
 // no further apart in time than this (= AssocModel::kContinueMs, the live
 // model's rule for one call heard on two streams).
@@ -779,13 +787,28 @@ inline void merge_into(Dataset& into, const Dataset& from) {
     into.sources.insert(into.sources.end(), from.sources.begin(), from.sources.end());
 }
 
+// Bound a newest-first call list to `cap`: the oldest calls WITHOUT audio go
+// first, then (if still over) the oldest of the rest -- as the live model.
+inline void cap_calls(std::vector<DsCall>& C, std::size_t cap) {
+    if (C.size() <= cap) return;
+    std::size_t over = C.size() - cap;
+    std::vector<bool> drop(C.size(), false);
+    for (std::size_t i = C.size(); i-- > 0 && over;)
+        if (C[i].audio.empty()) { drop[i] = true; --over; }
+    for (std::size_t i = C.size(); i-- > 0 && over;)
+        if (!drop[i]) { drop[i] = true; --over; }
+    std::vector<DsCall> keep;
+    keep.reserve(cap);
+    for (std::size_t i = 0; i < C.size(); ++i) if (!drop[i]) keep.push_back(std::move(C[i]));
+    C.swap(keep);
+}
 // After merging: calls newest first, bounded, and (unless the layers already
 // have distinct ids) renumbered.
-inline void finalize_merge(Dataset& d, bool renumber = true) {
+inline void finalize_merge(Dataset& d, bool renumber = true, std::size_t cap = kMergedCallsPerFamily) {
     for (auto& fk : d.fams) {
         auto& C = fk.second.calls;
         std::stable_sort(C.begin(), C.end(), [](const DsCall& a, const DsCall& b) { return a.start > b.start; });
-        if (C.size() > kMergedCallsPerFamily) C.resize(kMergedCallsPerFamily);
+        cap_calls(C, cap);
         if (renumber)
             for (std::size_t i = 0; i < C.size(); ++i) C[i].id = C.size() - i;
     }
@@ -904,7 +927,7 @@ inline Dataset merge_exports(const std::vector<std::pair<std::string, std::strin
     Dataset out;
     out.label = "merged";
     for (const auto& l : layers) { merge_into(out, l); out.exported = std::max(out.exported, l.exported); }
-    finalize_merge(out);
+    finalize_merge(out, true, max_calls_setting());
     return out;
 }
 

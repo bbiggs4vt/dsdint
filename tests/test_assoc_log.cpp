@@ -142,7 +142,7 @@ int main() {
 
         const std::string text = slurp_gz(path);
         check(text.rfind("{\"op\":\"header\",\"v\":1,\"t\":1000,\"fresh\":true,\"instance\":\"1234abcd5678ef90\","
-                         "\"name\":\"bench\",\"since\":500}", 0) == 0,
+                         "\"name\":\"bench\",\"since\":500,\"max_calls\":5000}", 0) == 0,
               "file: starts with a fresh header naming the server run");
         check(text.find("\"why\":\"start\"") != std::string::npos && text.find("\"why\":\"stop\"") != std::string::npos,
               "file: start and stop snapshots present");

@@ -476,12 +476,12 @@ int main() {
             Dataset d;
             d.sources.push_back(DsSource{inst, inst, 0, t0 + 10000});
             DsFamily& F = d.fams["dmr"];
-            for (int i = 0; i < 700; ++i) {
+            for (int i = 0; i < 3000; ++i) {
                 DsCall c;
-                c.id = static_cast<std::uint64_t>(700 - i);
+                c.id = static_cast<std::uint64_t>(3000 - i);
                 c.src = "1";
                 c.tgt = "9";
-                c.start = t0 + 700 - i;
+                c.start = t0 + 3000 - i;
                 c.last = c.start;
                 F.calls.push_back(c);
             }
@@ -490,7 +490,7 @@ int main() {
         std::vector<MergeReport> rep;
         Dataset d = merge_exports({{"x", big("x1", 100000)}, {"y", big("y1", 200000)}}, rep);
         const auto& C = d.fams["dmr"].calls;
-        check(C.size() == kMergedCallsPerFamily && C.front().start == 200700 && C.front().id == C.size() && C.back().id == 1,
+        check(C.size() == kMergedCallsPerFamily && C.front().start == 203000 && C.front().id == C.size() && C.back().id == 1,
               "bounds: merged calls capped per protocol, newest kept, renumbered");
     }
 

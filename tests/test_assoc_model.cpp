@@ -587,11 +587,17 @@ int main() {
     // ---- bounded memory + clear() ----
     {
         AssocModel m;
+        check(m.max_calls() == kDefaultMaxCalls, "bounded: 5000 calls per protocol by default (DSD_NET_MAX_CALLS)");
+        m.set_max_calls(400);
+        m.set_since(0);
         m.begin_stream(1, "dmr", 0);
         for (int i = 0; i < 450; ++i)
             line(m, 1, " SLOT 1 TGT=" + std::to_string(1000 + i) + " SRC=7 Group Call ", 1000 + i * 5000LL);
         J j = snap(m, 1000 + 450 * 5000LL);
-        check(j["families"]["dmr"]["calls"].size() == AssocModel::kMaxCalls, "bounded: calls ring capped at kMaxCalls");
+        check(j["families"]["dmr"]["calls"].size() == 400 && j["max_calls"].n == 400, "bounded: calls list capped at max_calls");
+        const J& R = j["rates"]["dmr"];
+        check(R["total"].n == 450 && R["per_s_1m"].n > 0.17 && R["per_s_1m"].n < 0.21 && R["per_s_10m"].n == 0.2,
+              "rates: every call counted (not just those still listed); 1- and 10-minute averages of one call per 5 s");
         check((*find(j["families"]["dmr"]["radios"], "id", "7"))["tgs"].size() == AssocModel::kMaxEdgesPerNode,
               "bounded: per-radio talkgroup edges capped");
         m.clear();

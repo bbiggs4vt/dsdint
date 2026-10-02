@@ -87,6 +87,9 @@ inline bool replay_log(const std::string& path, AssocModel& m, ReplayResult& r,
                 // and span, so its export is recognised as such when merged.
                 if (k.count("instance")) m.set_identity(k["instance"], k["name"]);
                 m.set_since(k.count("since") ? std::stoll(k["since"]) : t);
+                // The list size the live model used (recordings before this
+                // field: the old fixed 400).
+                m.set_max_calls(k.count("max_calls") ? std::stoull(k["max_calls"]) : 400);
                 return;
             }
             if (t > until) { stop = true; return; }
@@ -99,6 +102,7 @@ inline bool replay_log(const std::string& path, AssocModel& m, ReplayResult& r,
                 ++r.begins;
             }
             else if (op == "tune") m.retune_stream(sid, std::stoll(k["freq"]), t);
+            else if (op == "keep") m.mark_keep(k["f"], std::stoull(k["c"]), k["on"] == "1");
             else if (op == "end") { m.end_stream(sid, t); ++r.ends; }
             else if (op == "remove") { m.remove_session(sid, t); ++r.removes; }
             else if (op == "clear") { m.clear(t); ++r.clears; }

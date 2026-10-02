@@ -1190,6 +1190,7 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
  "rec": {"on": false, "truncated": false, "file": "net_20261001_214359.jsonl.gz",
          "path": "/captures/net_20261001_214359.jsonl.gz", "bytes": 86317, "file_bytes": 9466},
  "audio": {"on": true, "dir": "/captures/net_audio", "bytes": 52428800, "cap_bytes": 1073741824, "files": 412, "recording": 1},
+ "max_calls": 5000, "rates": {"p25": {"per_s_1m": 13.27, "per_s_10m": 12.81, "total": 48210}},
  "imports": [{"id": 1, "label": "south.json", "exported": 1789998000000,
               "sources": [{"instance": "a71e…", "name": "rx-south", "since": 1789990000000, "through": 1789998000000}],
               "networks": 2, "talkgroups": 14, "radios": 40, "calls": 120}],
@@ -1217,6 +1218,12 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
   began (server start or the last Clear). `imports` lists the exports imported
   into the view (see *Merging* below); `families` shows the live data and the
   imports merged.
+- `max_calls` is how many calls are kept per protocol (`DSD_NET_MAX_CALLS`,
+  default 5000; when full, calls without audio roll off first). `rates` gives
+  per protocol `per_s_1m` / `per_s_10m` (calls per second over the last 1 / 10
+  minutes, or since start / Clear if shorter) and `total` (calls counted since
+  then), from every call -- not only those still listed. Sent gzip-encoded
+  when the request has `Accept-Encoding: gzip`.
 - `audio` is the per-call audio status: `on`, the directory, bytes used of
   `cap_bytes`, the number of files, and how many calls are recording now.
   A call with audio carries `"audio": "<file>.wav"` (play it from
@@ -1251,7 +1258,7 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
 - A session appears only once it decodes real traffic, and when it ends any
   network it fed that never carried a call is removed (unless another running
   session is on it).
-- `calls` holds the most recent calls (newest first, bounded). `open` = still
+- `calls` holds the most recent calls (newest first, up to `max_calls`). `open` = still
   running (heard within the last 4 s); `streams` = how many receivers heard the
   same call (deduplicated on a shared network).
 - Like `/status.json`, this JSON is nested and is a diagnostic surface, not
