@@ -556,6 +556,11 @@ curl http://localhost:22600/status.json
 
 ## Network explorer
 
+> **User manual:** [docs/NET_EXPLORER.md](docs/NET_EXPLORER.md) — a tour of
+> the page, every view and control, troubleshooting, and appendices on how
+> calls and associations are worked out for each protocol. This section is
+> the server-side reference.
+
 `/net` on the same port is a second page that turns the decoded event stream
 into **calls, talkgroups, radios and networks, and the associations between
 them** -- live, per protocol (P25, DMR, NXDN, TETRA, dPMR, D-STAR, YSF, EDACS).
@@ -767,8 +772,8 @@ In the **Calls** view:
 ### Speech-to-text
 
 With **Transcribe on play** ticked (the Calls toolbar), playing a call also
-turns its speech into text: it shows in the bar at the bottom and then in the
-call's **Text** column, and goes into the audio zip's `calls.csv`. It is done
+turns its speech into text: it shows in the bar at the bottom and then on a
+line under the call, and goes into the audio zip's `calls.csv`. It is done
 **in the browser**, with OpenAI's Whisper (the `small` model by default) run by
 [Transformers.js](https://github.com/huggingface/transformers.js) -- the server
 does no speech work; it only serves the files:
