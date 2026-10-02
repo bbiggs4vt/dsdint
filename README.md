@@ -579,6 +579,17 @@ unrelated numbers.
   scanning radios).
 - **Networks** -- each identified network with its identifiers and sites.
 
+The page works on tablets and phones as well as a PC. On a touch screen
+buttons, tabs and rows are finger-sized and the page scrolls as one (no
+scroll boxes inside it). Below 1050 px wide the details open in a drawer
+(a bottom sheet on a phone) with a Close button, instead of below the
+table. On a phone the header's actions fold into a **Menu**, calls are
+listed as cards, other tables stack into cards with a sort menu, and the
+stat cards shrink to a strip. The graph has pinch-zoom and -/+ buttons and is
+sized to leave room to scroll past it. Explanations that a mouse shows on
+hover (what "2 RX" or an identity level means) appear on tap. A PC window
+wider than 1050 px looks as before.
+
 **How networks are identified.** Identity arrives on different lines than
 calls, so each stream keeps the identity it has decoded and its calls are
 attributed to it:
