@@ -152,6 +152,13 @@ joins two radios that made a private call. Node colour is the network; a
 **white dashed ring** marks a radio or talkgroup seen on two or more networks;
 a talkgroup's size grows with its calls.
 
+The layout arranges itself: linked nodes pull together and every node pushes
+the others away, harder the more links it has. So a busy talkgroup, or a radio
+with many private-call partners (a data gateway, a dispatcher), keeps its own
+space with its radios around it, other talkgroups stay out of its ring, and
+nodes never sit on top of each other. Private-call links pull less than
+talkgroup links, so the talkgroups shape the picture.
+
 - **Nodes** — how many of the busiest radios and talkgroups to draw (100 to
   1000). The note on the right says how many are shown.
 - **Private-call links** and **Radio labels** — show or hide them.

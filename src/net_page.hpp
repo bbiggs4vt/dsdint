@@ -1432,6 +1432,10 @@ function buildGraph() {
     var nb = (GR.adj[n.id] || []).map(function (x) { return by[x]; }).filter(function (x) { return x && !x.isNew; })[0];
     if (nb) { n.x = nb.x + (Math.random() - .5) * 40; n.y = nb.y + (Math.random() - .5) * 40; }
   });
+  // Layout mass: 1 + links. Repulsion scales with both ends' mass, so a hub
+  // (a talkgroup, or a radio with many private-call partners) pushes harder
+  // and its neighbours ring it instead of other nodes being trapped inside.
+  nodes.forEach(function (n) { n.m = 1 + (GR.adj[n.id] || []).length; n.r = nodeR(n); });
   GR.nodes = nodes; GR.links = links; GR.by = by;
   $('g-note').textContent = nodes.length + ' nodes · ' + links.length + ' links' +
     (cand.length > cap ? ' (busiest ' + cap + ' of ' + cand.length + ')' : '');
@@ -1516,16 +1520,23 @@ function step() {
   for (i = 0; i < n; i++) {
     var A = N[i];
     for (j = i + 1; j < n; j++) {
-      var B = N[j], dx = B.x - A.x, dy = B.y - A.y, d2 = dx * dx + dy * dy;
-      if (d2 > 160000) continue;
+      var B = N[j], dx = B.x - A.x, dy = B.y - A.y, d2 = dx * dx + dy * dy, mm = A.m * B.m;
+      if (d2 > 160000 * Math.min(4, Math.max(1, mm / 4))) continue;
       if (d2 < 1) { dx = Math.random() - .5; dy = Math.random() - .5; d2 = 1; }
-      var d = Math.sqrt(d2), f = 2600 * a / d2, ux = dx / d * f, uy = dy / d * f;
+      var d = Math.sqrt(d2), f = 500 * mm * a / d2;
+      // Never on top of each other: closer than their sizes plus a gap
+      // (more beside a talkgroup, whose label is bold) pushes apart hard.
+      var gap = A.r + B.r + (A.kind === 'tg' || B.kind === 'tg' ? 14 : 8);
+      if (d < gap) f += (gap - d) * 0.5;
+      var ux = dx / d * f, uy = dy / d * f;
       A.vx -= ux; A.vy -= uy; B.vx += ux; B.vy += uy;
     }
   }
   L.forEach(function (l) {
     var A = GR.by[l.a], B = GR.by[l.b], dx = B.x - A.x, dy = B.y - A.y, d = Math.sqrt(dx * dx + dy * dy) || 1;
-    var rest = l.priv ? 55 : 75, f = (d - rest) * 0.05 * a * Math.min(2, 0.6 + Math.log2(1 + l.w) * 0.3);
+    // Private-call links pull less than talkgroup use: the talkgroups shape
+    // the picture, a radio's private partners gather around it.
+    var rest = l.priv ? 60 : 75, f = (d - rest) * (l.priv ? 0.04 : 0.05) * a * Math.min(2, 0.6 + Math.log2(1 + l.w) * 0.3);
     var ux = dx / d * f, uy = dy / d * f;
     A.vx += ux; A.vy += uy; B.vx -= ux; B.vy -= uy;
   });
