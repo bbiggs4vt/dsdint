@@ -114,6 +114,9 @@ inline std::string render_net_page_html() {
           font-size: .8rem; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .chip:hover { border-color: #5a6067; }
   .chip.active { background: #2c4a56; border-color: var(--info); color: var(--heading); }
+  .chip.excl { border-color: #a94442; border-style: dashed; color: var(--muted); text-decoration: line-through; }
+  .chip.excl .sw { opacity: .45; }
+  .btn.sm { padding: .2rem .65rem; font-size: .8rem; }
   .chip .n { color: var(--muted); font-variant-numeric: tabular-nums; }
   .sw { display: inline-block; width: .65rem; height: .65rem; border-radius: 2px; flex: none; }
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 1rem; align-items: start; }
@@ -571,10 +574,17 @@ function primaryNet(list) {
   (list || []).forEach(function (k) { if (best == null || (IX.netRank[k] || 0) < (IX.netRank[best] || 0)) best = k; });
   return best;
 }
-// The network filter: the networks picked (S.nets, key -> true); none = all.
+// The network filter (S.nets): key -> 'in' (picked: show only the picked
+// ones) or 'out' (excluded). Empty = every network.
 function netAll() { for (var k in S.nets) return false; return true; }
 function netKeys() { return Object.keys(S.nets); }
-function inNet(list) { return netAll() || (list || []).some(function (k) { return S.nets[k]; }); }
+function netOk(k) {
+  if (S.nets[k] === 'out') return false;
+  if (S.nets[k] === 'in') return true;
+  for (var x in S.nets) if (S.nets[x] === 'in') return false;
+  return true;
+}
+function inNet(list) { return netAll() || (list || []).some(netOk); }
 function qm() {
   var q = S.q.toLowerCase();
   for (var i = 0; i < arguments.length; i++) {
@@ -590,7 +600,7 @@ function qm() {
 function fCalls(list, allAudio) {
   var aud = S.audOnly && !S.file && !allAudio;
   return (list || IX.calls).filter(function (c) {
-    return (netAll() || S.nets[c.net]) && (!aud || c.audio) &&
+    return (netAll() || netOk(c.net)) && (!aud || c.audio) &&
       (!S.q || qm(c.src, c.tgt, c.alias, c.text, mhz(c.freq), IX.rById[c.src] && IX.rById[c.src].aliases));
   });
 }
@@ -1347,8 +1357,11 @@ function renderDetail() {
     if (!n) { d.appendChild(h('h3', { text: 'Network' })); d.appendChild(h('div', { class: 'hint', text: 'Not in the current data.' })); return; }
     d.appendChild(h('h3', null, [sw(n.key), ' ', n.label]));
     d.appendChild(h('div', { class: 'tagrow' }, [confBadge(n.confidence),
-      h('button', { class: 'btn', type: 'button', onclick: function () { setNets(onlyNet(n.key) ? [] : [n.key]); } },
-        onlyNet(n.key) ? 'Show all networks' : 'Show only this network')]));
+      h('button', { class: 'btn sm', type: 'button', title: onlyNet(n.key) ? 'Show every network again' : 'Show only this network',
+                    onclick: function () { setNets(onlyNet(n.key) ? [] : [n.key]); } }, onlyNet(n.key) ? 'All' : 'Only'),
+      h('button', { class: 'btn sm', type: 'button',
+                    title: S.nets[n.key] === 'out' ? 'Show this network again' : 'Hide this network\u2019s calls, talkgroups and radios',
+                    onclick: function () { excludeNet(n.key); } }, S.nets[n.key] === 'out' ? 'Include' : 'Exclude')]));
     d.appendChild(kv([['Calls', n.calls], ['Talkgroups', IX.netTg[n.key] || 0], ['Radios', IX.netRad[n.key] || 0],
                       ['Streams', n.sessions], ['First', ago(n.first)], ['Last', ago(n.last)]]));
     d.appendChild(h('h4', { text: 'Identifiers' }));
@@ -1380,7 +1393,7 @@ function sv(tag, a) { var e = document.createElementNS(SVGNS, tag); for (var k i
 var GR = { nodes: [], links: [], by: {}, adj: {}, sig: '', t: { k: 1, x: 0, y: 0 }, alpha: 0, raf: 0, fitted: false,
            root: null, lg: null, ng: null, drag: null, pan: null, pts: {}, pinch: null };
 function gSig() {
-  return [S.d.version, S.fam, netKeys().sort().join(','), S.q, $('g-cap').value, $('g-priv').checked].join('|');
+  return [S.d.version, S.fam, netKeys().sort().map(function (k) { return S.nets[k] + ':' + k; }).join(','), S.q, $('g-cap').value, $('g-priv').checked].join('|');
 }
 function buildGraph() {
   var sig = gSig();
@@ -1683,10 +1696,13 @@ document.addEventListener('keydown', function (e) {
   var t = e.target;
   if (S.sel && !(t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA'))) closeSheet();
 });
-function setNets(keys) { S.nets = {}; keys.forEach(function (k) { S.nets[k] = true; }); GR.sig = ''; render(); }
-// A network chip adds its network to the filter, or takes it out.
-function toggleNet(k) { var ks = netKeys().filter(function (x) { return x !== k; }); if (!S.nets[k]) ks.push(k); setNets(ks); }
-function onlyNet(k) { var ks = netKeys(); return ks.length === 1 && ks[0] === k; }
+function setNets(keys) { S.nets = {}; keys.forEach(function (k) { S.nets[k] = 'in'; }); GR.sig = ''; render(); }
+// A network chip picks its network, or takes it out of the filter (picked or
+// excluded).
+function toggleNet(k) { if (S.nets[k]) delete S.nets[k]; else S.nets[k] = 'in'; GR.sig = ''; render(); }
+// Exclude a network (or include it again).
+function excludeNet(k) { if (S.nets[k] === 'out') delete S.nets[k]; else S.nets[k] = 'out'; GR.sig = ''; render(); }
+function onlyNet(k) { var ks = netKeys(); return ks.length === 1 && ks[0] === k && S.nets[k] === 'in'; }
 // The network list's collapsed / open state (remembered per browser).
 function setNetsOpen(open) { S.netsOpen = open; store('netsOpen', open ? '1' : ''); render(); }
 function setView(v) {
@@ -1718,7 +1734,7 @@ function callRate(calls) {
   calls.forEach(function (c) { if (c.start > t - 60000) ++n; if (c.start < oldest) oldest = c.start; });
   var span = Math.max(1, Math.min(60, (t - oldest) / 1000));
   return { text: (n / span).toFixed(1),
-           tip: 'Calls per second over the last minute, from the calls listed' + (!netAll() ? ' on the networks picked' : '') +
+           tip: 'Calls per second over the last minute, from the calls listed' + (!netAll() ? ' with the network filter' : '') +
                 (S.q ? ' matching the search' : '') + ': ' + n + ' calls.' };
 }
 function famTotals(f) { var F = S.d.families[f]; return F.calls.length + F.talkgroups.length + F.radios.length; }
@@ -1740,15 +1756,15 @@ function render() {
   index();
   netKeys().forEach(function (k) { if (!IX.netByKey[k]) delete S.nets[k]; });
   var calls = fCalls(null, true), tgs = fTgs(), radios = fRadios(), lv = calls.filter(live).length, sites = {};
-  IX.nets.forEach(function (n) { if (netAll() || S.nets[n.key]) n.sites.forEach(function (s) { sites[n.key + s] = 1; }); });
+  IX.nets.forEach(function (n) { if (netOk(n.key)) n.sites.forEach(function (s) { sites[n.key + s] = 1; }); });
   var cards = $('cards');
   cards.textContent = '';
   var rate = callRate(calls);
   var kept = 'The newest calls are listed (up to ' + (S.d.max_calls || 5000) + ' per protocol; calls with audio are kept longest).';
-  [['Networks', netAll() ? IX.nets.length : netKeys().length], ['Sites', Object.keys(sites).length], ['Talkgroups', tgs.length],
+  [['Networks', IX.nets.filter(function (n) { return netOk(n.key); }).length], ['Sites', Object.keys(sites).length], ['Talkgroups', tgs.length],
    ['Radios', radios.length], ['Calls (recent)', calls.length, kept], ['Calls / s', rate.text, rate.tip],
    ['Live calls', lv, netAll() && !S.q ? 'Calls heard in the last ' + LIVE_MS / 1000 + ' s.' :
-     'Calls heard in the last ' + LIVE_MS / 1000 + ' s' + (!netAll() ? ' on the networks picked' : '') +
+     'Calls heard in the last ' + LIVE_MS / 1000 + ' s' + (!netAll() ? ' with the network filter' : '') +
      (S.q ? ' matching the search' : '') + ' (the protocol tab counts all of them).']].forEach(function (c, i) {
     cards.appendChild(h('div', { class: 'card' + (i === 6 && lv ? ' live' : ''), title: c[2] || null, 'data-tip': c[2] || null },
       [h('div', { class: 'n', text: String(c[1]) }), h('div', { class: 'l', text: c[0] })]));
@@ -1763,8 +1779,10 @@ function render() {
     title: S.netsOpen ? 'Hide the network list' : 'Show all networks', onclick: function () { setNetsOpen(!S.netsOpen); } },
     [h('span', { class: 'car', text: '\u25B8' }), 'Networks ' + IX.nets.length]));
   var netChip = function (n) {
-    return h('span', { class: 'chip' + (S.nets[n.key] ? ' active' : ''), title: n.label + ' — ' + n.confidence + ' identity' +
-                       (S.nets[n.key] ? ' (click to take it out of the filter)' : ' (click to add it to the filter)'),
+    var st = S.nets[n.key];
+    return h('span', { class: 'chip' + (st === 'in' ? ' active' : st === 'out' ? ' excl' : ''),
+                       title: n.label + ' — ' + n.confidence + ' identity' + (st === 'in' ? ' (click to take it out of the filter)' :
+                              st === 'out' ? ' (excluded; click to show it again)' : ' (click to add it to the filter)'),
       onclick: function () { var on = !S.nets[n.key]; toggleNet(n.key); if (on) select('net', n.key); } },
       [sw(n.key), n.label, h('span', { class: 'n', text: String(n.calls) })]);
   };
@@ -1772,7 +1790,7 @@ function render() {
   if (S.netsOpen) {
     byCalls.forEach(function (n) { nb.appendChild(netChip(n)); });
   } else {
-    var picked = byCalls.filter(function (n) { return S.nets[n.key]; });
+    var picked = byCalls.filter(function (n) { return !!S.nets[n.key]; });   // picked or excluded
     picked.forEach(function (n) { nb.appendChild(netChip(n)); });
     if (IX.nets.length > picked.length)
       nb.appendChild(h('span', { class: 'netmore', onclick: function () { setNetsOpen(true); },

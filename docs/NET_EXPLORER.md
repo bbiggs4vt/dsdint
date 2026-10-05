@@ -79,7 +79,7 @@ From top to bottom:
 | **Open…** | Views saved exports offline, read-only (several files are merged). You can also drop files onto the page. |
 | **Protocol tabs** | One per protocol with traffic (e.g. `DMR 62 radios · 1 live`). Protocols are never mixed: a DMR radio 1234 and a P25 radio 1234 are unrelated. |
 | **Stat cards** | Networks, Sites, Talkgroups, Radios, Calls (recent), **Calls / s** (last minute; hover for the 10-minute average and the total) and Live calls — for the current protocol, network filter and search (not **With audio only**, which only shortens the Calls list). The protocol tab's "N live" counts all of its networks, so with a network filter or a search the two can differ. |
-| **Network chips** | One [chip](#appendix-c-glossary) per network, with its call count. Click chips to pick one or more networks: the page shows only those. Click a picked chip again to drop it, or **All networks** to clear the filter. The list starts collapsed to **All networks** and the networks picked; click **▸ Networks** (or **show…** / **+N more…**) to open it, and again to close it. The browser remembers which. |
+| **Network chips** | One [chip](#appendix-c-glossary) per network, with its call count. Click chips to pick one or more networks: the page shows only those. Click a picked chip again to drop it, or **All networks** to clear the filter. A network excluded from its details (**Exclude**) shows as a dashed, struck-through chip; click it to show it again. The list starts collapsed to **All networks** and the networks picked; click **▸ Networks** (or **show…** / **+N more…**) to open it, and again to close it. The browser remembers which. |
 | **View tabs** | Calls · Talkgroups · Radios · Graph · Links · Networks. |
 | **Details panel** | On the right (or a drawer on smaller screens): everything tied to the radio, talkgroup or network you click. |
 
@@ -213,7 +213,8 @@ tablet or phone the details are a drawer: **Close** or Esc.
 - **Talkgroup**: calls, radios, emergency / encrypted counts, networks;
   **Radios on this talkgroup**; **Linked talkgroups (shared radios)**;
   **Recent calls**.
-- **Network**: **Show only this network** (or **Show all networks**); counts;
+- **Network**: **Only** (show only this network; **All** undoes it) and
+  **Exclude** (hide it; **Include** undoes it); counts;
   identifiers; sites; channels; first and last heard; its busiest talkgroups
   and radios.
 
@@ -222,8 +223,10 @@ tablet or phone the details are a drawer: **Close** or Esc.
 - The **search box** matches radio ids, talkgroup ids, aliases, SMS text and
   frequencies (e.g. `460.17`), in every view, including the graph and links.
 - **Network chips** limit every view to the networks picked — one or several;
-  each click adds or drops one. **Show only this network** in a network's
-  details picks just that one; **All networks** clears the filter.
+  each click adds or drops one. In a network's details, **Only** picks just
+  that one and **Exclude** hides it (its calls, talkgroups and radios) while
+  showing all the others; **All networks** clears the filter. The Networks
+  view still lists every network, so an excluded one can be included again.
 - **Click a column header** to sort by it; click again to reverse. Calls can
   be sorted by start, duration, frequency, slot, source, target and **Audio**
   (calls with audio first). On a phone a **Sort** menu replaces the headers.
