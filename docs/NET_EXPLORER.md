@@ -74,7 +74,7 @@ From top to bottom:
 | **♫ Audio** | Starts / stops recording each call's voice (off by default) — [section 10](#10-call-audio). Orange when on. |
 | **Pause** | Freezes the whole page (no updates) until pressed again. |
 | **Clear** | Forgets everything learned so far, and any imports. Asks first. |
-| **Export ▾** | Saves what the explorer shows: explorer data (.json) or the association graph (.graphml). |
+| **Export ▾** | Saves what the explorer shows: explorer data (.json), the association graph (.graphml), or the listed radios' positions (.kml). |
 | **Import…** | Adds saved exports (e.g. from another receiver) to the live view. |
 | **Open…** | Views saved exports offline, read-only (several files are merged). You can also drop files onto the page. |
 | **Protocol tabs** | One per protocol with traffic (e.g. `DMR 62 radios · 1 live`). Protocols are never mixed: a DMR radio 1234 and a P25 radio 1234 are unrelated. |
@@ -218,7 +218,13 @@ tablet or phone the details are a drawer: **Close** or Esc.
   peers and networks; **Talkgroups
   used** (by calls); **Private calls with**; **Shares talkgroups with** —
   other radios on its talkgroups, with how many in common; **Last position**
-  (its latest position report, linked to Google Maps) when it sent one; **Recent
+  (its latest position report, linked to Google Maps) when it sent one — or,
+  with several, **Positions (N)**: the latest, a sketch of the track (oldest
+  fix green, latest red; how far it spans and moved), **Route in Google
+  Maps** (the latest ten fixes in time order — Google draws them as a road
+  route, so it shows the order rather than the exact path), **Download KML**
+  (the exact track and every fix, timestamped, for Google Earth or Google My
+  Maps' *Import*) and the fixes, newest first; **Recent
   calls**, with ▶ where audio exists and, under each, its text, what a data
   call carried (ACK, ARS, …) and any position report.
 - **Talkgroup**: **Only** (show only this talkgroup; **All** undoes it) and
@@ -333,6 +339,10 @@ goes into the audio zip's `calls.csv`.
   says you are in a file view; **Back to live** returns.
 - **Export ▾ → Association graph (.graphml)** is for graph tools (Gephi,
   Cytoscape, yEd, networkx).
+- **Export ▾ → Positions (.kml)** saves the position reports of the radios
+  listed (this protocol, with the filters): a track and timestamped points per
+  radio, for Google Earth or Google My Maps (*Import*). Each radio keeps its
+  latest 100 distinct positions; they are in the explorer data too.
 - **Open…** with **several files** shows them merged, read-only, with a
   report of what happened to each file and a **Save merged** link.
 - **Import…** adds exports to the **live** view — e.g. other receivers'

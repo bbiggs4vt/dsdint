@@ -842,13 +842,26 @@ int main() {
         check(PF["calls"].size() == 1 && PF["calls"].at(0)["pos"].s == "39.03494,-76.98460", "gps: the position is on the call");
         const J* rad = find(PF["radios"], "id", "6745697");
         check(rad && (*rad)["pos"].s == "39.03494,-76.98460" && (*rad)["pos_t"].n == 1100, "gps: and is the radio's last position");
+        // Each new position is added to the radio's track; a repeat moves
+        // the last fix's time on.
+        P(" LCW MFID90 (Moto) GPS: Lat: 39.03478 N Lon: -76.98450 W (39.03478, -76.98450) Current Fix;", 1150);
+        P(" LCW MFID90 (Moto) GPS: Lat: 39.03478 N Lon: -76.98450 W (39.03478, -76.98450) Current Fix;", 1180);
+        J jt = snap(p, 1190);
+        const J* tr = find(jt["families"]["p25"]["radios"], "id", "6745697");
+        check(tr && (*tr)["track"].size() == 2 && (*tr)["track"].at(0).at(1).s == "39.03494,-76.98460" &&
+                  (*tr)["track"].at(1).at(1).s == "39.03478,-76.98450" && (*tr)["track"].at(1).at(0).n == 1180,
+              "track: two distinct fixes, oldest first; a repeat only moves the time on");
+        std::vector<std::pair<std::int64_t, std::string>> cap;
+        for (int i = 0; i < 130; ++i) track_add(cap, i, std::to_string(i) + ".0,0.0");
+        check(cap.size() == kMaxTrack && cap.front().first == 30 && cap.back().first == 129, "track: capped, the oldest go first");
         // An export keeps both.
         Dataset d;
         std::string err;
         check(dataset_from_export_text(p.to_export_json(1300), "x", d, &err) &&
-                  d.fams["p25"].calls.size() == 1 && d.fams["p25"].calls[0].pos == "39.03494,-76.98460" &&
-                  d.fams["p25"].radios["6745697"].pos == "39.03494,-76.98460",
-              "export: positions survive an export / import");
+                  d.fams["p25"].calls.size() == 1 && d.fams["p25"].calls[0].pos == "39.03478,-76.98450" &&
+                  d.fams["p25"].radios["6745697"].pos == "39.03478,-76.98450" &&
+                  d.fams["p25"].radios["6745697"].track.size() == 2,
+              "export: positions and the track survive an export / import");
     }
 
     // ---- JSON escaping of decoder-derived text ----

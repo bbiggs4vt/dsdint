@@ -814,7 +814,7 @@ private:
                 o.id = r.id; o.aliases = r.aliases; o.networks = r.networks;
                 o.tgs.insert(r.tgs.begin(), r.tgs.end()); o.peers.insert(r.peers.begin(), r.peers.end());
                 o.calls = r.calls; o.first = r.first_ms; o.last = r.last_ms;
-                o.pos = r.pos; o.pos_t = r.pos_ms;
+                o.pos = r.pos; o.pos_t = r.pos_ms; o.track = r.track;
             }
             D.calls.reserve(F.calls.size());
             for (auto it = F.calls.rbegin(); it != F.calls.rend(); ++it) {
@@ -933,6 +933,7 @@ private:
         std::int64_t first_ms = 0, last_ms = 0;
         std::string pos;                                // its last position report "lat,lon"
         std::int64_t pos_ms = 0;
+        std::vector<std::pair<std::int64_t, std::string>> track;  // its position reports (track_add)
     };
     struct Family {
         std::map<std::string, Network> networks;
@@ -1361,7 +1362,11 @@ private:
         if (g == extra.end() || g->second.empty()) return;
         k.pos = g->second;
         auto r = F.radios.find(k.src);
-        if (r != F.radios.end()) { r->second.pos = g->second; r->second.pos_ms = now; }
+        if (r != F.radios.end()) {
+            r->second.pos = g->second;
+            r->second.pos_ms = now;
+            track_add(r->second.track, now, g->second);
+        }
     }
     void touch_radio(Family& F, const std::string& id, const std::string& net,
                      const std::string& alias, std::int64_t now) {

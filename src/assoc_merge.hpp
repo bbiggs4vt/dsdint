@@ -341,7 +341,17 @@ struct DsRadio {
     std::int64_t first = 0, last = 0;
     std::string pos;                           // last position report "lat,lon" ("" = none)
     std::int64_t pos_t = 0;                    // when (ms)
+    std::vector<std::pair<std::int64_t, std::string>> track;  // its position reports, oldest first (time, "lat,lon")
 };
+// Position history kept per radio (distinct fixes, newest kept).
+constexpr std::size_t kMaxTrack = 100;
+// Add a fix to a track: the same position as the last one only moves its
+// time on; the oldest go once it is full.
+inline void track_add(std::vector<std::pair<std::int64_t, std::string>>& tr, std::int64_t t, const std::string& pos) {
+    if (!tr.empty() && tr.back().second == pos) { tr.back().first = std::max(tr.back().first, t); return; }
+    tr.emplace_back(t, pos);
+    if (tr.size() > kMaxTrack) tr.erase(tr.begin(), tr.begin() + static_cast<std::ptrdiff_t>(tr.size() - kMaxTrack));
+}
 // How specific a data call's service label is: a later, more specific one
 // replaces it (an announcement, then the packet, then the MNIS service).
 inline int svc_rank(const std::string& s) {
@@ -433,6 +443,12 @@ inline std::string families_json(const Dataset& d) {
               << ",\"peers\":" << counts(r.peers) << ",\"networks\":" << arr(r.networks) << ",\"calls\":" << r.calls
               << ",\"first\":" << r.first << ",\"last\":" << r.last;
             if (!r.pos.empty()) o << ",\"pos\":" << q(r.pos) << ",\"pos_t\":" << r.pos_t;
+            if (!r.track.empty()) {
+                o << ",\"track\":[";
+                for (std::size_t i = 0; i < r.track.size(); ++i)
+                    o << (i ? "," : "") << "[" << r.track[i].first << "," << q(r.track[i].second) << "]";
+                o << "]";
+            }
             o << "}";
         }
         o << "],\"calls\":[";
@@ -599,6 +615,10 @@ inline bool dataset_from_export(const mjson::V& root, const std::string& label, 
                 detail::strset(e.get("networks"), r.networks);
                 r.calls = u(e, "calls"); r.first = i64(e, "first"); r.last = i64(e, "last");
                 r.pos = e.str("pos"); r.pos_t = i64(e, "pos_t");
+                if (const mjson::V* tr = e.get("track"); tr && tr->t == mjson::V::Arr)
+                    for (const auto& x : tr->a)
+                        if (x.t == mjson::V::Arr && x.a.size() == 2 && x.a[0].t == mjson::V::Num && x.a[1].t == mjson::V::Str)
+                            track_add(r.track, static_cast<std::int64_t>(x.a[0].n), x.a[1].s);
                 df.radios[r.id] = std::move(r);
             }
         if (const mjson::V* a = F.get("calls"); a && a->t == mjson::V::Arr)
@@ -781,6 +801,13 @@ inline void merge_into(Dataset& into, const Dataset& from) {
             r.calls += m.calls;
             r.first = lo(r.first, m.first); r.last = std::max(r.last, m.last);
             if (!m.pos.empty() && m.pos_t >= r.pos_t) { r.pos = m.pos; r.pos_t = m.pos_t; }
+            if (!m.track.empty()) {                    // both receivers' fixes, in time order
+                auto all = r.track;
+                all.insert(all.end(), m.track.begin(), m.track.end());
+                std::stable_sort(all.begin(), all.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+                r.track.clear();
+                for (const auto& f : all) track_add(r.track, f.first, f.second);
+            }
         }
         // Calls: fold twins (only against calls already in the merge, i.e.
         // from other sources -- each source deduped its own streams).

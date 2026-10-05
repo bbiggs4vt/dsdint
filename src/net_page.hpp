@@ -120,6 +120,12 @@ inline std::string render_net_page_html() {
   .svc { color: var(--muted); font-style: italic; }
   a.pos .nw { white-space: nowrap; }            /* lat and lon stay whole; the line may break between them */
   .posline { margin: .2rem 0 .6rem; }
+  .trkbox { margin: .3rem 0 .5rem; }
+  .trk { display: block; background: #1f2327; border: 1px solid var(--comp-bd); border-radius: 4px; max-height: 170px; }
+  .trkline { fill: none; stroke: var(--info); stroke-width: 1.5; stroke-linejoin: round; opacity: .8; }
+  .trkpt { fill: var(--info); }
+  .trkstart { fill: #5cb85c; stroke: #12171b; }
+  .trkend { fill: #d9534f; stroke: #12171b; }
   .fadd { display: inline-flex; gap: .3rem; align-items: center; margin-left: .3rem; flex: none; }
   .fin { background: #1f2327; color: var(--heading); border: 1px solid var(--comp-bd); border-radius: 4px;
          padding: .2rem .5rem; font: inherit; font-size: .8rem; width: 10.5rem; }
@@ -428,6 +434,7 @@ inline std::string render_net_page_html() {
       <div id="expmenu" class="menu" hidden>
         <a href="/net/export.json" download>Explorer data (.json)<small>re-open later here with Open&hellip;</small></a>
         <a href="/net/export.graphml" download>Association graph (.graphml)<small>Gephi &middot; Cytoscape &middot; yEd &middot; networkx</small></a>
+        <a href="#" id="exp-kml">Positions (.kml)<small>the listed radios' position reports &middot; Google Earth &middot; My Maps</small></a>
       </div>
     </span>
     <button id="import" class="btn live-only" type="button" title="Add saved exports (e.g. from other receivers) to the live view">Import&hellip;</button>
@@ -884,6 +891,93 @@ function posLink(pos) {
                   target: '_blank', rel: 'noopener', title: 'Position report \u2014 open in Google Maps',
                   onclick: function (e) { e.stopPropagation(); } },
            [h('span', { class: 'nw', text: '\u{1F4CD} ' + la + ',' }), ' ', h('span', { class: 'nw', text: lo })]);
+}
+// ---- position history ----
+function trackOf(r) { return r.track && r.track.length ? r.track : r.pos ? [[r.pos_t, r.pos]] : []; }
+function ll(p) { var a = p.split(','); return [+a[0], +a[1]]; }
+// Metres between two fixes (equirectangular; fine at these distances).
+function metres(a, b) {
+  var k = Math.PI / 180, x = (b[1] - a[1]) * k * Math.cos((a[0] + b[0]) / 2 * k), y = (b[0] - a[0]) * k;
+  return Math.sqrt(x * x + y * y) * 6371000;
+}
+function dist(m) { return m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(m < 10000 ? 2 : 1) + ' km'; }
+// A small sketch of a radio's track: no map, just its shape -- oldest fix
+// green, latest red -- and how far it spans.
+function trackSketch(tr) {
+  var W = 300, H = 150, P = 12, pts = tr.map(function (f) { return ll(f[1]); });
+  var la0 = 1e9, la1 = -1e9, lo0 = 1e9, lo1 = -1e9;
+  pts.forEach(function (p) { la0 = Math.min(la0, p[0]); la1 = Math.max(la1, p[0]); lo0 = Math.min(lo0, p[1]); lo1 = Math.max(lo1, p[1]); });
+  var kx = Math.cos((la0 + la1) / 2 * Math.PI / 180), sx = (lo1 - lo0) * kx, sy = la1 - la0;
+  var sc = Math.min((W - 2 * P) / (sx || 1e-9), (H - 2 * P) / (sy || 1e-9));
+  if (!sx && !sy) sc = 0;
+  var X = function (p) { return (W / 2 + ((p[1] - (lo0 + lo1) / 2) * kx) * sc).toFixed(1); };
+  var Y = function (p) { return (H / 2 - (p[0] - (la0 + la1) / 2) * sc).toFixed(1); };
+  var svg = sv('svg', { class: 'trk', viewBox: '0 0 ' + W + ' ' + H, width: '100%', role: 'img', 'aria-label': 'Track sketch' });
+  if (pts.length > 1) svg.appendChild(sv('polyline', { points: pts.map(function (p) { return X(p) + ',' + Y(p); }).join(' '), class: 'trkline' }));
+  pts.forEach(function (p, i) {
+    var c = sv('circle', { cx: X(p), cy: Y(p), r: i === pts.length - 1 ? 4.5 : i === 0 ? 4 : 2.5,
+                           class: i === pts.length - 1 ? 'trkend' : i === 0 ? 'trkstart' : 'trkpt' });
+    var t = document.createElementNS(SVGNS, 'title'); t.textContent = hms(tr[i][0]) + '  ' + tr[i][1];
+    c.appendChild(t); svg.appendChild(c);
+  });
+  var span = metres([la0, lo0], [la1, lo1]), moved = 0;
+  for (var i = 1; i < pts.length; i++) moved += metres(pts[i - 1], pts[i]);
+  return h('div', { class: 'trkbox' }, [svg, h('div', { class: 'hint', text: pts.length + ' fixes \u00B7 spans ' + dist(span) +
+    ' \u00B7 moved ' + dist(moved) + ' \u00B7 ' + hms(tr[0][0]) + '\u2013' + hms(tr[tr.length - 1][0]) + ' (UTC)' })]);
+}
+// Google Maps directions through the latest fixes, in time order (it allows
+// about ten stops; it routes them by road -- the order, not the exact path).
+function mapsRoute(tr) {
+  return 'https://www.google.com/maps/dir/' + tr.slice(-10).map(function (f) { return f[1]; }).join('/');
+}
+function xmlEsc(s) { return String(s).replace(/[<>&"']/g, function (c) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[c]; }); }
+// KML of radios' tracks: a line through each radio's fixes and a timestamped
+// point per fix (Google Earth, Google My Maps' Import).
+function tracksKml(radios, title) {
+  var o = ['<?xml version="1.0" encoding="UTF-8"?>', '<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>' + xmlEsc(title) + '</name>'];
+  radios.forEach(function (r) {
+    var tr = trackOf(r);
+    if (!tr.length) return;
+    var name = 'Radio ' + r.id + (r.aliases.length ? ' ' + r.aliases[r.aliases.length - 1] : '');
+    var c = function (p) { var q = ll(p); return q[1] + ',' + q[0] + ',0'; };
+    o.push('<Folder><name>' + xmlEsc(name) + '</name>');
+    if (tr.length > 1)
+      o.push('<Placemark><name>' + xmlEsc(name) + ' track</name><LineString><tessellate>1</tessellate><coordinates>' +
+             tr.map(function (f) { return c(f[1]); }).join(' ') + '</coordinates></LineString></Placemark>');
+    tr.forEach(function (f) {
+      o.push('<Placemark><name>' + xmlEsc(name + ' ' + hms(f[0])) + '</name><TimeStamp><when>' + new Date(f[0]).toISOString() +
+             '</when></TimeStamp><Point><coordinates>' + c(f[1]) + '</coordinates></Point></Placemark>');
+    });
+    o.push('</Folder>');
+  });
+  o.push('</Document></kml>');
+  return o.join('\n');
+}
+function saveText(name, text, type) {
+  var a = h('a', { href: URL.createObjectURL(new Blob([text], { type: type })), download: name });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 60000);
+}
+// A radio's details: its positions -- the latest, a sketch of the track, the
+// fixes (newest first), a Google Maps route and a KML download.
+function positionsSection(d, r) {
+  var tr = trackOf(r);
+  d.appendChild(h('h4', { text: tr.length > 1 ? 'Positions (' + tr.length + ')' : 'Last position' }));
+  d.appendChild(h('div', { class: 'posline' }, [posLink(r.pos), h('span', { class: 'hint', text: ' ' + ago(r.pos_t) })]));
+  if (tr.length < 2) return;
+  d.appendChild(trackSketch(tr));
+  d.appendChild(h('div', { class: 'tagrow' }, [
+    h('a', { class: 'btn sm', href: mapsRoute(tr), target: '_blank', rel: 'noopener',
+             title: 'The latest ' + Math.min(10, tr.length) + ' fixes, in time order, as a Google Maps route (drawn along roads)' }, 'Route in Google Maps'),
+    h('button', { class: 'btn sm', type: 'button', title: 'The exact track and fixes, for Google Earth or Google My Maps (Import)',
+                  onclick: function () { saveText('radio_' + safeName(r.id) + '_track.kml', tracksKml([r], 'Radio ' + r.id), 'application/vnd.google-earth.kml+xml'); } },
+      'Download KML')]));
+  var ul = h('ul', { class: 'lst' });
+  tr.slice().reverse().slice(0, 25).forEach(function (f) {
+    ul.appendChild(h('li', null, [h('div', null, posLink(f[1])), h('span', { class: 'c', text: hms(f[0]) })]));
+  });
+  d.appendChild(ul);
+  if (tr.length > 25) d.appendChild(h('div', { class: 'hint', text: 'and ' + (tr.length - 25) + ' earlier (all of them in the KML)' }));
 }
 // The Text column: the message, else the data service; and a position report.
 function textCell(c) {
@@ -1424,10 +1518,7 @@ function renderDetail() {
     d.appendChild(filterBtns('rf', r.id, 'radio', 'Hide this radio and its calls'));
     d.appendChild(kv([['Calls', r.calls], ['Talkgroups', keys(r.tgs).length], ['Private peers', keys(r.peers).length],
                       ['Networks', r.networks.length], ['First', ago(r.first)], ['Last', ago(r.last)]]));
-    if (r.pos) {
-      d.appendChild(h('h4', { text: 'Last position' }));
-      d.appendChild(h('div', { class: 'posline' }, [posLink(r.pos), h('span', { class: 'hint', text: ' ' + ago(r.pos_t) })]));
-    }
+    if (r.pos) positionsSection(d, r);
     d.appendChild(h('h4', { text: 'Talkgroups used' }));
     d.appendChild(lst(keys(r.tgs).sort(function (a, b) { return r.tgs[b] - r.tgs[a]; })
       .map(function (t) { return { el: tlink(t), n: r.tgs[t] }; })));
@@ -2018,6 +2109,15 @@ function render() {
 
 // ---------- export / open ----------
 $('exp').addEventListener('click', function (e) { e.stopPropagation(); $('expmenu').hidden = !$('expmenu').hidden; });
+$('exp-kml').addEventListener('click', function (e) {
+  e.preventDefault();
+  $('expmenu').hidden = true;
+  var rs = IX ? fRadios().filter(function (r) { return trackOf(r).length; }) : [];
+  if (!rs.length) { toast('No position reports among the listed radios.'); return; }
+  saveText('dsd_positions_' + (S.fam || '') + '_' + stamp(now()) + '.kml', tracksKml(rs, 'dsd-server ' + (FAMN[S.fam] || S.fam) + ' positions'),
+           'application/vnd.google-earth.kml+xml');
+  toast('Saved the positions of ' + rs.length + ' radio' + (rs.length > 1 ? 's' : '') + '.');
+});
 document.addEventListener('click', function () { $('expmenu').hidden = true; });
 // Compact header (narrow screens): the actions live in a menu.
 function setMenu(open) { $('acts').classList.toggle('open', open); $('more').setAttribute('aria-expanded', open ? 'true' : 'false'); }
