@@ -14,6 +14,7 @@
 #include "server_stats.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <ctime>
 #include <sstream>
 #include <string>
@@ -82,6 +83,17 @@ inline std::string human_duration(double seconds) {
 }
 
 // UTC ISO-8601-ish "2026-09-22 14:03:21Z" for a wall-clock time point.
+// A channel frequency for display: MHz with 4 decimals, or 5 when needed
+// (460.1750, 460.57375); "-" when not known. Same as the network explorer.
+inline std::string format_mhz(double hz) {
+    if (!(hz > 0)) return "-";
+    char b[32];
+    std::snprintf(b, sizeof b, "%.5f", hz / 1e6);
+    std::string t = b;
+    if (t.back() == '0') t.pop_back();
+    return t;
+}
+
 inline std::string format_utc(std::chrono::system_clock::time_point tp) {
     std::time_t t = std::chrono::system_clock::to_time_t(tp);
     std::tm tm_utc{};
@@ -158,6 +170,7 @@ inline std::string render_status_json(const ServerStats::Snapshot& s) {
         o << ",\"protocols_used\":" << json_str_array(r.protocols_used);
         o << ",\"protocols_requested\":" << json_str_array(r.protocols_requested);
         o << ",\"active\":" << (r.active ? "true" : "false");
+        o << ",\"freq_hz\":" << static_cast<long long>(r.freq_hz + 0.5);
         o << ",\"connected\":\"" << json_escape(format_utc(r.connected)) << "\"";
         o << ",\"duration_seconds\":" << static_cast<long>(dur);
         o << "}";
@@ -177,6 +190,7 @@ inline std::string render_status_json(const ServerStats::Snapshot& s) {
         o << ",\"ended\":\"" << json_escape(format_utc(r.ended)) << "\"";
         o << ",\"protocols_used\":" << json_str_array(r.protocols_used);
         o << ",\"protocols_requested\":" << json_str_array(r.protocols_requested);
+        o << ",\"freq_hz\":" << static_cast<long long>(r.freq_hz + 0.5);
         o << ",\"duration_seconds\":" << static_cast<long>(r.duration_s);
         o << "}";
     }
@@ -403,11 +417,11 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
 
     // Live-session panel.
     o << "<div class=\"panel\" id=\"tab-sessions\">\n<table>\n<thead><tr>"
-      << "<th>#</th><th>Client</th><th>Protocols</th>"
+      << "<th>#</th><th>Client</th><th>Protocols</th><th class=\"num\">MHz</th>"
       << "<th>State</th><th>Connected (UTC)</th><th class=\"num\">Duration</th>"
       << "</tr></thead>\n<tbody id=\"rows\">\n";
     if (s.rows.empty()) {
-        o << "<tr><td colspan=\"6\" class=\"empty\">no clients connected</td></tr>\n";
+        o << "<tr><td colspan=\"7\" class=\"empty\">no clients connected</td></tr>\n";
     } else {
         for (const auto& r : s.rows) {
             double dur = std::chrono::duration<double>(
@@ -416,6 +430,7 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
               << "<td class=\"num\">" << r.id << "</td>"
               << "<td class=\"mono\">" << html_escape(r.remote.empty() ? "-" : r.remote) << "</td>"
               << "<td>" << html_escape(protocol_trail(r.protocols_requested, r.protocols_used, r.protocol)) << "</td>"
+              << "<td class=\"num mono\">" << format_mhz(r.freq_hz) << "</td>"
               << "<td class=\"" << (r.active ? "state-on" : "state-off") << "\">"
               << "<span class=\"dot " << (r.active ? "on" : "off") << "\"></span>"
               << (r.active ? "decoding" : "idle") << "</td>"
@@ -457,17 +472,18 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
 
     // Session-history panel (finished sessions, newest first).
     o << "<div class=\"panel\" id=\"tab-history\">\n<table>\n<thead><tr>"
-      << "<th>#</th><th>Client</th><th>Protocols</th>"
+      << "<th>#</th><th>Client</th><th>Protocols</th><th class=\"num\">MHz</th>"
       << "<th>Connected (UTC)</th><th>Ended (UTC)</th><th class=\"num\">Duration</th>"
       << "</tr></thead>\n<tbody id=\"hrows\">\n";
     if (s.history.empty()) {
-        o << "<tr><td colspan=\"6\" class=\"empty\">no finished sessions yet</td></tr>\n";
+        o << "<tr><td colspan=\"7\" class=\"empty\">no finished sessions yet</td></tr>\n";
     } else {
         for (const auto& r : s.history) {
             o << "<tr>"
               << "<td class=\"num\">" << r.id << "</td>"
               << "<td class=\"mono\">" << html_escape(r.remote.empty() ? "-" : r.remote) << "</td>"
               << "<td>" << html_escape(protocol_trail(r.protocols_requested, r.protocols_used, r.protocol)) << "</td>"
+              << "<td class=\"num mono\">" << format_mhz(r.freq_hz) << "</td>"
               << "<td class=\"mono\">" << html_escape(format_utc(r.connected)) << "</td>"
               << "<td class=\"mono\">" << html_escape(format_utc(r.ended)) << "</td>"
               << "<td class=\"num\">" << html_escape(human_duration(r.duration_s)) << "</td>"
@@ -497,7 +513,8 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
     o << R"JS(function dur(s){s=Math.max(0,Math.floor(s));var h=(s/3600)|0;s-=h*3600;var m=(s/60)|0;s-=m*60;var o='';if(h)o+=h+'h ';if(h||m)o+=m+'m ';return o+s+'s';}
 function setText(id,v){var e=document.getElementById(id);if(e&&e.textContent!==v)e.textContent=v;}
 function cell(cls,text){var td=document.createElement('td');if(cls)td.className=cls;td.textContent=text;return td;}
-function emptyRow(tb,msg,span){var tr=document.createElement('tr');var td=cell('empty',msg);td.colSpan=span||6;tr.appendChild(td);tb.appendChild(tr);}
+function mhz(hz){if(!(hz>0))return '-';var t=(hz/1e6).toFixed(5);return t.charAt(t.length-1)==='0'?t.slice(0,-1):t;}
+function emptyRow(tb,msg,span){var tr=document.createElement('tr');var td=cell('empty',msg);td.colSpan=span||7;tr.appendChild(td);tb.appendChild(tr);}
 function trail(req,used,cur){var l=(req&&req.length)?req:(used||[]);if(!l.length)return cur||'-';
   return l.map(function(p){return (used||[]).indexOf(p)<0?p+' \u2717':p;}).join(' \u2192 ');}
 function stateCell(active){var st=document.createElement('td');st.className=active?'state-on':'state-off';var dot=document.createElement('span');dot.className='dot '+(active?'on':'off');st.appendChild(dot);st.appendChild(document.createTextNode(active?'decoding':'idle'));return st;}
@@ -524,6 +541,7 @@ function render(d){
     tr.appendChild(cell('num',''+r.id));
     tr.appendChild(cell('mono',r.remote||'-'));
     tr.appendChild(cell('',trail(r.protocols_requested,r.protocols_used,r.protocol)));
+    tr.appendChild(cell('num mono',mhz(r.freq_hz)));
     tr.appendChild(stateCell(r.active));
     tr.appendChild(cell('mono',r.connected));
     tr.appendChild(cell('num',dur(r.duration_seconds)));
@@ -537,6 +555,7 @@ function render(d){
     tr.appendChild(cell('num',''+r.id));
     tr.appendChild(cell('mono',r.remote||'-'));
     tr.appendChild(cell('',trail(r.protocols_requested,r.protocols_used,r.protocol)));
+    tr.appendChild(cell('num mono',mhz(r.freq_hz)));
     tr.appendChild(cell('mono',r.connected));
     tr.appendChild(cell('mono',r.ended));
     tr.appendChild(cell('num',dur(r.duration_seconds)));

@@ -796,6 +796,8 @@ void Session::handle_text_message(const std::string& msg) {
                 if (demod_) demod_->set_gain(static_cast<float>(json::get_number(obj, "gain", 26000.0)));
             }
         } else if (type == "set_freq_offset") {
+            if (stats_ && center_freq_ > 0)
+                stats_->set_freq(stats_id_, center_freq_ + json::get_number(obj, "hz", 0.0));
             // The TETRA π/4 demod estimates and removes residual CFO itself
             // (±Rs/8), so it has no live NCO to retune -- accept and ignore.
             if (chain_.load() == Chain::Fm) {
@@ -1110,6 +1112,8 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         if (stats_id_)
             stats_->assoc().begin_stream(stats_id_, protocol_hint_label(hint), AssocModel::now_ms(), std::string(),
                                          center_freq_ > 0 ? channel_freq(center_freq_ + freq_offset) : 0);
+        // The status page's frequency column (0 = the client didn't say).
+        stats_->set_freq(stats_id_, center_freq_ > 0 ? center_freq_ + freq_offset : 0.0);
     }
 
     const bool want_tetra = hint_is_tetra(hint);

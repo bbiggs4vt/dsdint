@@ -517,8 +517,11 @@ and a few hundred bytes) and flicker-free in the browser.
 Both show the number of **currently connected** sessions, the
 **cumulative total** since the server started, how many are **actively
 decoding**, a per-protocol breakdown of the active ones, and a table of
-each live client (id, peer address, decode protocols, idle vs decoding,
-connect time and duration). A session's protocol appears
+each live client (id, peer address, decode protocols, **MHz**, idle vs
+decoding, connect time and duration). MHz is the channel being decoded,
+`center_freq + freq_offset`, when the client's `start` carries `center_freq`
+(it follows `set_freq_offset` retunes); `-` otherwise. `/status.json` has it
+as `freq_hz` (0 = not known). A session's protocol appears
 once it sends `start`; before that it shows `-`. HTTP status requests are
 **not** counted as sessions.
 
@@ -529,7 +532,7 @@ The HTML page has four tabs:
   whether it's active now, requests / started / failed counts, distinct
   sessions, total decode time, and first/last request time.
 - **History:** the most recent finished sessions (newest first, last 50 by
-  default) with their connect/end times and total duration.
+  default) with their last frequency, connect/end times and total duration.
 - **Log:** described below.
 
 In Sessions and History, the protocol column lists every protocol a client

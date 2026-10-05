@@ -296,9 +296,34 @@ int main() {
               "disconnect banks the running pipeline's time");
     }
 
+    // ---- channel frequency: live row, history, JSON and HTML ----
+    {
+        ServerStats st;
+        std::uint64_t a = st.add_session("10.0.0.9:1");
+        std::uint64_t b = st.add_session("10.0.0.9:2");
+        st.set_freq(a, 460175000.0);
+        st.set_freq(999, 1.0);                                   // unknown id: ignored
+        auto s = st.snapshot();
+        check(s.rows[0].freq_hz == 460175000.0 && s.rows[1].freq_hz == 0.0, "freq: set on its session only");
+        std::string j = render_status_json(s);
+        check(j.find("\"freq_hz\":460175000") != std::string::npos && j.find("\"freq_hz\":0") != std::string::npos,
+              "freq: in /status.json (0 = not known)");
+        std::string h = render_status_html(s);
+        check(h.find(">460.1750<") != std::string::npos && h.find("<th class=\"num\">MHz</th>") != std::string::npos,
+              "freq: MHz column in the sessions table");
+        st.set_freq(a, 460573750.0);                              // a retune
+        st.remove_session(a);
+        auto s2 = st.snapshot();
+        check(s2.history.size() == 1 && s2.history[0].freq_hz == 460573750.0, "freq: the last one kept in history");
+        check(render_status_html(s2).find(">460.57375<") != std::string::npos, "freq: 5 decimals when needed");
+        (void)b;
+    }
+
     // ---- helpers ----
     {
         using namespace status_detail;
+        check(format_mhz(0) == "-" && format_mhz(152240000) == "152.2400" && format_mhz(429998750) == "429.99875",
+              "format_mhz: '-', 4 decimals, 5 when needed");
         check(human_duration(0) == "0s", "duration 0s");
         check(human_duration(59) == "59s", "duration 59s");
         check(human_duration(60) == "1m 0s", "duration 1m 0s");

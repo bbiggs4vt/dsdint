@@ -46,6 +46,9 @@ struct SessionRow {
     // including ones whose pipeline failed to start (not in protocols_used).
     std::vector<std::string> protocols_requested;
     std::chrono::steady_clock::time_point active_since;  // valid while active
+    // The channel frequency (Hz) being decoded, when the client said where its
+    // tuner is ("center_freq" in its start message); 0 = not known.
+    double freq_hz = 0.0;
 };
 
 // Cumulative, run-wide usage of one protocol (the resolved hint label, e.g.
@@ -74,6 +77,7 @@ struct FinishedRow {
     double duration_s = 0.0;                             // total connected lifetime
     std::vector<std::string> protocols_used;             // every protocol it started, in order
     std::vector<std::string> protocols_requested;        // every protocol it asked for, in order
+    double freq_hz = 0.0;                                // the last channel frequency (Hz); 0 = not known
 };
 
 // One buffered outbound JSON frame, for the status page's log tab.
@@ -226,6 +230,14 @@ public:
         }
     }
 
+    // The channel frequency a session decodes (Hz; 0 = not known), on start
+    // and on every retune. Ignored for an unknown id.
+    void set_freq(std::uint64_t id, double hz) {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto it = sessions_.find(id);
+        if (it != sessions_.end()) it->second.freq_hz = hz > 0 ? hz : 0.0;
+    }
+
     void set_pipeline_active(std::uint64_t id, bool active) {
         std::lock_guard<std::mutex> lk(mu_);
         auto it = sessions_.find(id);
@@ -259,6 +271,7 @@ public:
                            std::chrono::steady_clock::now() - it->second.connected_mono).count();
         f.protocols_used = it->second.protocols_used;
         f.protocols_requested = it->second.protocols_requested;
+        f.freq_hz = it->second.freq_hz;
         history_.push_back(std::move(f));
         while (history_.size() > history_limit_) history_.pop_front();
         sessions_.erase(it);
