@@ -116,6 +116,10 @@ inline std::string render_net_page_html() {
   .fmore { color: var(--muted); font-size: .78rem; cursor: pointer; }
   .fmore:hover { color: var(--text); }
   .fclear { font-size: .78rem; margin-left: .3rem; }
+  .fitems { display: contents; }
+  .fadd { display: inline-flex; gap: .3rem; align-items: center; margin-left: .3rem; flex: none; }
+  .fin { background: #1f2327; color: var(--heading); border: 1px solid var(--comp-bd); border-radius: 4px;
+         padding: .2rem .5rem; font: inherit; font-size: .8rem; width: 10.5rem; }
   .chip { display: inline-flex; align-items: center; gap: .35rem; cursor: pointer; max-width: 22rem;
           background: var(--panel2); border: 1px solid var(--comp-bd); border-radius: 12px; padding: .15rem .65rem;
           font-size: .8rem; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1812,11 +1816,55 @@ function callRate(calls) {
 }
 // The Filters section. Collapsed (the default): one row -- the toggle, a
 // chip for each filter in force (click to drop it) and Clear all. Open: a
-// row per kind -- every network; the talkgroups and radios in the filter
-// (set from their details: Only / Exclude); the search.
+// row per kind -- every network; the talkgroups and radios in the filter,
+// with a box to type ids into (or Only / Exclude in their details); the
+// search. The page re-renders on every poll, so the rows (and the boxes in
+// them) are built once and only their chips are redrawn: typing isn't lost.
+var FUI = null;
+// Add the ids typed into a Filters box to talkgroup / radio filter `name`,
+// as 'in' (Pick) or 'out' (Exclude). Several ids may be separated by spaces
+// or commas; "TG 16" works for a talkgroup, an alias for a radio.
+function addTyped(name, text, st) {
+  var raw = text.replace(/\bTG\s*(?=\w)/ig, '').split(/[\s,;]+/).filter(Boolean);
+  if (!raw.length) return false;
+  var m = Object.assign({}, S[name]), unknown = [];
+  raw.forEach(function (w) {
+    var id = w;
+    if (name === 'rf' && !IX.rById[w]) {          // an alias?
+      var hit = IX.radios.filter(function (r) { return r.aliases.some(function (a) { return a.toLowerCase() === w.toLowerCase(); }); })[0];
+      if (hit) id = hit.id;
+    }
+    if (!(name === 'tgf' ? IX.tgById[id] : IX.rById[id])) unknown.push(id);
+    m[id] = st;
+  });
+  setF(name, m);
+  if (unknown.length) toast((name === 'tgf' ? 'TG ' : 'Radio ') + unknown.join(', ') + (unknown.length > 1 ? ' aren’t' : ' isn’t') +
+                            ' in the data yet — added to the filter anyway');
+  return true;
+}
+function filterAdd(name, what, place) {
+  var list = h('datalist', { id: 'dl-' + name });
+  var inp = h('input', { type: 'text', class: 'fin', placeholder: place, list: 'dl-' + name, autocomplete: 'off',
+                         'aria-label': 'Add ' + what + 's to the filter', spellcheck: 'false' });
+  var go = function (st) { if (addTyped(name, inp.value, st)) inp.value = ''; inp.focus(); };
+  inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); go('in'); } });
+  return { list: list, inp: inp, el: h('span', { class: 'fadd' }, [inp, list,
+    h('button', { class: 'btn sm', type: 'button', title: 'Show only the picked ' + what + 's (adds to them; Enter does the same)',
+                  onclick: function () { go('in'); } }, 'Pick'),
+    h('button', { class: 'btn sm', type: 'button', title: 'Hide these ' + what + 's',
+                  onclick: function () { go('out'); } }, 'Exclude')]) };
+}
 function renderFilters() {
   var fp = $('filters');
-  fp.textContent = '';
+  if (!FUI) {
+    var mk = function (label) { var items = h('span', { class: 'fitems' }); return { el: h('div', { class: 'frow' }, [h('span', { class: 'lbl', text: label }), items]), items: items }; };
+    FUI = { head: h('div', { class: 'frow fhead' }), body: h('div', { class: 'fbody' }), net: mk('Networks'), tg: mk('Talkgroups'),
+            r: mk('Radios'), q: mk('Search'), tgAdd: filterAdd('tgf', 'talkgroup', 'TG id…'), rAdd: filterAdd('rf', 'radio', 'Radio id or alias…'), dl: '' };
+    FUI.tg.el.appendChild(FUI.tgAdd.el); FUI.r.el.appendChild(FUI.rAdd.el);
+    [FUI.net, FUI.tg, FUI.r, FUI.q].forEach(function (x) { FUI.body.appendChild(x.el); });
+    fp.textContent = '';
+    fp.appendChild(FUI.head); fp.appendChild(FUI.body);
+  }
   fp.classList.toggle('open', S.fOpen);
   var byCalls = IX.nets.slice().sort(function (a, b) { return b.calls - a.calls; });
   var numSort = function (a, b) { return (+a - +b) || (a < b ? -1 : 1); };
@@ -1834,39 +1882,51 @@ function renderFilters() {
     var out = S[name][id] === 'out';
     return h('span', { class: 'chip' + (out ? ' excl' : ' active'),
       title: label + (out ? ' is excluded' : ' is picked') + ' (click to take it out of the filter)',
-      onclick: function () { fDrop(name, id); } }, label + ' \u2715');
+      onclick: function () { fDrop(name, id); } }, label + ' ✕');
   };
   var tgChip = function (id) { return idChip('tgf', id, 'TG ' + id); };
   var rChip = function (id) { var al = aliasOf(id); return idChip('rf', id, 'Radio ' + id + (al ? ' ' + al : '')); };
   var qChip = function () {
-    return h('span', { class: 'chip active', title: 'The search (click to clear it)', onclick: clearSearch }, '\u201C' + S.q + '\u201D \u2715');
+    return h('span', { class: 'chip active', title: 'The search (click to clear it)', onclick: clearSearch }, '“' + S.q + '” ✕');
   };
-  var head = h('div', { class: 'frow fhead' });
+  var head = FUI.head;
+  head.textContent = '';
   head.appendChild(h('button', { class: 'ftog', type: 'button', 'aria-expanded': S.fOpen ? 'true' : 'false',
     title: S.fOpen ? 'Collapse the filters' : 'Show all the filters', onclick: function () { setFOpen(!S.fOpen); } },
-    [h('span', { class: 'car', text: '\u25B8' }), 'Filters', nAct ? h('span', { class: 'fcount', text: String(nAct) }) : null]));
+    [h('span', { class: 'car', text: '▸' }), 'Filters', nAct ? h('span', { class: 'fcount', text: String(nAct) }) : null]));
   if (!S.fOpen) {
-    if (!nAct) head.appendChild(h('span', { class: 'fnone', text: 'none \u2014 showing everything' }));
+    if (!nAct) head.appendChild(h('span', { class: 'fnone', text: 'none — showing everything' }));
     byCalls.forEach(function (n) { if (S.nets[n.key]) head.appendChild(netChip(n)); });
     tgIds.forEach(function (id) { head.appendChild(tgChip(id)); });
     rIds.forEach(function (id) { head.appendChild(rChip(id)); });
     if (S.q) head.appendChild(qChip());
     head.appendChild(h('span', { class: 'fmore', onclick: function () { setFOpen(true); },
-      text: (IX.nets.length ? IX.nets.length + ' network' + (IX.nets.length === 1 ? '' : 's') : 'more') + '\u2026' }));
+      text: (IX.nets.length ? IX.nets.length + ' network' + (IX.nets.length === 1 ? '' : 's') : 'more') + '…' }));
   }
   if (nAct) head.appendChild(h('a', { class: 'fclear', href: '#', onclick: function (e) { e.preventDefault(); clearFilters(); } }, 'Clear all'));
-  fp.appendChild(head);
+  FUI.body.hidden = !S.fOpen;
   if (!S.fOpen) return;
-  var row = function (label, items) {
-    fp.appendChild(h('div', { class: 'frow' }, [h('span', { class: 'lbl', text: label })].concat(items)));
-  };
-  row('Networks', [h('span', { class: 'chip' + (netAll() ? ' active' : ''), onclick: function () { setNets([]); } }, 'All networks')]
+  var fill = function (row, items) { row.items.textContent = ''; items.forEach(function (x) { row.items.appendChild(x); }); };
+  fill(FUI.net, [h('span', { class: 'chip' + (netAll() ? ' active' : ''), onclick: function () { setNets([]); } }, 'All networks')]
     .concat(byCalls.map(netChip)));
-  row('Talkgroups', [h('span', { class: 'chip' + (tgAll() ? ' active' : ''), onclick: function () { setF('tgf', {}); } }, 'All talkgroups')]
-    .concat(tgIds.map(tgChip), [h('span', { class: 'fhint', text: 'Only / Exclude in a talkgroup\u2019s details' })]));
-  row('Radios', [h('span', { class: 'chip' + (fAll(S.rf) ? ' active' : ''), onclick: function () { setF('rf', {}); } }, 'All radios')]
-    .concat(rIds.map(rChip), [h('span', { class: 'fhint', text: 'Only / Exclude in a radio\u2019s details' })]));
-  if (S.q) row('Search', [qChip()]);
+  fill(FUI.tg, [h('span', { class: 'chip' + (tgAll() ? ' active' : ''), onclick: function () { setF('tgf', {}); } }, 'All talkgroups')]
+    .concat(tgIds.map(tgChip)));
+  fill(FUI.r, [h('span', { class: 'chip' + (fAll(S.rf) ? ' active' : ''), onclick: function () { setF('rf', {}); } }, 'All radios')]
+    .concat(rIds.map(rChip)));
+  FUI.q.el.hidden = !S.q;
+  if (S.q) fill(FUI.q, [qChip()]);
+  // Suggestions for the boxes: this protocol's talkgroups and radios (with
+  // aliases), rebuilt only when that set changes so an open list stays put.
+  var dl = S.fam + '|' + IX.tgs.length + '|' + IX.radios.length;
+  if (dl !== FUI.dl) {
+    FUI.dl = dl;
+    FUI.tgAdd.list.textContent = '';
+    IX.tgs.forEach(function (t) { FUI.tgAdd.list.appendChild(h('option', { value: t.id })); });
+    FUI.rAdd.list.textContent = '';
+    IX.radios.forEach(function (r) {
+      FUI.rAdd.list.appendChild(h('option', { value: r.id }, r.aliases.length ? r.aliases[r.aliases.length - 1] : null));
+    });
+  }
 }
 function famTotals(f) { var F = S.d.families[f]; return F.calls.length + F.talkgroups.length + F.radios.length; }
 function render() {

@@ -79,7 +79,7 @@ From top to bottom:
 | **Open…** | Views saved exports offline, read-only (several files are merged). You can also drop files onto the page. |
 | **Protocol tabs** | One per protocol with traffic (e.g. `DMR 62 radios · 1 live`). Protocols are never mixed: a DMR radio 1234 and a P25 radio 1234 are unrelated. |
 | **Stat cards** | Networks, Sites, Talkgroups, Radios, Calls (recent), **Calls / s** (last minute; hover for the 10-minute average and the total) and Live calls — for the current protocol, network filter and search (not **With audio only**, which only shortens the Calls list). The protocol tab's "N live" counts all of its networks, so with a network filter or a search the two can differ. |
-| **Filters** | Everything that narrows the page, in one section under the stat cards (§9). Collapsed (the default) it is one row: **▸ Filters**, a [chip](#appendix-c-glossary) for each filter in force (click one to drop it) and **Clear all**; with none it says *none — showing everything*. Click **▸ Filters** to open it: a row each for networks (one chip per network, with its call count), talkgroups, radios and the search. The browser remembers whether it is open. |
+| **Filters** | Everything that narrows the page, in one section under the stat cards (§9). Collapsed (the default) it is one row: **▸ Filters**, a [chip](#appendix-c-glossary) for each filter in force (click one to drop it) and **Clear all**; with none it says *none — showing everything*. Click **▸ Filters** to open it: a row each for networks (one chip per network, with its call count), talkgroups and radios (each with a box to type ids into), and the search. The browser remembers whether it is open. |
 | **View tabs** | Calls · Talkgroups · Radios · Graph · Links · Networks. |
 | **Details panel** | On the right (or a drawer on smaller screens): everything tied to the radio, talkgroup or network you click. |
 
@@ -239,16 +239,21 @@ tablet or phone the details are a drawer: **Close** or Esc.
     just that one and **Exclude** hides it (its calls, talkgroups and radios).
     The Networks view still lists every network, so an excluded one can be
     included again.
-  - **Talkgroups** — from a talkgroup's details: **Only** / **Exclude**, as
-    many as you like. Picking talkgroups shows their calls and the radios
+  - **Talkgroups** — from a talkgroup's details (**Only** / **Exclude**), or
+    by typing ids into the box in the open Filters' Talkgroups row: **Pick**
+    (or Enter) adds them to the picked ones, **Exclude** excludes them.
+    Several at once work (`16 12`, `TG 16, TG 12`), and the box suggests the
+    talkgroups heard. Picking talkgroups shows their calls and the radios
     that used them (private calls, which have no talkgroup, are hidden);
     excluding one hides its calls, and radios heard only on it.
-  - **Radios** — from a radio's details: **Only** / **Exclude**. Picking a
+  - **Radios** — the same, from a radio's details or the Radios row's box,
+    which also takes an alias. Picking a
     radio shows its calls (both ends of a private call count) and the
     talkgroups it used; excluding one hides it and its calls.
   - **Search** — the search box's text, shown here so it can be cleared.
 
-  A picked item's chip is highlighted and an excluded one's is dashed and
+  An id not heard yet is still added (the page says so), so you can filter
+  for a talkgroup or radio before it turns up. A picked item's chip is highlighted and an excluded one's is dashed and
   struck through; click a chip to take it out of the filter, the **All …**
   chip of a row to clear that row, or **Clear all** for everything. The
   filters reset when you switch protocol tabs, **Clear**, or open a file.
