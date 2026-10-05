@@ -101,6 +101,7 @@ inline std::string render_net_page_html() {
   .card .l { color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; }
   .card.live .n { color: var(--success); }
   .netbar { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: 1rem; align-items: center; }
+  .netbar + .netbar { margin-top: -.5rem; }
   .netbar .lbl { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; margin-right: .2rem; }
   .netbar .nettog { cursor: pointer; user-select: none; background: none; border: 0; padding: .15rem .2rem; font: inherit;
                     color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; margin-right: .2rem; }
@@ -432,6 +433,7 @@ inline std::string render_net_page_html() {
   <div id="main" hidden>
     <div class="cards" id="cards"></div>
     <div class="netbar" id="netbar"></div>
+    <div class="netbar" id="tgbar" hidden></div>
     <div class="layout">
       <div>
         <div class="tabs" id="viewtabs">
@@ -494,7 +496,7 @@ var FAMN = {dmr:'DMR', p25:'P25', nxdn:'NXDN', tetra:'TETRA', dpmr:'dPMR', dstar
             edacs:'EDACS / ProVoice', x2tdma:'X2-TDMA'};
 var PAL = ['#5bc0de','#62c462','#f89406','#ee5f5b','#b38bff','#e6c229','#3fc1a5','#ff7eb6','#8fa8ff',
            '#c3e88d','#ffab70','#4dd0e1','#d4a5ff','#a3d977'];
-var S = { d: null, fam: null, nets: {}, view: 'calls', sel: null, q: '', paused: false, skew: 0,
+var S = { d: null, fam: null, nets: {}, tgf: {}, view: 'calls', sel: null, q: '', paused: false, skew: 0,
           ncol: {}, nidx: {}, sort: {}, rows: {}, audOnly: false, netsOpen: false };
 var IX = null;
 
@@ -585,6 +587,23 @@ function netOk(k) {
   return true;
 }
 function inNet(list) { return netAll() || (list || []).some(netOk); }
+// The talkgroup filter (S.tgf), the same way: id -> 'in' (only the picked
+// talkgroups) or 'out' (excluded). Empty = every talkgroup.
+function tgAll() { for (var k in S.tgf) return false; return true; }
+function tgPicked() { for (var k in S.tgf) if (S.tgf[k] === 'in') return true; return false; }
+function tgOk(id) { return S.tgf[id] === 'in' || (S.tgf[id] !== 'out' && !tgPicked()); }
+// A group call passes with its talkgroup; a private call only while no
+// talkgroup is picked (it has none).
+function callTgOk(c) { return tgAll() || (c.priv ? !tgPicked() : tgOk(c.tgt)); }
+// A radio passes if it used a talkgroup that passes -- or, with only
+// exclusions, if it used no talkgroup or made private calls.
+function radioTgOk(r) {
+  if (tgAll()) return true;
+  var ts = keys(r.tgs);
+  if (ts.some(tgOk)) return true;
+  return !tgPicked() && (!ts.length || keys(r.peers).length > 0);
+}
+function anyFilter() { return !netAll() || !tgAll(); }
 function qm() {
   var q = S.q.toLowerCase();
   for (var i = 0; i < arguments.length; i++) {
@@ -600,12 +619,12 @@ function qm() {
 function fCalls(list, allAudio) {
   var aud = S.audOnly && !S.file && !allAudio;
   return (list || IX.calls).filter(function (c) {
-    return (netAll() || netOk(c.net)) && (!aud || c.audio) &&
+    return (netAll() || netOk(c.net)) && callTgOk(c) && (!aud || c.audio) &&
       (!S.q || qm(c.src, c.tgt, c.alias, c.text, mhz(c.freq), IX.rById[c.src] && IX.rById[c.src].aliases));
   });
 }
-function fTgs() { return IX.tgs.filter(function (t) { return inNet(t.networks) && (!S.q || qm(t.id)); }); }
-function fRadios() { return IX.radios.filter(function (r) { return inNet(r.networks) && (!S.q || qm(r.id, r.aliases)); }); }
+function fTgs() { return IX.tgs.filter(function (t) { return inNet(t.networks) && tgOk(t.id) && (!S.q || qm(t.id)); }); }
+function fRadios() { return IX.radios.filter(function (r) { return inNet(r.networks) && radioTgOk(r) && (!S.q || qm(r.id, r.aliases)); }); }
 
 // ---------- entity widgets ----------
 function aliasOf(id) { var r = IX.rById[id]; return r && r.aliases.length ? r.aliases[r.aliases.length - 1] : ''; }
@@ -1136,7 +1155,7 @@ function viewCalls() {
     { label: 'Audio', cls: 'nowrap', k: function (c) { return c.audio && !S.file ? 1 : 0; }, cell: audioCell,
       hideEmpty: function (c) { return !!c.audio && !S.file; } },
     { label: 'Text', cls: 'wrap', cell: function (c) { return c.text || ''; }, hideEmpty: function (c) { return !!c.text; } }
-  ], rows, (S.audOnly ? 'No calls with audio' : 'No calls heard yet') + (!netAll() || S.q ? ' for this filter.' : '.'),
+  ], rows, (S.audOnly ? 'No calls with audio' : 'No calls heard yet') + (anyFilter() || S.q ? ' for this filter.' : '.'),
      null, null, callCard, function (c) { return sttSpan(c); });
 }
 function viewTgs() {
@@ -1311,6 +1330,12 @@ function renderDetail() {
     d.appendChild(h('h3', { text: 'Talkgroup ' + sel.id }));
     if (!t) { d.appendChild(h('div', { class: 'hint', text: 'Not in the current data.' })); return; }
     d.appendChild(h('div', { class: 'tagrow' }, t.networks.map(netc)));
+    d.appendChild(h('div', { class: 'tagrow' }, [
+      h('button', { class: 'btn sm', type: 'button', title: onlyTg(t.id) ? 'Show every talkgroup again' : 'Show only this talkgroup',
+                    onclick: function () { onlyTgToggle(t.id); } }, onlyTg(t.id) ? 'All' : 'Only'),
+      h('button', { class: 'btn sm', type: 'button',
+                    title: S.tgf[t.id] === 'out' ? 'Show this talkgroup again' : 'Hide this talkgroup\u2019s calls (and radios heard only on it)',
+                    onclick: function () { excludeTg(t.id); } }, S.tgf[t.id] === 'out' ? 'Include' : 'Exclude')]));
     d.appendChild(kv([['Calls', t.calls], ['Radios', keys(t.radios).length], ['Emergency', t.emerg],
                       ['Encrypted', t.enc], ['First', ago(t.first)], ['Last', ago(t.last)]]));
     d.appendChild(h('h4', { text: 'Radios on this talkgroup' }));
@@ -1393,7 +1418,8 @@ function sv(tag, a) { var e = document.createElementNS(SVGNS, tag); for (var k i
 var GR = { nodes: [], links: [], by: {}, adj: {}, sig: '', t: { k: 1, x: 0, y: 0 }, alpha: 0, raf: 0, fitted: false,
            root: null, lg: null, ng: null, drag: null, pan: null, pts: {}, pinch: null };
 function gSig() {
-  return [S.d.version, S.fam, netKeys().sort().map(function (k) { return S.nets[k] + ':' + k; }).join(','), S.q, $('g-cap').value, $('g-priv').checked].join('|');
+  return [S.d.version, S.fam, netKeys().sort().map(function (k) { return S.nets[k] + ':' + k; }).join(','),
+          keys(S.tgf).sort().map(function (k) { return S.tgf[k] + ':' + k; }).join(','), S.q, $('g-cap').value, $('g-priv').checked].join('|');
 }
 function buildGraph() {
   var sig = gSig();
@@ -1713,6 +1739,12 @@ function setNets(keys) { S.nets = {}; keys.forEach(function (k) { S.nets[k] = 'i
 function toggleNet(k) { if (S.nets[k]) delete S.nets[k]; else S.nets[k] = 'in'; GR.sig = ''; render(); }
 // Exclude a network (or include it again).
 function excludeNet(k) { if (S.nets[k] === 'out') delete S.nets[k]; else S.nets[k] = 'out'; GR.sig = ''; render(); }
+// Talkgroup filter: Only / All, Exclude / Include, and dropping one.
+function setTgf(f) { S.tgf = f; GR.sig = ''; render(); }
+function onlyTg(id) { var ks = keys(S.tgf); return ks.length === 1 && ks[0] === id && S.tgf[id] === 'in'; }
+function onlyTgToggle(id) { var f = {}; if (!onlyTg(id)) f[id] = 'in'; setTgf(f); }
+function excludeTg(id) { var f = Object.assign({}, S.tgf); if (f[id] === 'out') delete f[id]; else f[id] = 'out'; setTgf(f); }
+function dropTg(id) { var f = Object.assign({}, S.tgf); delete f[id]; setTgf(f); }
 function onlyNet(k) { var ks = netKeys(); return ks.length === 1 && ks[0] === k && S.nets[k] === 'in'; }
 // The network list's collapsed / open state (remembered per browser).
 function setNetsOpen(open) { S.netsOpen = open; store('netsOpen', open ? '1' : ''); render(); }
@@ -1737,7 +1769,7 @@ function renderView() {
 // a file view, worked out from the listed calls of the last minute.
 function callRate(calls) {
   var R = S.d.rates && S.d.rates[S.fam];
-  if (R && netAll() && !S.q && !S.file)
+  if (R && !anyFilter() && !S.q && !S.file)
     return { text: R.per_s_1m.toFixed(1),
              tip: 'Calls per second over the last minute: ' + R.per_s_1m.toFixed(2) + ' (last 10 minutes: ' +
                   R.per_s_10m.toFixed(2) + '). ' + R.total + ' calls counted since the server started or was cleared.' };
@@ -1745,7 +1777,7 @@ function callRate(calls) {
   calls.forEach(function (c) { if (c.start > t - 60000) ++n; if (c.start < oldest) oldest = c.start; });
   var span = Math.max(1, Math.min(60, (t - oldest) / 1000));
   return { text: (n / span).toFixed(1),
-           tip: 'Calls per second over the last minute, from the calls listed' + (!netAll() ? ' with the network filter' : '') +
+           tip: 'Calls per second over the last minute, from the calls listed' + (anyFilter() ? ' with the network / talkgroup filter' : '') +
                 (S.q ? ' matching the search' : '') + ': ' + n + ' calls.' };
 }
 function famTotals(f) { var F = S.d.families[f]; return F.calls.length + F.talkgroups.length + F.radios.length; }
@@ -1756,12 +1788,12 @@ function render() {
   var ft = $('famtabs');
   ft.textContent = '';
   if (!fams.length) { IX = null; return; }
-  if (fams.indexOf(S.fam) < 0) { S.fam = fams[0]; S.nets = {}; S.sel = null; }
+  if (fams.indexOf(S.fam) < 0) { S.fam = fams[0]; S.nets = {}; S.tgf = {}; S.sel = null; }
   fams.forEach(function (f) {
     var F = S.d.families[f], lv = F.calls.filter(live).length;
     ft.appendChild(h('button', { class: 'tab' + (f === S.fam ? ' active' : ''), type: 'button',
       title: F.radios.length + ' radios' + (lv ? ', ' + lv + ' live calls' : '') + ' on all of its networks',
-      onclick: function () { S.fam = f; store('fam', f); S.nets = {}; S.sel = null; GR.sig = ''; render(); } },
+      onclick: function () { S.fam = f; store('fam', f); S.nets = {}; S.tgf = {}; S.sel = null; GR.sig = ''; render(); } },
       [FAMN[f] || f.toUpperCase(), ' ', h('span', { class: 'count', text: F.radios.length + ' radios' + (lv ? ' · ' + lv + ' live' : '') })]));
   });
   index();
@@ -1774,8 +1806,8 @@ function render() {
   var kept = 'The newest calls are listed (up to ' + (S.d.max_calls || 5000) + ' per protocol; calls with audio are kept longest).';
   [['Networks', IX.nets.filter(function (n) { return netOk(n.key); }).length], ['Sites', Object.keys(sites).length], ['Talkgroups', tgs.length],
    ['Radios', radios.length], ['Calls (recent)', calls.length, kept], ['Calls / s', rate.text, rate.tip],
-   ['Live calls', lv, netAll() && !S.q ? 'Calls heard in the last ' + LIVE_MS / 1000 + ' s.' :
-     'Calls heard in the last ' + LIVE_MS / 1000 + ' s' + (!netAll() ? ' with the network filter' : '') +
+   ['Live calls', lv, !anyFilter() && !S.q ? 'Calls heard in the last ' + LIVE_MS / 1000 + ' s.' :
+     'Calls heard in the last ' + LIVE_MS / 1000 + ' s' + (anyFilter() ? ' with the network / talkgroup filter' : '') +
      (S.q ? ' matching the search' : '') + ' (the protocol tab counts all of them).']].forEach(function (c, i) {
     cards.appendChild(h('div', { class: 'card' + (i === 6 && lv ? ' live' : ''), title: c[2] || null, 'data-tip': c[2] || null },
       [h('div', { class: 'n', text: String(c[1]) }), h('div', { class: 'l', text: c[0] })]));
@@ -1807,7 +1839,23 @@ function render() {
       nb.appendChild(h('span', { class: 'netmore', onclick: function () { setNetsOpen(true); },
         text: (picked.length ? '+' + (IX.nets.length - picked.length) + ' more' : 'show ' + IX.nets.length) + '\u2026' }));
   }
-  $('c-calls').textContent = S.audOnly && !S.file ? fCalls().length : calls.length;   // the list's own rows $('c-tgs').textContent = tgs.length;
+  // The talkgroup filter, when there is one: a chip per talkgroup picked or
+  // excluded (click to drop it) and "All talkgroups" to clear it.
+  var tb = $('tgbar');
+  tb.textContent = '';
+  tb.hidden = tgAll();
+  if (!tgAll()) {
+    tb.appendChild(h('span', { class: 'lbl', text: 'Talkgroups' }));
+    tb.appendChild(h('span', { class: 'chip', onclick: function () { setTgf({}); } }, 'All talkgroups'));
+    keys(S.tgf).sort(function (a, b) { return (+a - +b) || (a < b ? -1 : 1); }).forEach(function (id) {
+      var out = S.tgf[id] === 'out';
+      tb.appendChild(h('span', { class: 'chip' + (out ? ' excl' : ' active'),
+        title: 'TG ' + id + (out ? ' is excluded' : ' is picked') + ' (click to take it out of the filter)',
+        onclick: function () { dropTg(id); } }, 'TG ' + id + ' \u2715'));
+    });
+  }
+  $('c-calls').textContent = S.audOnly && !S.file ? fCalls().length : calls.length;   // the list's own rows
+  $('c-tgs').textContent = tgs.length;
   $('c-radios').textContent = radios.length; $('c-nets').textContent = IX.nets.length;
   renderView();
   renderDetail();
@@ -1854,7 +1902,7 @@ function openData(d, name, report) {
     alert('This export uses a newer format (v' + d.format_version + '); some details may not show.');
   S.file = { name: name, exported: d.exported || d.now, source: d.name || d.source || '' };
   S.d = { version: -Date.now(), now: d.now || d.exported, families: d.families, rec: {} };
-  S.fam = null; S.nets = {}; S.sel = null; S.q = ''; $('q').value = ''; GR.sig = ''; GR.fitted = false;
+  S.fam = null; S.nets = {}; S.tgf = {}; S.sel = null; S.q = ''; $('q').value = ''; GR.sig = ''; GR.fitted = false;
   document.body.classList.add('filemode');
   var fb = $('filebar'), srcs = d.sources || [];
   fb.textContent = '';
@@ -1899,7 +1947,7 @@ function openFiles(fl) {
   }).catch(function (e) { alert('Could not merge the files (' + e + ').'); });
 }
 function backToLive() {
-  S.file = null; S.d = null; IX = null; S.fam = load('fam'); S.nets = {}; S.sel = null; GR.sig = ''; GR.fitted = false;
+  S.file = null; S.d = null; IX = null; S.fam = load('fam'); S.nets = {}; S.tgf = {}; S.sel = null; GR.sig = ''; GR.fitted = false;
   document.body.classList.remove('filemode');
   $('filebar').hidden = true;
   $('live').textContent = 'connecting\u2026';
@@ -2043,7 +2091,7 @@ $('pause').addEventListener('click', function () {
 $('clear').addEventListener('click', function () {
   if (!confirm('Forget all calls, talkgroups, radios and networks learned so far' +
                (S.d && S.d.imports && S.d.imports.length ? ', and the imports' : '') + '?')) return;
-  fetch('/net/clear', { cache: 'no-store' }).then(function () { S.sel = null; S.nets = {}; GR.sig = ''; });
+  fetch('/net/clear', { cache: 'no-store' }).then(function () { S.sel = null; S.nets = {}; S.tgf = {}; GR.sig = ''; });
 });
 ['(max-width: 640px)', '(max-width: 1050px)'].forEach(function (q) {
   if (!window.matchMedia) return;

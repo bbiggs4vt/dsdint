@@ -217,8 +217,9 @@ tablet or phone the details are a drawer: **Close** or Esc.
   used** (by calls); **Private calls with**; **Shares talkgroups with** —
   other radios on its talkgroups, with how many in common; **Recent calls**,
   with ▶ where audio exists.
-- **Talkgroup**: calls, radios, emergency / encrypted counts, networks;
-  **Radios on this talkgroup**; **Linked talkgroups (shared radios)**;
+- **Talkgroup**: **Only** (show only this talkgroup; **All** undoes it) and
+  **Exclude** (hide it; **Include** undoes it); calls, radios, emergency /
+  encrypted counts, networks; **Radios on this talkgroup**; **Linked talkgroups (shared radios)**;
   **Recent calls**.
 - **Network**: **Only** (show only this network; **All** undoes it) and
   **Exclude** (hide it; **Include** undoes it); counts;
@@ -234,6 +235,13 @@ tablet or phone the details are a drawer: **Close** or Esc.
   that one and **Exclude** hides it (its calls, talkgroups and radios) while
   showing all the others; **All networks** clears the filter. The Networks
   view still lists every network, so an excluded one can be included again.
+- **Talkgroups** work the same way, from a talkgroup's details: **Only** /
+  **Exclude**, as many as you like. A **Talkgroups** row under the network
+  chips then lists them (a picked talkgroup highlighted, an excluded one
+  struck through); click one to take it out of the filter, or **All
+  talkgroups** to clear it. Picking talkgroups shows their calls and the
+  radios that used them (private calls, which have no talkgroup, are hidden);
+  excluding one hides its calls, and radios heard only on it.
 - **Click a column header** to sort by it; click again to reverse. Calls can
   be sorted by start, duration, frequency, slot, source, target and **Audio**
   (calls with audio first). On a phone a **Sort** menu replaces the headers.
