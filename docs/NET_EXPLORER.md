@@ -86,7 +86,7 @@ From top to bottom:
 On a narrow window the header's buttons fold into a **☰ Menu**.
 
 ![Figure 1](img/overview.png)
-*Figure 1: The explorer on a PC: header, protocol tabs, stat cards, network chips, the Calls view and, on the right, the details of the radio clicked (12001).*
+*Figure 1: The explorer on a PC: header, protocol tabs, stat cards, the network chips (collapsed), the Calls view and, on the right, the details of the radio clicked (12001), with ✕ to deselect it.*
 
 ## 3. Calls
 
