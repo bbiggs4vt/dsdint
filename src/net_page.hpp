@@ -118,7 +118,7 @@ inline std::string render_net_page_html() {
   .fclear { font-size: .78rem; margin-left: .3rem; }
   .fitems { display: contents; }
   .svc { color: var(--muted); font-style: italic; }
-  a.pos { white-space: nowrap; }
+  a.pos .nw { white-space: nowrap; }            /* lat and lon stay whole; the line may break between them */
   .posline { margin: .2rem 0 .6rem; }
   .fadd { display: inline-flex; gap: .3rem; align-items: center; margin-left: .3rem; flex: none; }
   .fin { background: #1f2327; color: var(--heading); border: 1px solid var(--comp-bd); border-radius: 4px;
@@ -882,7 +882,8 @@ function posLink(pos) {
   var p = (pos || '').split(','), la = p[0], lo = p[1];
   return h('a', { class: 'pos', href: 'https://www.openstreetmap.org/?mlat=' + la + '&mlon=' + lo + '#map=16/' + la + '/' + lo,
                   target: '_blank', rel: 'noopener', title: 'Position report \u2014 open on a map',
-                  onclick: function (e) { e.stopPropagation(); } }, '\u{1F4CD} ' + la + ', ' + lo);
+                  onclick: function (e) { e.stopPropagation(); } },
+           [h('span', { class: 'nw', text: '\u{1F4CD} ' + la + ',' }), ' ', h('span', { class: 'nw', text: lo })]);
 }
 // The Text column: the message, else the data service; and a position report.
 function textCell(c) {
