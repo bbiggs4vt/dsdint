@@ -460,8 +460,15 @@ int main() {
         const std::string ex = m.to_export_json(1300);
         Dataset d;
         dataset_from_export_text(ex, "x", d, nullptr);
-        check(ex.find("\"audio\":\"call_") != std::string::npos && d.fams["dmr"].calls.size() == 1 && d.fams["dmr"].calls[0].audio.empty(),
-              "export: says which calls had audio; an import elsewhere doesn't point at files it hasn't got");
+        // The export names the file (an "export with audio" zip carries it,
+        // and a merge keeps the name); an import into another server's live
+        // view doesn't point at a file that server hasn't got.
+        AssocModel other;
+        other.set_identity("99aabbccddeeff00", "elsewhere");
+        other.import_export(ex, "x.json", 1300);
+        check(ex.find("\"audio\":\"call_") != std::string::npos && d.fams["dmr"].calls.size() == 1 &&
+                  d.fams["dmr"].calls[0].audio.rfind("call_", 0) == 0 && other.to_json(1300).find("\"audio\":\"call_") == std::string::npos,
+              "export: says which calls had audio (kept by a merge); an import elsewhere doesn't point at files it hasn't got");
         // Clear finishes the open files; they stay playable.
         const std::string name = calls(m, "dmr", 1300).at(0).audio;
         m.clear(1400);
