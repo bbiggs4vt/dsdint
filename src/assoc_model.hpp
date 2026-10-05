@@ -348,6 +348,7 @@ public:
                 if (priv) set_private(F, *cur, now);
                 if (emerg) cur->emergency = true;
                 if (enc) cur->encrypted = true;
+                note_service(F, *cur, extra, now);
             }
             return;
         }
@@ -423,6 +424,7 @@ public:
             (ev.kind == "call" && has(" " + up, " AMBE ")))
             cur->voice = true;
         if (data) cur->data = true;
+        note_service(F, *cur, extra, now);
         if (emerg) cur->emergency = true;
         if (enc) cur->encrypted = true;
         if (!ev.alias.empty()) cur->alias = ev.alias;
@@ -812,6 +814,7 @@ private:
                 o.id = r.id; o.aliases = r.aliases; o.networks = r.networks;
                 o.tgs.insert(r.tgs.begin(), r.tgs.end()); o.peers.insert(r.peers.begin(), r.peers.end());
                 o.calls = r.calls; o.first = r.first_ms; o.last = r.last_ms;
+                o.pos = r.pos; o.pos_t = r.pos_ms;
             }
             D.calls.reserve(F.calls.size());
             for (auto it = F.calls.rbegin(); it != F.calls.rend(); ++it) {
@@ -823,7 +826,7 @@ private:
                     c.audio_ms = k.audio_samples * 1000 / CallAudioStore::kRate;
                 }
                 c.net = k.net; c.site = k.site; c.slot = k.slot; c.src = k.src; c.tgt = k.tgt;
-                c.alias = k.alias; c.text = k.text;
+                c.alias = k.alias; c.text = k.text; c.svc = k.svc; c.pos = k.pos;
                 c.priv = k.priv; c.voice = k.voice; c.data = k.data; c.emerg = k.emergency; c.enc = k.encrypted;
                 c.open = k.open && now - k.last_ms <= kContinueMs;
                 c.start = k.start_ms; c.last = k.last_ms;
@@ -889,6 +892,7 @@ private:
     struct Call {
         std::uint64_t id = 0, session = 0;
         std::string net, site, slot, src, tgt, alias, text;
+        std::string svc, pos;                           // data service (svc_rank), position report "lat,lon"
         bool priv = false, voice = false, data = false, emergency = false, encrypted = false;
         bool open = true, counted = false;
         std::string audio;                              // its audio file ("" = none; see audio())
@@ -927,6 +931,8 @@ private:
         std::set<std::string> networks;
         std::uint64_t calls = 0;
         std::int64_t first_ms = 0, last_ms = 0;
+        std::string pos;                                // its last position report "lat,lon"
+        std::int64_t pos_ms = 0;
     };
     struct Family {
         std::map<std::string, Network> networks;
@@ -1345,6 +1351,18 @@ private:
         return t;
     }
 
+    // What a decoder line says about the call it belongs to: the data
+    // service (kept if more specific than what the call has) and a position
+    // report (on the call, and as the sending radio's last position).
+    static void note_service(Family& F, Call& k, const std::map<std::string, std::string>& extra, std::int64_t now) {
+        auto s = extra.find("svc");
+        if (s != extra.end() && svc_rank(s->second) > svc_rank(k.svc)) k.svc = s->second;
+        auto g = extra.find("gps");
+        if (g == extra.end() || g->second.empty()) return;
+        k.pos = g->second;
+        auto r = F.radios.find(k.src);
+        if (r != F.radios.end()) { r->second.pos = g->second; r->second.pos_ms = now; }
+    }
     void touch_radio(Family& F, const std::string& id, const std::string& net,
                      const std::string& alias, std::int64_t now) {
         Radio& r = ensure_radio(F, id, now);
@@ -1447,6 +1465,8 @@ private:
             twin.text = twin.text.empty() ? dup.text : twin.text + " | " + dup.text;
         if (twin.slot.empty()) twin.slot = dup.slot;
         if (twin.site.empty()) twin.site = dup.site;
+        if (svc_rank(dup.svc) > svc_rank(twin.svc)) twin.svc = dup.svc;
+        if (twin.pos.empty()) twin.pos = dup.pos;
         twin.start_ms = std::min(twin.start_ms, dup.start_ms);
         twin.last_ms = std::max(twin.last_ms, dup.last_ms);
         ++twin.streams;

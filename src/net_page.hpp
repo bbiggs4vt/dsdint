@@ -117,6 +117,9 @@ inline std::string render_net_page_html() {
   .fmore:hover { color: var(--text); }
   .fclear { font-size: .78rem; margin-left: .3rem; }
   .fitems { display: contents; }
+  .svc { color: var(--muted); font-style: italic; }
+  a.pos { white-space: nowrap; }
+  .posline { margin: .2rem 0 .6rem; }
   .fadd { display: inline-flex; gap: .3rem; align-items: center; margin-left: .3rem; flex: none; }
   .fin { background: #1f2327; color: var(--heading); border: 1px solid var(--comp-bd); border-radius: 4px;
          padding: .2rem .5rem; font: inherit; font-size: .8rem; width: 10.5rem; }
@@ -644,7 +647,7 @@ function fCalls(list, allAudio) {
   var aud = S.audOnly && !S.file && !allAudio;
   return (list || IX.calls).filter(function (c) {
     return (netAll() || netOk(c.net)) && callTgOk(c) && callROk(c) && (!aud || c.audio) &&
-      (!S.q || qm(c.src, c.tgt, c.alias, c.text, mhz(c.freq), IX.rById[c.src] && IX.rById[c.src].aliases));
+      (!S.q || qm(c.src, c.tgt, c.alias, c.text, svcLabel(c.svc), mhz(c.freq), IX.rById[c.src] && IX.rById[c.src].aliases));
   });
 }
 function fTgs() { return IX.tgs.filter(function (t) { return inNet(t.networks) && tgOk(t.id) && tgROk(t) && (!S.q || qm(t.id)); }); }
@@ -858,6 +861,37 @@ function dlLink(c) {
                   onclick: function (e) { e.stopPropagation(); } }, '⤓');
 }
 function audioCell(c) { var p = playBtn(c); return p ? h('span', { class: 'nowrap' }, [p, dlLink(c)]) : ''; }
+// A data call's service, in words (svc from the server: what its header /
+// Motorola MNIS service said).
+var SVC = { preamble: 'Data announced only', ack: 'ACK (delivery confirmed)', data: 'Data packet',
+            ars: 'ARS (registration)', lrrp: 'LRRP (location)', tms: 'TMS (text message)' };
+function svcLabel(s) {
+  if (!s) return '';
+  if (SVC[s]) return SVC[s];
+  var m = /^mnis:(\w+)$/.exec(s);
+  return m ? 'Moto data (type 0x' + m[1] + ')' : s.toUpperCase();
+}
+function svcTip(s) {
+  return s === 'preamble' ? 'Only the announcement of a data transfer was heard here (it may have gone out on another channel)' :
+         s === 'ack' ? 'The receiving radio (or gateway) confirming it got a data packet' :
+         s === 'ars' ? 'Motorola Automatic Registration Service: a radio registering with (or being polled by) the data gateway' :
+         /^mnis:/.test(s) ? 'A Motorola data packet of a service type dsd-fme doesn\u2019t name' : null;
+}
+// A position report: "lat, lon" linked to a map.
+function posLink(pos) {
+  var p = (pos || '').split(','), la = p[0], lo = p[1];
+  return h('a', { class: 'pos', href: 'https://www.openstreetmap.org/?mlat=' + la + '&mlon=' + lo + '#map=16/' + la + '/' + lo,
+                  target: '_blank', rel: 'noopener', title: 'Position report \u2014 open on a map',
+                  onclick: function (e) { e.stopPropagation(); } }, '\u{1F4CD} ' + la + ', ' + lo);
+}
+// The Text column: the message, else the data service; and a position report.
+function textCell(c) {
+  var parts = [];
+  if (c.text) parts.push(c.text);
+  else if (c.svc) parts.push(h('span', { class: 'svc', title: svcTip(c.svc), text: svcLabel(c.svc) }));
+  if (c.pos) { if (parts.length) parts.push(' '); parts.push(posLink(c.pos)); }
+  return parts.length ? h('span', null, parts) : '';
+}
 function sttSpan(c, cls) {
   var r = c.audio && ASR.tx[c.audio];
   return r && r.t ? h(cls === 'tx' ? 'div' : 'span', { class: 'stt' + (cls ? ' ' + cls : ''), text: r.t,
@@ -1158,7 +1192,7 @@ function callCard(c) {
                                c.freq && !(IX.netByKey[c.net] && IX.netByKey[c.net].label.indexOf(mhz(c.freq)) >= 0)
                                  ? h('span', { class: 'mono', text: mhz(c.freq) + ' MHz' }) : null,
                                c.slot ? h('span', { text: 'slot ' + c.slot }) : null]),
-    c.text ? h('div', { class: 'tx', text: c.text }) : null,
+    c.text || c.svc || c.pos ? h('div', { class: 'tx' }, textCell(c)) : null,
     sttSpan(c, 'tx')]);
 }
 function viewCalls() {
@@ -1178,7 +1212,7 @@ function viewCalls() {
     { label: 'Type', cls: 'nowrap ctype', cell: typeBadges },
     { label: 'Audio', cls: 'nowrap', k: function (c) { return c.audio && !S.file ? 1 : 0; }, cell: audioCell,
       hideEmpty: function (c) { return !!c.audio && !S.file; } },
-    { label: 'Text', cls: 'wrap', cell: function (c) { return c.text || ''; }, hideEmpty: function (c) { return !!c.text; } }
+    { label: 'Text', cls: 'wrap', cell: textCell, hideEmpty: function (c) { return !!(c.text || c.svc || c.pos); } }
   ], rows, (S.audOnly ? 'No calls with audio' : 'No calls heard yet') + (anyFilter() || S.q ? ' for this filter.' : '.'),
      null, null, callCard, function (c) { return sttSpan(c); });
 }
@@ -1380,6 +1414,10 @@ function renderDetail() {
     d.appendChild(filterBtns('rf', r.id, 'radio', 'Hide this radio and its calls'));
     d.appendChild(kv([['Calls', r.calls], ['Talkgroups', keys(r.tgs).length], ['Private peers', keys(r.peers).length],
                       ['Networks', r.networks.length], ['First', ago(r.first)], ['Last', ago(r.last)]]));
+    if (r.pos) {
+      d.appendChild(h('h4', { text: 'Last position' }));
+      d.appendChild(h('div', { class: 'posline' }, [posLink(r.pos), h('span', { class: 'hint', text: ' ' + ago(r.pos_t) })]));
+    }
     d.appendChild(h('h4', { text: 'Talkgroups used' }));
     d.appendChild(lst(keys(r.tgs).sort(function (a, b) { return r.tgs[b] - r.tgs[a]; })
       .map(function (t) { return { el: tlink(t), n: r.tgs[t] }; })));

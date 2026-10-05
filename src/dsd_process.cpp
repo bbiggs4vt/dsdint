@@ -9,6 +9,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <cerrno>
 #include <csignal>
@@ -493,6 +494,12 @@ std::string strip_leading_zeros(const std::string& s) {
     return (nz == std::string::npos) ? "0" : s.substr(nz);
 }
 
+// Lowercase a short token ("ARS" -> "ars").
+std::string lower(std::string s) {
+    for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
 // Uppercase a hex string in place ("bee0a" -> "BEE0A").
 std::string upper_hex(std::string s) {
     for (char& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
@@ -797,6 +804,42 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     // key 0x0000=unencrypted). crc_error flags the FEC-ERR variants.
     if (std::regex_search(line, m, algid_re))   tokens.push_back("alg_id=" + m[1].str());
     if (std::regex_search(line, m, keyid_re))   tokens.push_back("key_id=" + m[1].str());
+    // What a data call carries (svc=): its announcement (preamble CSBK), an
+    // acknowledgement (Response Packet), a data packet, and -- from the
+    // Motorola MNIS header after it -- which service (ARS registration, LRRP
+    // location, ...; or the type number dsd-fme doesn't name).
+    {
+        static const std::regex mnis_re(R"(\bMNIS\s+([A-Za-z]{2,8})\s*;)");
+        static const std::regex mnis_type_re(R"(MNIS\s+Type:\s*([0-9A-Fa-f]+))", std::regex::icase);
+        const bool hdr = line.find("Data Header") != std::string::npos;
+        if (line.find("Preamble CSBK") != std::string::npos && line.find("Data") != std::string::npos)
+            tokens.push_back("svc=preamble");
+        else if (hdr && line.find("Response Packet") != std::string::npos) tokens.push_back("svc=ack");
+        else if (hdr && line.find("Delivery") != std::string::npos) tokens.push_back("svc=data");
+        else if (std::regex_search(line, m, mnis_type_re)) tokens.push_back("svc=mnis:" + upper_hex(m[1].str()));
+        else if (std::regex_search(line, m, mnis_re) && m[1].str() != "Type") tokens.push_back("svc=" + lower(m[1].str()));
+        else if (line.find("LRRP") != std::string::npos) tokens.push_back("svc=lrrp");
+    }
+    // A position report (P25 LCW GPS, DMR LRRP / GPS): "gps=lat,lon" in
+    // signed decimal degrees, from dsd-fme's "(39.03494, -76.98460)".
+    if (line.find("Lat") != std::string::npos && line.find("Lon") != std::string::npos) {
+        static const std::regex pair_re(R"(\(\s*(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)\s*\))");
+        static const std::regex latlon_re(R"(Lat\w*\s*:?\s*(-?\d{1,2}\.\d+)[^NSns\d-]{0,4}([NSns])?.*?Lon\w*\s*:?\s*(-?\d{1,3}\.\d+)[^EWew\d-]{0,4}([EWew])?)");
+        double lat = 0, lon = 0;
+        bool ok = false;
+        if (std::regex_search(line, m, pair_re)) {
+            lat = std::stod(m[1].str()); lon = std::stod(m[2].str()); ok = true;
+        } else if (std::regex_search(line, m, latlon_re)) {
+            lat = std::stod(m[1].str()); lon = std::stod(m[3].str()); ok = true;
+            if (m[2].matched && (m[2].str() == "S" || m[2].str() == "s") && lat > 0) lat = -lat;
+            if (m[4].matched && (m[4].str() == "W" || m[4].str() == "w") && lon > 0) lon = -lon;
+        }
+        if (ok && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180 && (lat != 0 || lon != 0)) {
+            char b[48];
+            std::snprintf(b, sizeof b, "gps=%.5f,%.5f", lat, lon);
+            tokens.push_back(b);
+        }
+    }
     for (std::size_t i = 0; i < tokens.size(); ++i) {
         if (i) ev.extra += "; ";
         ev.extra += tokens[i];

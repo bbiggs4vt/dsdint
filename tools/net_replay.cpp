@@ -33,12 +33,14 @@ namespace {
 
 // --reparse: classify the event's raw line again. Only dsd-fme streams (TETRA
 // and pager lines come from other parsers), and not reassembled data messages
-// (built from several lines). Fields the classifier can't know from one line
-// alone -- the slot carried from the last burst, a CRC flag -- are kept.
-void reparse_event(DsdEvent& e, const std::string& label) {
+// (built from several lines). The slot is carried from the last burst per
+// stream, as the server does (DmrSlotCarry); a CRC flag is kept.
+void reparse_event(DsdEvent& e, const std::string& label, std::uint64_t sid) {
+    static std::map<std::uint64_t, DmrSlotCarry> carry;
     const std::string fam = assoc_family(label);
     if (e.raw_line.empty() || fam.empty() || fam == "tetra" || e.kind == "message") return;
     DsdEvent n = classify_dsd_fme_line(e.raw_line);
+    carry[sid].apply(n);
     if (n.slot.empty()) n.slot = e.slot;
     if (n.crc_error.empty()) n.crc_error = e.crc_error;
     e = std::move(n);

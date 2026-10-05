@@ -57,8 +57,11 @@ struct DmrSlotCarry {
         if (current.empty()) return;
         // Only stamp slot-bearing traffic kinds; leave channel-wide/unknown
         // lines unslotted.
+        // (and a data call's service / position lines, so they find their
+        // call: the MNIS header after "Slot 1 Data Header")
         if (ev.kind == "voice" || ev.kind == "call" ||
-            ev.kind == "message" || ev.kind == "burst") {
+            ev.kind == "message" || ev.kind == "burst" ||
+            ev.extra.find("svc=") != std::string::npos || ev.extra.find("gps=") != std::string::npos) {
             ev.slot = current;
         }
     }

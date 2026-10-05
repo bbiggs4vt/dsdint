@@ -339,10 +339,19 @@ struct DsRadio {
     std::set<std::string> networks;
     std::uint64_t calls = 0;
     std::int64_t first = 0, last = 0;
+    std::string pos;                           // last position report "lat,lon" ("" = none)
+    std::int64_t pos_t = 0;                    // when (ms)
 };
+// How specific a data call's service label is: a later, more specific one
+// replaces it (an announcement, then the packet, then the MNIS service).
+inline int svc_rank(const std::string& s) {
+    return s.empty() ? 0 : s == "preamble" ? 1 : s == "ack" ? 2 : s == "data" ? 3 : 4;
+}
 struct DsCall {
     std::uint64_t id = 0, session = 0, streams = 1;
     std::string net, site, slot, src, tgt, alias, text;
+    std::string svc;                            // a data call's service: preamble, ack, data, ars, lrrp, mnis:80, ...
+    std::string pos;                            // a position report sent during the call "lat,lon"
     bool priv = false, voice = false, data = false, emerg = false, enc = false, open = false;
     std::int64_t start = 0, last = 0;
     std::int64_t freq = 0;
@@ -422,7 +431,9 @@ inline std::string families_json(const Dataset& d) {
             first = false;
             o << "{\"id\":" << q(r.id) << ",\"aliases\":" << arr(r.aliases) << ",\"tgs\":" << counts(r.tgs)
               << ",\"peers\":" << counts(r.peers) << ",\"networks\":" << arr(r.networks) << ",\"calls\":" << r.calls
-              << ",\"first\":" << r.first << ",\"last\":" << r.last << "}";
+              << ",\"first\":" << r.first << ",\"last\":" << r.last;
+            if (!r.pos.empty()) o << ",\"pos\":" << q(r.pos) << ",\"pos_t\":" << r.pos_t;
+            o << "}";
         }
         o << "],\"calls\":[";
         first = true;
@@ -437,6 +448,8 @@ inline std::string families_json(const Dataset& d) {
               << ",\"emerg\":" << b(k.emerg) << ",\"enc\":" << b(k.enc) << ",\"open\":" << b(k.open)
               << ",\"streams\":" << k.streams << ",\"start\":" << k.start << ",\"last\":" << k.last;
             if (!k.audio.empty()) o << ",\"audio\":" << q(k.audio) << ",\"audio_ms\":" << k.audio_ms;
+            if (!k.svc.empty()) o << ",\"svc\":" << q(k.svc);
+            if (!k.pos.empty()) o << ",\"pos\":" << q(k.pos);
             o << "}";
         }
         o << "]}";
@@ -585,6 +598,7 @@ inline bool dataset_from_export(const mjson::V& root, const std::string& label, 
                 detail::countmap(e.get("peers"), r.peers);
                 detail::strset(e.get("networks"), r.networks);
                 r.calls = u(e, "calls"); r.first = i64(e, "first"); r.last = i64(e, "last");
+                r.pos = e.str("pos"); r.pos_t = i64(e, "pos_t");
                 df.radios[r.id] = std::move(r);
             }
         if (const mjson::V* a = F.get("calls"); a && a->t == mjson::V::Arr)
@@ -593,6 +607,7 @@ inline bool dataset_from_export(const mjson::V& root, const std::string& label, 
                 c.id = u(e, "id"); c.session = u(e, "session"); c.streams = std::max<std::uint64_t>(1, u(e, "streams"));
                 c.net = e.str("net"); c.site = e.str("site"); c.slot = e.str("slot"); c.src = e.str("src");
                 c.tgt = e.str("tgt"); c.alias = e.str("alias"); c.text = e.str("text");
+                c.svc = e.str("svc"); c.pos = e.str("pos");
                 c.priv = e.boolean("priv"); c.voice = e.boolean("voice"); c.data = e.boolean("data");
                 c.emerg = e.boolean("emerg"); c.enc = e.boolean("enc");
                 c.open = false;                                  // history, not live
@@ -714,6 +729,8 @@ inline void fold_call(DsCall& twin, const DsCall& dup) {
         twin.text = twin.text.empty() ? dup.text : twin.text + " | " + dup.text;
     if (twin.slot.empty()) twin.slot = dup.slot;
     if (twin.site.empty()) twin.site = dup.site;
+    if (svc_rank(dup.svc) > svc_rank(twin.svc)) twin.svc = dup.svc;
+    if (twin.pos.empty()) twin.pos = dup.pos;
     if (twin.audio.empty()) { twin.audio = dup.audio; twin.audio_ms = dup.audio_ms; }
     twin.start = std::min(twin.start, dup.start);
     twin.last = std::max(twin.last, dup.last);
@@ -763,6 +780,7 @@ inline void merge_into(Dataset& into, const Dataset& from) {
             r.networks.insert(m.networks.begin(), m.networks.end());
             r.calls += m.calls;
             r.first = lo(r.first, m.first); r.last = std::max(r.last, m.last);
+            if (!m.pos.empty() && m.pos_t >= r.pos_t) { r.pos = m.pos; r.pos_t = m.pos_t; }
         }
         // Calls: fold twins (only against calls already in the merge, i.e.
         // from other sources -- each source deduped its own streams).

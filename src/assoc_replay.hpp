@@ -57,8 +57,9 @@ inline std::int64_t recording_start_time(const std::string& path) {
 }
 
 // Called on each recorded event before it is ingested, with its stream's
-// protocol label, to rewrite it (net-replay --reparse: re-classify the raw line).
-using ReplayRewrite = std::function<void(DsdEvent&, const std::string& label)>;
+// protocol label and session, to rewrite it (net-replay --reparse:
+// re-classify the raw line).
+using ReplayRewrite = std::function<void(DsdEvent&, const std::string& label, std::uint64_t sid)>;
 
 // Replay `path` (gzip or plain JSON Lines) into `m`, stopping after time
 // `until`. Returns false (with *err) if the file can't be read.
@@ -104,7 +105,7 @@ inline bool replay_log(const std::string& path, AssocModel& m, ReplayResult& r,
             const std::uint64_t sid = k.count("s") ? std::stoull(k["s"]) : 0;
             if (op == "ev") {
                 DsdEvent e = assoclog::line_event(k);
-                if (rewrite) rewrite(e, labels[sid]);
+                if (rewrite) rewrite(e, labels[sid], sid);
                 m.ingest(sid, e, t);
                 ++r.events;
             }

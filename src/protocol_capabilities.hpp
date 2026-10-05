@@ -99,6 +99,8 @@ inline const std::vector<CapFamily>& cap_families() {
             {"site_id",      KeyBackend::Fme},
             {"rest_channel", KeyBackend::Fme},
             {"lcn",          KeyBackend::Fme},
+            {"svc",          KeyBackend::Fme},
+            {"gps",          KeyBackend::Fme},
         }},
         {"extra_keys_p25", {
             {"rfss",      KeyBackend::Fme},
@@ -107,6 +109,7 @@ inline const std::vector<CapFamily>& cap_families() {
             {"wacn",      KeyBackend::Fme},
             {"alg_id",    KeyBackend::Fme},
             {"key_id",    KeyBackend::Fme},
+            {"gps",       KeyBackend::Fme},
         }},
         {"extra_keys_nxdn", {
             {"site_code",   KeyBackend::Both},

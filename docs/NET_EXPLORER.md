@@ -105,7 +105,7 @@ decoder lines (sync, voice frames, call headers, aliases, SMS) — see
 | **To** | The talkgroup (`TG 1234`), or `⇄ 5678` for a private (radio-to-radio) call. Click it for details. |
 | **Type** | Badges: **VOICE** or **DATA**, **GROUP** or **PRIVATE**, **EMERGENCY**, **ENCRYPTED**, and **2 RX** when two receivers heard the same call (it is listed once). Hover for an explanation. |
 | **Audio** | **▶ 0:12** plays the call's recorded voice, **⤓** downloads it — only when audio recording is on ([section 10](#10-call-audio)). |
-| **Text** | SMS / text messages carried by the call. This column only appears when some call has text. |
+| **Text** | SMS / text messages carried by the call. A data call with no text shows what it carried instead, in grey italics: **ACK (delivery confirmed)**, **Data packet**, **ARS (registration)**, **LRRP (location)**, **TMS (text message)**, **Moto data (type 0x…)** for a Motorola service dsd-fme doesn't name, or **Data announced only** when only the announcement was heard here (the data may have gone out on another channel). A position report sent during the call shows as **📍 lat, lon**, linked to a map. This column only appears when some call has any of these. |
 
 A call's **transcript** (when speech-to-text is used) appears in quotes on its
 own line under the row.
@@ -217,8 +217,9 @@ tablet or phone the details are a drawer: **Close** or Esc.
   **Exclude** (hide it; **Include** undoes it); calls, talkgroups, private
   peers and networks; **Talkgroups
   used** (by calls); **Private calls with**; **Shares talkgroups with** —
-  other radios on its talkgroups, with how many in common; **Recent calls**,
-  with ▶ where audio exists.
+  other radios on its talkgroups, with how many in common; **Last position**
+  (its latest position report, linked to a map) when it sent one; **Recent
+  calls**, with ▶ where audio exists.
 - **Talkgroup**: **Only** (show only this talkgroup; **All** undoes it) and
   **Exclude** (hide it; **Include** undoes it); calls, radios, emergency /
   encrypted counts, networks; **Radios on this talkgroup**; **Linked talkgroups (shared radios)**;
@@ -606,6 +607,13 @@ Encrypted calls are not recorded (unless the session has the key).
 - SMS: a data preamble, data header and the decoded text become **one** data
   call carrying the text. Talker aliases are attached to the call and the
   radio.
+- Other data calls are labelled from their headers: a **Response Packet** is
+  an ACK, a **Confirmed / Unconfirmed Delivery** header a data packet, and
+  the Motorola (MNIS) service header that follows names the service (ARS,
+  LRRP, TMS, or its type number). A data preamble with nothing after it on
+  the channel is *data announced only*.
+- Position reports (DMR LRRP / GPS, P25 Motorola LCW GPS) are put on the call
+  and kept as the sending radio's last position.
 
 **P25**
 

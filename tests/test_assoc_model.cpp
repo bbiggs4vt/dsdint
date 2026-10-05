@@ -813,6 +813,44 @@ int main() {
         check(tg2 && (*tg2)["calls"].n == 2 && (*tg2)["radios"].size() == 1, "D-STAR: a call with its talker adds the radio");
     }
 
+    // ---- data services and position reports ----
+    {
+        AssocModel m;
+        m.begin_stream(1, "dmr", 0, "", 460175000);
+        DmrSlotCarry carry;
+        auto L = [&](const char* l, std::int64_t t) { DsdEvent e = classify_dsd_fme_line(l); carry.apply(e); m.ingest(1, e, t); };
+        L("21:21:28 Sync: +DMR  [SLOT1]  slot2  | Color Code=05 | DATA ", 1000);
+        L("Slot 1 Data Header - Indiv - Confirmed Delivery - Response Requested - Source: 64250 Target: 13416", 1100);
+        L("Slot 1 Data Header - Extended - SAP 01 [Moto NET] - MFID 10 [Moto]", 1150);
+        L(" DST(MNIS): 00013416; MNIS ARS;   ???: C5E5", 1200);
+        L("Slot 1 Data Header - Indiv - Response Packet - Source: 13416 Target: 64250", 1400);
+        J j = snap(m, 1500);
+        const J& F = j["families"]["dmr"];
+        const J* ars = nullptr; const J* ack = nullptr;
+        for (const auto& c : F["calls"].a) { if (c["src"].s == "64250") ars = &c; if (c["src"].s == "13416") ack = &c; }
+        check(ars && (*ars)["svc"].s == "ars", "svc: the gateway's packet is labelled ARS (the MNIS line after its header)");
+        check(ack && (*ack)["svc"].s == "ack", "svc: the reply is an ACK");
+
+        AssocModel p;
+        p.begin_stream(2, "p25p1", 0, "", 851012500);
+        auto P = [&](const char* l, std::int64_t t) { p.ingest(2, classify_dsd_fme_line(l), t); };
+        P("17:31:49 Sync: +P25p1 NAC/CC: 293; LDU1", 1000);
+        P(" TG: 100; SRC: 6745697; ", 1050);
+        P(" LCW MFID90 (Moto) GPS: Lat: 39.03494 N Lon: -76.98460 W (39.03494, -76.98460) Current Fix;", 1100);
+        J jp = snap(p, 1200);
+        const J& PF = jp["families"]["p25"];
+        check(PF["calls"].size() == 1 && PF["calls"].at(0)["pos"].s == "39.03494,-76.98460", "gps: the position is on the call");
+        const J* rad = find(PF["radios"], "id", "6745697");
+        check(rad && (*rad)["pos"].s == "39.03494,-76.98460" && (*rad)["pos_t"].n == 1100, "gps: and is the radio's last position");
+        // An export keeps both.
+        Dataset d;
+        std::string err;
+        check(dataset_from_export_text(p.to_export_json(1300), "x", d, &err) &&
+                  d.fams["p25"].calls.size() == 1 && d.fams["p25"].calls[0].pos == "39.03494,-76.98460" &&
+                  d.fams["p25"].radios["6745697"].pos == "39.03494,-76.98460",
+              "export: positions survive an export / import");
+    }
+
     // ---- JSON escaping of decoder-derived text ----
     {
         AssocModel m;

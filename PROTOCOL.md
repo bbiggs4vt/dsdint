@@ -392,7 +392,7 @@ a key for is omitted entirely. The client reads the field for whichever
 protocol it's about to request.
 
 ```json
-{"type":"capabilities","protocols":"dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; pager-auto; pocsag; pocsag512; pocsag1200; pocsag2400; flex; auto","audio":"pcm_s16le_8000_mono","event_kinds":"voice; sync; call; message; burst; page; unknown","extra_keys_dmr":"network_type; network_id; site_id; rest_channel; lcn","extra_keys_p25":"rfss; site_id; system_id; wacn; alg_id; key_id","extra_keys_nxdn":"site_code; system_code; location_id; category","extra_keys_dstar":"rpt1; rpt2; radio_text","extra_keys_ysf":"uplink; downlink; call_mode; data_type; src_rid; dst_rid","extra_keys_edacs":"lcn; afs; lid; system_id","extra_keys_tetra":"mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr","extra_keys_pager":"protocol; baud; message_type; function; flex_type; levels; phase; cycle; frame; addr_type; group; fragment; info_type; payload"}
+{"type":"capabilities","protocols":"dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; pager-auto; pocsag; pocsag512; pocsag1200; pocsag2400; flex; auto","audio":"pcm_s16le_8000_mono","event_kinds":"voice; sync; call; message; burst; page; unknown","extra_keys_dmr":"network_type; network_id; site_id; rest_channel; lcn; svc; gps","extra_keys_p25":"rfss; site_id; system_id; wacn; alg_id; key_id; gps","extra_keys_nxdn":"site_code; system_code; location_id; category","extra_keys_dstar":"rpt1; rpt2; radio_text","extra_keys_ysf":"uplink; downlink; call_mode; data_type; src_rid; dst_rid","extra_keys_edacs":"lcn; afs; lid; system_id","extra_keys_tetra":"mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr","extra_keys_pager":"protocol; baud; message_type; function; flex_type; levels; phase; cycle; frame; addr_type; group; fragment; info_type; payload"}
 ```
 
 | field | type | meaning |
@@ -585,6 +585,8 @@ frequencies — rides in `extra` rather than in dedicated fields.)
 | `site_id=<n>` | DMR | dsd-fme | trunked site ID (may be `N.M` form) |
 | `rest_channel=<n>` | DMR | dsd-fme | rest channel / rest LSN |
 | `lcn=<n>` | DMR | dsd-fme | logical channel number (`LCN`/`LPCN`) |
+| `svc=<service>` | DMR | dsd-fme | what a data-call line carries: `preamble` (data preamble CSBK), `ack` (Response Packet header), `data` (Confirmed / Unconfirmed Delivery header), or the Motorola MNIS service after it: `ars`, `lrrp`, `tms`, … or `mnis:<hex type>` when dsd-fme doesn't name it |
+| `gps=<lat>,<lon>` | DMR/P25 | dsd-fme | a position report in signed decimal degrees (5 places), e.g. `gps=39.03494,-76.98460` -- DMR LRRP / GPS, P25 Motorola LCW GPS |
 | `rfss=<n>` | P25 | dsd-fme | RF Sub-System id (trunking) |
 | `site_id=<n>` | DMR/P25 | dsd-fme | site id (DMR `Site ID:`, P25 `Site:`/`SITE [ ]`) |
 | `system_id=<hex>` | P25 | dsd-fme | P25 System ID |
@@ -627,7 +629,7 @@ high/low 12 bits of its decoded location ID (the same split dsd-fme
 prints); it does not currently surface `category`.
 
 The DMR trunking / LC fields (`emergency`, `alias`, and the
-`network_type` / `network_id` / `site_id` / `rest_channel` / `lcn`
+`network_type` / `network_id` / `site_id` / `rest_channel` / `lcn` / `svc` / `gps`
 tokens) are **dsd-fme backend only**: they come from DMR CSBK, data, and
 talker-alias layers that the DSDcc backend does not decode (DSDcc's DMR
 decoder handles voice, slot type / color code, and source/target from

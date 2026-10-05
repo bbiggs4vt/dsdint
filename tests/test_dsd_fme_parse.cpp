@@ -526,6 +526,33 @@ int main() {
               "Con+ grant: its TS is the granted channel's, not this burst's slot");
     }
 
+    // ---- data services (svc=) and position reports (gps=) ----
+    {
+        auto x = [](const char* l) { return classify_dsd_fme_line(l).extra; };
+        auto has = [](const std::string& e, const char* t) { return e.find(t) != std::string::npos; };
+        check(has(x(" Preamble CSBK - Individual Data - Source: 22605 - Target: 64250 - Rest LSN: 4"), "svc=preamble"),
+              "svc: a data preamble CSBK is the announcement");
+        check(has(x("Slot 1 Data Header - Indiv - Response Packet - Source: 64250 Target: 19020"), "svc=ack"),
+              "svc: a Response Packet header is an ACK");
+        check(has(x("Slot 1 Data Header - Indiv - Confirmed Delivery - Response Requested - Source: 19020 Target: 64250"), "svc=data"),
+              "svc: a Confirmed Delivery header is a data packet");
+        check(has(x(" DST(MNIS): 00064250; Unknown MNIS Type: 80;  ???: DF48"), "svc=mnis:80"), "svc: an unnamed MNIS type keeps its number");
+        check(has(x(" DST(MNIS): 00013416; MNIS ARS;   ???: C5E5"), "svc=ars"), "svc: MNIS ARS");
+        check(x("Slot 1 Data Header - Extended - SAP 01 [Moto NET] - MFID 10 [Moto]").find("svc=") == std::string::npos,
+              "svc: the extended header alone says nothing");
+        check(has(x(" LCW MFID90 (Moto) GPS: Lat: 39.03494\xC2\xB0N Lon: -76.98460\xC2\xB0W (39.03494, -76.98460) Current Fix;"),
+                  "gps=39.03494,-76.98460"), "gps: P25 LCW position report");
+        check(has(x(" LRRP Lat: 39.1 S Lon: 76.9 W"), "gps=-39.10000,-76.90000"), "gps: hemispheres sign the degrees");
+        check(!has(x(" Lat: 0.0 Lon: 0.0 (0.0, 0.0)"), "gps="), "gps: 0,0 is no fix");
+        // The MNIS line after a slot's data header takes that slot.
+        DmrSlotCarry carry;
+        DsdEvent h = classify_dsd_fme_line("Slot 2 Data Header - Extended - SAP 01 [Moto NET] - MFID 10 [Moto]");
+        carry.apply(h);
+        DsdEvent mn = classify_dsd_fme_line(" DST(MNIS): 00013416; MNIS ARS;   ???: C5E5");
+        carry.apply(mn);
+        check(mn.slot == "2", "svc: the MNIS line takes the data header's slot");
+    }
+
     // ---- DmrSlotCarry: carry the sync's slot onto the unmarked call lines
     // that follow it (real lines from a Con+/trunked DMR capture) ----
     {
