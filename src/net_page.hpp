@@ -170,6 +170,10 @@ inline std::string render_net_page_html() {
   @keyframes pulse { 50% { opacity: .35; } }
   @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
   .side { position: sticky; top: .8rem; max-height: calc(100vh - 1.6rem); overflow: auto; padding: .9rem 1rem; }
+  .side .desel { position: absolute; top: .55rem; right: .6rem; background: none; border: 1px solid transparent;
+                 border-radius: 4px; color: var(--muted); font-size: 1rem; line-height: 1; padding: .25rem .45rem; cursor: pointer; }
+  .side .desel:hover { color: var(--heading); border-color: var(--comp-bd); background: var(--panel2); }
+  .side.has-sel h3:first-of-type { padding-right: 2rem; }
   .side h3 { margin: 0 0 .15rem; color: var(--heading); font-size: 1.15rem; font-weight: 500; word-break: break-word; }
   .side h4 { margin: 1rem 0 .4rem; color: var(--muted); font-size: .7rem; text-transform: uppercase;
              letter-spacing: .06em; font-weight: 500; }
@@ -272,6 +276,7 @@ inline std::string render_net_page_html() {
             border-radius: 0; box-shadow: -10px 0 28px rgba(0,0,0,.55); transform: translateX(105%); visibility: hidden;
             transition: transform .2s ease, visibility 0s linear .2s; overscroll-behavior: contain; }
     body.sheet .side { transform: none; visibility: visible; transition: transform .2s ease; }
+    .side .desel { display: none; }
     .sheet-x { display: flex; justify-content: flex-end; position: sticky; top: -.9rem; margin: -.9rem -1rem .3rem;
                padding: .5rem .6rem; background: var(--panel); z-index: 2; }
     .netc { max-width: 11rem; }
@@ -1281,6 +1286,10 @@ function renderDetail() {
   var sel = S.sel;
   if (!sel) document.body.classList.remove('sheet');
   d.appendChild(h('div', { class: 'sheet-x' }, h('button', { class: 'btn', type: 'button', onclick: closeSheet }, '\u2715 Close')));
+  d.classList.toggle('has-sel', !!sel);
+  // Clear the selection (back to the overview text); Esc does the same.
+  if (sel) d.appendChild(h('button', { class: 'desel', type: 'button', title: 'Deselect (Esc)', 'aria-label': 'Deselect',
+                                       onclick: closeSheet }, '\u2715'));
   if (!sel) {
     d.appendChild(h('div', { class: 'hint' }, [h('h3', { text: 'Associations' }),
       'Click a radio, talkgroup or network anywhere on the page to see what it is tied to: the talkgroups a radio uses, ' +
@@ -1666,7 +1675,14 @@ function closeSheet() {
   renderDetail();
   if (S.view === 'graph') highlight(); else renderView();
 }
-document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && document.body.classList.contains('sheet')) closeSheet(); });
+// Esc closes the details drawer, or (wide screens) clears the selection --
+// unless it is meant for a field, a menu or the audio player.
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Escape') return;
+  if (document.body.classList.contains('sheet')) { closeSheet(); return; }
+  var t = e.target;
+  if (S.sel && !(t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA'))) closeSheet();
+});
 function setNets(keys) { S.nets = {}; keys.forEach(function (k) { S.nets[k] = true; }); GR.sig = ''; render(); }
 // A network chip adds its network to the filter, or takes it out.
 function toggleNet(k) { var ks = netKeys().filter(function (x) { return x !== k; }); if (!S.nets[k]) ks.push(k); setNets(ks); }

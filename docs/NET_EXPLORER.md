@@ -200,8 +200,11 @@ One row per network the explorer has identified:
 ## 8. The details panel
 
 Click any radio, talkgroup or network — in a table, the graph, a chip or a
-link — to open its details. Click the same item again (or **Close** / Esc on
-a drawer) to close them.
+link — to open its details. Selecting something only shows its details and
+highlights it (in the graph, its neighbours): it doesn't filter the lists or
+the stat cards. To deselect, click the **✕** at the panel's top right, press
+**Esc**, click the same item again, or click an empty part of the graph. On a
+tablet or phone the details are a drawer: **Close** or Esc.
 
 - **Radio**: calls, talkgroups, private peers and networks; **Talkgroups
   used** (by calls); **Private calls with**; **Shares talkgroups with** —
