@@ -217,9 +217,10 @@ tablet or phone the details are a drawer: **Close** or Esc.
   **Exclude** (hide it; **Include** undoes it); calls, talkgroups, private
   peers and networks; **Talkgroups
   used** (by calls); **Private calls with**; **Shares talkgroups with** —
-  other radios on its talkgroups, with how many in common; **Last position**
-  (its latest position report, linked to Google Maps) when it sent one — or,
-  with several, **Positions (N)**: the latest, a sketch of the track (oldest
+  other radios on its talkgroups, with how many in common; **Positions (N)**
+  when it sent position reports — N different places (repeats of the same
+  spot count once): the latest, linked to Google Maps; with two or more, a
+  sketch of the track (oldest
   fix green, latest red; how far it spans and moved), **Route in Google
   Maps** (the latest ten fixes in time order — Google draws them as a road
   route, so it shows the order rather than the exact path), **Download KML**

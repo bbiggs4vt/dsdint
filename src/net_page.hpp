@@ -962,9 +962,13 @@ function saveText(name, text, type) {
 // fixes (newest first), a Google Maps route and a KML download.
 function positionsSection(d, r) {
   var tr = trackOf(r);
-  d.appendChild(h('h4', { text: tr.length > 1 ? 'Positions (' + tr.length + ')' : 'Last position' }));
+  d.appendChild(h('h4', { text: 'Positions (' + tr.length + ')' }));
   d.appendChild(h('div', { class: 'posline' }, [posLink(r.pos), h('span', { class: 'hint', text: ' ' + ago(r.pos_t) })]));
-  if (tr.length < 2) return;
+  if (tr.length < 2) {
+    d.appendChild(h('div', { class: 'hint', text: 'Every report so far is from this one place. A track (sketch, route, KML) ' +
+                                                   'appears once it reports from somewhere else.' }));
+    return;
+  }
   d.appendChild(trackSketch(tr));
   d.appendChild(h('div', { class: 'tagrow' }, [
     h('a', { class: 'btn sm', href: mapsRoute(tr), target: '_blank', rel: 'noopener',
