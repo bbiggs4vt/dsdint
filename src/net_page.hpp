@@ -880,8 +880,8 @@ function svcTip(s) {
 // A position report: "lat, lon" linked to a map.
 function posLink(pos) {
   var p = (pos || '').split(','), la = p[0], lo = p[1];
-  return h('a', { class: 'pos', href: 'https://www.openstreetmap.org/?mlat=' + la + '&mlon=' + lo + '#map=16/' + la + '/' + lo,
-                  target: '_blank', rel: 'noopener', title: 'Position report \u2014 open on a map',
+  return h('a', { class: 'pos', href: 'https://www.google.com/maps/search/?api=1&query=' + la + ',' + lo,
+                  target: '_blank', rel: 'noopener', title: 'Position report \u2014 open in Google Maps',
                   onclick: function (e) { e.stopPropagation(); } },
            [h('span', { class: 'nw', text: '\u{1F4CD} ' + la + ',' }), ' ', h('span', { class: 'nw', text: lo })]);
 }

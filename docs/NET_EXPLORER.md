@@ -105,7 +105,7 @@ decoder lines (sync, voice frames, call headers, aliases, SMS) — see
 | **To** | The talkgroup (`TG 1234`), or `⇄ 5678` for a private (radio-to-radio) call. Click it for details. |
 | **Type** | Badges: **VOICE** or **DATA**, **GROUP** or **PRIVATE**, **EMERGENCY**, **ENCRYPTED**, and **2 RX** when two receivers heard the same call (it is listed once). Hover for an explanation. |
 | **Audio** | **▶ 0:12** plays the call's recorded voice, **⤓** downloads it — only when audio recording is on ([section 10](#10-call-audio)). |
-| **Text** | SMS / text messages carried by the call. A data call with no text shows what it carried instead, in grey italics: **ACK (delivery confirmed)**, **Data packet**, **ARS (registration)**, **LRRP (location)**, **TMS (text message)**, **Moto data (type 0x…)** for a Motorola service dsd-fme doesn't name, or **Data announced only** when only the announcement was heard here (the data may have gone out on another channel). A position report sent during the call shows as **📍 lat, lon**, linked to a map. This column only appears when some call has any of these. |
+| **Text** | SMS / text messages carried by the call. A data call with no text shows what it carried instead, in grey italics: **ACK (delivery confirmed)**, **Data packet**, **ARS (registration)**, **LRRP (location)**, **TMS (text message)**, **Moto data (type 0x…)** for a Motorola service dsd-fme doesn't name, or **Data announced only** when only the announcement was heard here (the data may have gone out on another channel). A position report sent during the call shows as **📍 lat, lon**, linked to Google Maps. This column only appears when some call has any of these. |
 
 A call's **transcript** (when speech-to-text is used) appears in quotes on its
 own line under the row.
@@ -218,7 +218,7 @@ tablet or phone the details are a drawer: **Close** or Esc.
   peers and networks; **Talkgroups
   used** (by calls); **Private calls with**; **Shares talkgroups with** —
   other radios on its talkgroups, with how many in common; **Last position**
-  (its latest position report, linked to a map) when it sent one; **Recent
+  (its latest position report, linked to Google Maps) when it sent one; **Recent
   calls**, with ▶ where audio exists and, under each, its text, what a data
   call carried (ACK, ARS, …) and any position report.
 - **Talkgroup**: **Only** (show only this talkgroup; **All** undoes it) and
