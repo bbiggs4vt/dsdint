@@ -85,6 +85,7 @@ struct LogEntry {
     std::uint64_t session_id = 0;
     std::chrono::system_clock::time_point ts;
     std::string text;                                    // the JSON frame sent to the client
+    double freq_hz = 0.0;                                // its session's frequency then (Hz); 0 = not known
 };
 
 class ServerStats {
@@ -108,6 +109,8 @@ public:
         LogEntry e;
         e.session_id = session_id;
         e.ts = std::chrono::system_clock::now();
+        // The session's frequency now, so the line stays right after a retune.
+        if (auto it = sessions_.find(session_id); it != sessions_.end()) e.freq_hz = it->second.freq_hz;
         constexpr std::size_t kMaxLine = 2048;
         e.text = text.size() > kMaxLine ? text.substr(0, kMaxLine) + "\xE2\x80\xA6" : text;
         log_.push_back(std::move(e));

@@ -316,6 +316,20 @@ int main() {
         auto s2 = st.snapshot();
         check(s2.history.size() == 1 && s2.history[0].freq_hz == 460573750.0, "freq: the last one kept in history");
         check(render_status_html(s2).find(">460.57375<") != std::string::npos, "freq: 5 decimals when needed");
+        // Log lines carry their session's frequency at the time they were sent.
+        st.set_freq(b, 851012500.0);
+        st.add_log(b, "{\"type\":\"started\"}");
+        st.set_freq(b, 852437500.0);
+        st.add_log(b, "{\"type\":\"event\"}");
+        st.add_log(77, "{}");                                    // no such session: 0
+        auto lg = st.log_snapshot();
+        check(lg.size() == 3 && lg[2].freq_hz == 851012500.0 && lg[1].freq_hz == 852437500.0 && lg[0].freq_hz == 0.0,
+              "freq: each log line keeps its session's frequency at the time");
+        std::string lj = render_log_json(lg);
+        check(lj.find("\"freq_hz\":851012500") != std::string::npos && lj.find("\"freq_hz\":0") != std::string::npos,
+              "freq: in /log.json");
+        check(render_status_html(s2).find("<th class=\"num\">MHz</th><th>Message</th>") != std::string::npos,
+              "freq: MHz column in the log table");
         (void)b;
     }
 

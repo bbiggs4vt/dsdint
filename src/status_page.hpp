@@ -230,6 +230,7 @@ inline std::string render_log_json(const std::vector<LogEntry>& log) {
         if (i) o << ",";
         o << "{\"session\":" << e.session_id
           << ",\"time\":\"" << json_escape(format_utc(e.ts)) << "\""
+          << ",\"freq_hz\":" << static_cast<long long>(e.freq_hz + 0.5)
           << ",\"text\":\"" << json_escape(e.text) << "\"}";
     }
     o << "]}";
@@ -499,9 +500,9 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
       << "<button id=\"log-clear\" class=\"btn\" type=\"button\">Clear</button>"
       << "<span id=\"log-note\"></span></div>\n"
       << "<table>\n<thead><tr>"
-      << "<th>Time (UTC)</th><th>#</th><th>Message</th>"
+      << "<th>Time (UTC)</th><th>#</th><th class=\"num\">MHz</th><th>Message</th>"
       << "</tr></thead>\n<tbody id=\"lrows\">\n"
-      << "<tr><td colspan=\"3\" class=\"empty\">no frames logged yet</td></tr>\n"
+      << "<tr><td colspan=\"4\" class=\"empty\">no frames logged yet</td></tr>\n"
       << "</tbody>\n</table>\n</div>\n";      // #tab-log
     o << "</div>\n";                          // .wrap
 
@@ -586,11 +587,12 @@ function renderLog(d){
   var log=d.log||[];
   setText('cnt-log',''+log.length);
   var tb=document.getElementById('lrows');tb.textContent='';
-  if(!log.length){emptyRow(tb,'no frames logged yet',3);return;}
+  if(!log.length){emptyRow(tb,'no frames logged yet',4);return;}
   log.forEach(function(e){
     var tr=document.createElement('tr');
     tr.appendChild(cell('logtime',e.time));
     tr.appendChild(cell('num',''+e.session));
+    tr.appendChild(cell('num mono',mhz(e.freq_hz)));
     tr.appendChild(cell('logmsg',e.text));
     tb.appendChild(tr);});
 }
