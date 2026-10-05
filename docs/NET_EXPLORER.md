@@ -219,7 +219,8 @@ tablet or phone the details are a drawer: **Close** or Esc.
   used** (by calls); **Private calls with**; **Shares talkgroups with** —
   other radios on its talkgroups, with how many in common; **Last position**
   (its latest position report, linked to a map) when it sent one; **Recent
-  calls**, with ▶ where audio exists.
+  calls**, with ▶ where audio exists and, under each, its text, what a data
+  call carried (ACK, ARS, …) and any position report.
 - **Talkgroup**: **Only** (show only this talkgroup; **All** undoes it) and
   **Exclude** (hide it; **Include** undoes it); calls, radios, emergency /
   encrypted counts, networks; **Radios on this talkgroup**; **Linked talkgroups (shared radios)**;

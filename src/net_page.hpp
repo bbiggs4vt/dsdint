@@ -1354,6 +1354,15 @@ function lst(items, max) {
   return items.length ? ul : h('div', { class: 'hint', text: 'None.' });
 }
 function kv(pairs) { return h('div', { class: 'kv' }, pairs.map(function (p) { return h('div', null, [h('b', { text: String(p[1]) }), h('span', { text: p[0] })]); })); }
+// Under a recent call: its text (quoted), else what the data call carried;
+// and a position report -- as the Calls view's Text column shows them.
+function recentNote(c) {
+  var kids = [];
+  if (c.text) kids.push('\u201C' + c.text + '\u201D');
+  else if (c.svc) kids.push(h('span', { class: 'svc', title: svcTip(c.svc), text: svcLabel(c.svc) }));
+  if (c.pos) { if (kids.length) kids.push(' '); kids.push(posLink(c.pos)); }
+  return kids.length ? h('div', { class: 'alias' }, kids) : null;
+}
 function recent(filter) {
   var cs = IX.calls.filter(filter).slice(0, 12);
   if (!cs.length) return h('div', { class: 'hint', text: 'No calls in the recent buffer.' });
@@ -1363,7 +1372,7 @@ function recent(filter) {
     ul.appendChild(h('li', null, [
       h('div', null, [c.src ? rlink(c.src, c.alias || null) : '?', ' → ', c.tgt ? (c.priv ? rlink(c.tgt) : tlink(c.tgt)) : '?',
                       c.emerg ? h('span', null, [' ', badge('b-emerg', 'EMERG')]) : null,
-                      c.text ? h('div', { class: 'alias', text: '“' + c.text + '”' }) : null, sttSpan(c, 'tx')]),
+                      recentNote(c), sttSpan(c, 'tx')]),
       h('span', { class: 'c' }, [pb, pb ? ' ' : '', live(c) ? 'live' : hms(c.start)])]));
   });
   return ul;
