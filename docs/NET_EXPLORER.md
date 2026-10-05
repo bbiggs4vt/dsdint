@@ -79,14 +79,14 @@ From top to bottom:
 | **Open…** | Views saved exports offline, read-only (several files are merged). You can also drop files onto the page. |
 | **Protocol tabs** | One per protocol with traffic (e.g. `DMR 62 radios · 1 live`). Protocols are never mixed: a DMR radio 1234 and a P25 radio 1234 are unrelated. |
 | **Stat cards** | Networks, Sites, Talkgroups, Radios, Calls (recent), **Calls / s** (last minute; hover for the 10-minute average and the total) and Live calls — for the current protocol, network filter and search (not **With audio only**, which only shortens the Calls list). The protocol tab's "N live" counts all of its networks, so with a network filter or a search the two can differ. |
-| **Network chips** | One [chip](#appendix-c-glossary) per network, with its call count. Click chips to pick one or more networks: the page shows only those. Click a picked chip again to drop it, or **All networks** to clear the filter. A network excluded from its details (**Exclude**) shows as a dashed, struck-through chip; click it to show it again. The list starts collapsed to **All networks** and the networks picked; click **▸ Networks** (or **show…** / **+N more…**) to open it, and again to close it. The browser remembers which. |
+| **Filters** | Everything that narrows the page, in one section under the stat cards (§9). Collapsed (the default) it is one row: **▸ Filters**, a [chip](#appendix-c-glossary) for each filter in force (click one to drop it) and **Clear all**; with none it says *none — showing everything*. Click **▸ Filters** to open it: a row each for networks (one chip per network, with its call count), talkgroups, radios and the search. The browser remembers whether it is open. |
 | **View tabs** | Calls · Talkgroups · Radios · Graph · Links · Networks. |
 | **Details panel** | On the right (or a drawer on smaller screens): everything tied to the radio, talkgroup or network you click. |
 
 On a narrow window the header's buttons fold into a **☰ Menu**.
 
 ![Figure 1](img/overview.png)
-*Figure 1: The explorer on a PC: header, protocol tabs, stat cards, the network chips (collapsed), the Calls view and, on the right, the details of the radio clicked (12001), with ✕ to deselect it.*
+*Figure 1: The explorer on a PC: header, protocol tabs, stat cards, the filters (collapsed), the Calls view and, on the right, the details of the radio clicked (12001), with ✕ to deselect it.*
 
 ## 3. Calls
 
@@ -125,7 +125,7 @@ The audio and transcription controls appear once audio recording is on or
 some call has audio.
 
 Up to 400 calls are shown at a time; the explorer keeps many more (5000 per
-protocol by default) — narrow the list with the search box, a network chip or
+protocol by default) — narrow the list with the search box, the **Filters** or
 a sort to see older ones.
 
 ## 4. Talkgroups and Radios
@@ -213,7 +213,9 @@ the stat cards. To deselect, click the **✕** at the panel's top right, press
 **Esc**, click the same item again, or click an empty part of the graph. On a
 tablet or phone the details are a drawer: **Close** or Esc.
 
-- **Radio**: calls, talkgroups, private peers and networks; **Talkgroups
+- **Radio**: **Only** (show only this radio; **All** undoes it) and
+  **Exclude** (hide it; **Include** undoes it); calls, talkgroups, private
+  peers and networks; **Talkgroups
   used** (by calls); **Private calls with**; **Shares talkgroups with** —
   other radios on its talkgroups, with how many in common; **Recent calls**,
   with ▶ where audio exists.
@@ -230,18 +232,26 @@ tablet or phone the details are a drawer: **Close** or Esc.
 
 - The **search box** matches radio ids, talkgroup ids, aliases, SMS text and
   frequencies (e.g. `460.17`), in every view, including the graph and links.
-- **Network chips** limit every view to the networks picked — one or several;
-  each click adds or drops one. In a network's details, **Only** picks just
-  that one and **Exclude** hides it (its calls, talkgroups and radios) while
-  showing all the others; **All networks** clears the filter. The Networks
-  view still lists every network, so an excluded one can be included again.
-- **Talkgroups** work the same way, from a talkgroup's details: **Only** /
-  **Exclude**, as many as you like. A **Talkgroups** row under the network
-  chips then lists them (a picked talkgroup highlighted, an excluded one
-  struck through); click one to take it out of the filter, or **All
-  talkgroups** to clear it. Picking talkgroups shows their calls and the
-  radios that used them (private calls, which have no talkgroup, are hidden);
-  excluding one hides its calls, and radios heard only on it.
+- The **Filters** section gathers every filter. Each limits every view, the
+  graph and the stat cards, and they combine:
+  - **Networks** — click network chips to show only those (one or several;
+    each click adds or drops one). In a network's details, **Only** picks
+    just that one and **Exclude** hides it (its calls, talkgroups and radios).
+    The Networks view still lists every network, so an excluded one can be
+    included again.
+  - **Talkgroups** — from a talkgroup's details: **Only** / **Exclude**, as
+    many as you like. Picking talkgroups shows their calls and the radios
+    that used them (private calls, which have no talkgroup, are hidden);
+    excluding one hides its calls, and radios heard only on it.
+  - **Radios** — from a radio's details: **Only** / **Exclude**. Picking a
+    radio shows its calls (both ends of a private call count) and the
+    talkgroups it used; excluding one hides it and its calls.
+  - **Search** — the search box's text, shown here so it can be cleared.
+
+  A picked item's chip is highlighted and an excluded one's is dashed and
+  struck through; click a chip to take it out of the filter, the **All …**
+  chip of a row to clear that row, or **Clear all** for everything. The
+  filters reset when you switch protocol tabs, **Clear**, or open a file.
 - **Click a column header** to sort by it; click again to reverse. Calls can
   be sorted by start, duration, frequency, slot, source, target and **Audio**
   (calls with audio first). On a phone a **Sort** menu replaces the headers.
@@ -382,7 +392,7 @@ half a megabyte per minute on a busy multi-channel server.
 | `Unidentified · …` network | No identity decoded yet (often at the start of a session, or on a quiet channel). It updates when one is heard. |
 | One system appears as several `Color Code n · stream N` networks | The client didn't send the frequency, so short codes can't be trusted to join streams. Send `center_freq` in `start`. Meanwhile **Links → Seen on more than one network** shows the shared radios and talkgroups. |
 | Many very short calls with no source | Usually decoder lines the explorer misread as calls. Make a **recording** ([section 13](#13-recording-a-session-for-troubleshooting)) and send it — that is how the Capacity Plus channel-status issue was found and fixed. |
-| The list moves too fast to read | The header's **Pause** freezes the page; or narrow the list with the search box or a network chip. |
+| The list moves too fast to read | The header's **Pause** freezes the page; or narrow the list with the search box or the **Filters**. |
 | ▶ buttons don't appear | Audio recording is off — press **♫ Audio**. Encrypted and data calls never have audio. |
 | "Speech-to-text needs its files on the server" | Run `tools/get_asr_assets.sh` on the server (or point `DSD_NET_ASR_DIR` at a copy), then reload the page. |
 | Transcripts are slow | Open the page over HTTPS or as `localhost`, use a faster PC, or pick `base` in the model list (faster but much less accurate). |
@@ -656,7 +666,7 @@ Encrypted calls are not recorded (unless the session has the key).
 |---|---|
 | **Stream** | One decode session: one receiver channel, one protocol. |
 | **Network** | A radio system as the explorer identifies it (Appendix A.2). |
-| **Chip** | A small rounded, clickable label on the page, like a tag: each network chip names one network (with its colour swatch and call count). A highlighted chip is picked; click it again to drop it. |
+| **Chip** | A small rounded, clickable label on the page, like a tag. In the **Filters**, each network chip names one network (with its colour swatch and call count), and each talkgroup, radio or search in force has one. A highlighted chip is picked, a dashed struck-through one excluded; click it to drop it from the filter. |
 | **Strong / weak / channel identity** | How a network was identified: a unique system id / only a short shared code / a short code on a known frequency. |
 | **Talkgroup (TG)** | A group address many radios listen to. |
 | **Private call** | Radio-to-radio (unit-to-unit, individual) call; `⇄` in the To column. |
