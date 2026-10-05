@@ -79,7 +79,7 @@ From top to bottom:
 | **Open…** | Views saved exports offline, read-only (several files are merged). You can also drop files onto the page. |
 | **Protocol tabs** | One per protocol with traffic (e.g. `DMR 62 radios · 1 live`). Protocols are never mixed: a DMR radio 1234 and a P25 radio 1234 are unrelated. |
 | **Stat cards** | Networks, Sites, Talkgroups, Radios, Calls (recent), **Calls / s** (last minute; hover for the 10-minute average and the total) and Live calls — for the current protocol, network filter and search. |
-| **Network chips** | One chip per network, with its call count. Click one to show only that network (click again, or **All networks**, to undo). The list starts collapsed to **All networks** and the selected network; click **▸ Networks** (or **show…** / **+N more…**) to open it, and again to close it. The browser remembers which. |
+| **Network chips** | One chip per network, with its call count. Click chips to pick one or more networks: the page shows only those. Click a picked chip again to drop it, or **All networks** to clear the filter. The list starts collapsed to **All networks** and the networks picked; click **▸ Networks** (or **show…** / **+N more…**) to open it, and again to close it. The browser remembers which. |
 | **View tabs** | Calls · Talkgroups · Radios · Graph · Links · Networks. |
 | **Details panel** | On the right (or a drawer on smaller screens): everything tied to the radio, talkgroup or network you click. |
 
@@ -218,8 +218,9 @@ a drawer) to close them.
 
 - The **search box** matches radio ids, talkgroup ids, aliases, SMS text and
   frequencies (e.g. `460.17`), in every view, including the graph and links.
-- A **network chip** (or **Show only this network** in a network's details)
-  limits every view to that network.
+- **Network chips** limit every view to the networks picked — one or several;
+  each click adds or drops one. **Show only this network** in a network's
+  details picks just that one; **All networks** clears the filter.
 - **Click a column header** to sort by it; click again to reverse. Calls can
   be sorted by start, duration, frequency, slot, source, target and **Audio**
   (calls with audio first). On a phone a **Sort** menu replaces the headers.
