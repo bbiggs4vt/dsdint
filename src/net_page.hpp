@@ -102,6 +102,13 @@ inline std::string render_net_page_html() {
   .card.live .n { color: var(--success); }
   .netbar { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: 1rem; align-items: center; }
   .netbar .lbl { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; margin-right: .2rem; }
+  .netbar .nettog { cursor: pointer; user-select: none; background: none; border: 0; padding: .15rem .2rem; font: inherit;
+                    color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; margin-right: .2rem; }
+  .netbar .nettog:hover { color: var(--text); }
+  .netbar .nettog .car { display: inline-block; width: .8rem; transition: transform .15s; }
+  .netbar.open .nettog .car { transform: rotate(90deg); }
+  .netbar .netmore { color: var(--muted); font-size: .78rem; cursor: pointer; }
+  .netbar .netmore:hover { color: var(--text); }
   .chip { display: inline-flex; align-items: center; gap: .35rem; cursor: pointer; max-width: 22rem;
           background: var(--panel2); border: 1px solid var(--comp-bd); border-radius: 12px; padding: .15rem .65rem;
           font-size: .8rem; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -480,7 +487,7 @@ var FAMN = {dmr:'DMR', p25:'P25', nxdn:'NXDN', tetra:'TETRA', dpmr:'dPMR', dstar
 var PAL = ['#5bc0de','#62c462','#f89406','#ee5f5b','#b38bff','#e6c229','#3fc1a5','#ff7eb6','#8fa8ff',
            '#c3e88d','#ffab70','#4dd0e1','#d4a5ff','#a3d977'];
 var S = { d: null, fam: null, net: '*', view: 'calls', sel: null, q: '', paused: false, skew: 0,
-          ncol: {}, nidx: {}, sort: {}, rows: {}, audOnly: false };
+          ncol: {}, nidx: {}, sort: {}, rows: {}, audOnly: false, netsOpen: false };
 var IX = null;
 
 function $(id) { return document.getElementById(id); }
@@ -1656,6 +1663,8 @@ function closeSheet() {
 }
 document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && document.body.classList.contains('sheet')) closeSheet(); });
 function setNet(k) { S.net = k; GR.sig = ''; render(); }
+// The network list's collapsed / open state (remembered per browser).
+function setNetsOpen(open) { S.netsOpen = open; store('netsOpen', open ? '1' : ''); render(); }
 function setView(v) {
   S.view = v; store('view', v);
   var tabs = document.querySelectorAll('#viewtabs .tab');
@@ -1717,15 +1726,29 @@ function render() {
     cards.appendChild(h('div', { class: 'card' + (i === 6 && lv ? ' live' : ''), title: c[2] || null, 'data-tip': c[2] || null },
       [h('div', { class: 'n', text: String(c[1]) }), h('div', { class: 'l', text: c[0] })]));
   });
+  // The network chips: collapsed by default to one row -- the toggle and the
+  // selected network (or "All networks"); the toggle shows them all.
   var nb = $('netbar');
   nb.textContent = '';
-  nb.appendChild(h('span', { class: 'lbl', text: 'Network' }));
-  nb.appendChild(h('span', { class: 'chip' + (S.net === '*' ? ' active' : ''), onclick: function () { setNet('*'); } }, 'All networks'));
-  IX.nets.slice().sort(function (a, b) { return b.calls - a.calls; }).forEach(function (n) {
-    nb.appendChild(h('span', { class: 'chip' + (S.net === n.key ? ' active' : ''), title: n.label + ' — ' + n.confidence + ' identity',
+  nb.classList.toggle('open', S.netsOpen);
+  nb.appendChild(h('button', { class: 'nettog', type: 'button', 'aria-expanded': S.netsOpen ? 'true' : 'false',
+    title: S.netsOpen ? 'Hide the network list' : 'Show all networks', onclick: function () { setNetsOpen(!S.netsOpen); } },
+    [h('span', { class: 'car', text: '\u25B8' }), 'Networks ' + IX.nets.length]));
+  var netChip = function (n) {
+    return h('span', { class: 'chip' + (S.net === n.key ? ' active' : ''), title: n.label + ' — ' + n.confidence + ' identity',
       onclick: function () { setNet(S.net === n.key ? '*' : n.key); select('net', n.key); } },
-      [sw(n.key), n.label, h('span', { class: 'n', text: String(n.calls) })]));
-  });
+      [sw(n.key), n.label, h('span', { class: 'n', text: String(n.calls) })]);
+  };
+  nb.appendChild(h('span', { class: 'chip' + (S.net === '*' ? ' active' : ''), onclick: function () { setNet('*'); } }, 'All networks'));
+  if (S.netsOpen) {
+    IX.nets.slice().sort(function (a, b) { return b.calls - a.calls; }).forEach(function (n) { nb.appendChild(netChip(n)); });
+  } else {
+    var selNet = S.net !== '*' && IX.nets.filter(function (n) { return n.key === S.net; })[0];
+    if (selNet) nb.appendChild(netChip(selNet));
+    if (IX.nets.length > (selNet ? 1 : 0))
+      nb.appendChild(h('span', { class: 'netmore', onclick: function () { setNetsOpen(true); },
+        text: (selNet ? '+' + (IX.nets.length - 1) + ' more' : 'show ' + IX.nets.length) + '\u2026' }));
+  }
   $('c-calls').textContent = calls.length; $('c-tgs').textContent = tgs.length;
   $('c-radios').textContent = radios.length; $('c-nets').textContent = IX.nets.length;
   renderView();
@@ -1975,6 +1998,7 @@ $('clear').addEventListener('click', function () {
 });
 // Calls toolbar and the now-playing bar.
 S.audOnly = load('audonly') === '1';
+S.netsOpen = load('netsOpen') === '1';
 $('audonly').checked = S.audOnly;
 $('audonly').addEventListener('change', function () { S.audOnly = this.checked; store('audonly', S.audOnly ? '1' : '0'); if (S.d) render(); });
 $('asron').checked = ASR.on;
