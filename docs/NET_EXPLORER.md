@@ -79,7 +79,7 @@ From top to bottom:
 | **Open…** | Views saved exports offline, read-only (several files are merged). You can also drop files onto the page. |
 | **Protocol tabs** | One per protocol with traffic (e.g. `DMR 62 radios · 1 live`). Protocols are never mixed: a DMR radio 1234 and a P25 radio 1234 are unrelated. |
 | **Stat cards** | Networks, Sites, Talkgroups, Radios, Calls (recent), **Calls / s** (last minute; hover for the 10-minute average and the total) and Live calls — for the current protocol, network filter and search (not **With audio only**, which only shortens the Calls list). The protocol tab's "N live" counts all of its networks, so with a network filter or a search the two can differ. |
-| **Network chips** | One chip per network, with its call count. Click chips to pick one or more networks: the page shows only those. Click a picked chip again to drop it, or **All networks** to clear the filter. The list starts collapsed to **All networks** and the networks picked; click **▸ Networks** (or **show…** / **+N more…**) to open it, and again to close it. The browser remembers which. |
+| **Network chips** | One [chip](#appendix-c-glossary) per network, with its call count. Click chips to pick one or more networks: the page shows only those. Click a picked chip again to drop it, or **All networks** to clear the filter. The list starts collapsed to **All networks** and the networks picked; click **▸ Networks** (or **show…** / **+N more…**) to open it, and again to close it. The browser remembers which. |
 | **View tabs** | Calls · Talkgroups · Radios · Graph · Links · Networks. |
 | **Details panel** | On the right (or a drawer on smaller screens): everything tied to the radio, talkgroup or network you click. |
 
@@ -635,6 +635,7 @@ Encrypted calls are not recorded (unless the session has the key).
 |---|---|
 | **Stream** | One decode session: one receiver channel, one protocol. |
 | **Network** | A radio system as the explorer identifies it (Appendix A.2). |
+| **Chip** | A small rounded, clickable label on the page, like a tag: each network chip names one network (with its colour swatch and call count). A highlighted chip is picked; click it again to drop it. |
 | **Strong / weak / channel identity** | How a network was identified: a unique system id / only a short shared code / a short code on a known frequency. |
 | **Talkgroup (TG)** | A group address many radios listen to. |
 | **Private call** | Radio-to-radio (unit-to-unit, individual) call; `⇄` in the To column. |
