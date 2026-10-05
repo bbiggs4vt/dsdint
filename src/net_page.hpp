@@ -450,14 +450,15 @@ inline std::string render_net_page_html() {
       <button id="exp" class="btn" type="button" title="Save what the explorer shows">Export &#9662;</button>
       <div id="expmenu" class="menu" hidden>
         <a href="/net/export.json" download>Explorer data (.json)<small>re-open later here with Open&hellip;</small></a>
+        <a href="#" id="exp-audio">Explorer data with audio (.zip)<small>the same, plus the calls&rsquo; audio &middot; Open&hellip; plays it</small></a>
         <a href="/net/export.graphml" download>Association graph (.graphml)<small>Gephi &middot; Cytoscape &middot; yEd &middot; networkx</small></a>
         <a href="#" id="exp-kml">Positions (.kml)<small>the listed radios' position reports &middot; Google Earth &middot; My Maps</small></a>
       </div>
     </span>
     <button id="import" class="btn live-only" type="button" title="Add saved exports (e.g. from other receivers) to the live view">Import&hellip;</button>
-    <input type="file" id="importfile" accept=".json,.gz,application/json" multiple hidden>
+    <input type="file" id="importfile" accept=".json,.gz,.zip,application/json,application/zip" multiple hidden>
     <button id="open" class="btn" type="button" title="View saved explorer exports -- several are merged into one view (or drop them on the page)">Open&hellip;</button>
-    <input type="file" id="openfile" accept=".json,.gz,application/json" multiple hidden>
+    <input type="file" id="openfile" accept=".json,.gz,.zip,application/json,application/zip" multiple hidden>
     </div>
   </div>
 </div></header>
@@ -678,9 +679,9 @@ function qm() {
 // The calls the filters let through. `allAudio`: ignore "With audio only" (a
 // Calls-list option; the stat cards count every call).
 function fCalls(list, allAudio) {
-  var aud = S.audOnly && !S.file && !allAudio;
+  var aud = S.audOnly && (!S.file || !fAll(FILEAUDIO)) && !allAudio;
   return (list || IX.calls).filter(function (c) {
-    return (netAll() || netOk(c.net)) && callTgOk(c) && callROk(c) && (!aud || c.audio) &&
+    return (netAll() || netOk(c.net)) && callTgOk(c) && callROk(c) && (!aud || hasAudio(c)) &&
       (!S.q || qm(c.src, c.tgt, c.alias, c.text, svcLabel(c.svc), mhz(c.freq), IX.rById[c.src] && IX.rById[c.src].aliases));
   });
 }
@@ -846,7 +847,12 @@ function typeBadges(c) {
 var PLAYER = { a: null, name: null, call: null };
 function mmss(ms) { var s = Math.round(ms / 1000); return Math.floor(s / 60) + ':' + p2(s % 60); }
 // A call's identity across polls (its id can change as imports come and go).
-function audioUrl(c) { return '/net/audio/' + encodeURIComponent(c.audio); }
+// In a file view, a call's audio comes from the opened "export with audio"
+// zip (FILEAUDIO: audio name -> blob URL); live, from the server.
+var FILEAUDIO = {};
+function clearFileAudio() { for (var k in FILEAUDIO) URL.revokeObjectURL(FILEAUDIO[k]); FILEAUDIO = {}; }
+function hasAudio(c) { return !!c.audio && (!S.file || !!FILEAUDIO[c.audio]); }
+function audioUrl(c) { return S.file ? (FILEAUDIO[c.audio] || '') : '/net/audio/' + encodeURIComponent(c.audio); }
 function stamp(ms) { return dt(ms).replace(/[-:]/g, '').replace(' ', 'T'); }
 function safeName(s) { return String(s).replace(/[^A-Za-z0-9.-]+/g, '_'); }
 // A descriptive name for a call's audio file: when, where, to and from whom.
@@ -883,7 +889,7 @@ function playAudio(c) {
   if (ASR.on) transcribe(c);
 }
 function playBtn(c) {
-  if (!c.audio || S.file) return null;
+  if (!hasAudio(c)) return null;
   return h('button', { class: 'play' + (PLAYER.name === c.audio ? ' on' : ''), type: 'button', 'data-audio': c.audio,
                        title: 'Play this call\'s audio' + (c.audio_ms ? ' (' + mmss(c.audio_ms) + ')' : '') +
                               (ASR.on ? ' and transcribe it' : ''),
@@ -1469,7 +1475,7 @@ var ZIP_MAX = 25 * 1048576;
 function zipCalls() {
   var btn = $('zip');
   if (btn.disabled) return;
-  var rows = (S.rows.calls || []).filter(function (c) { return c.audio && !live(c); });
+  var rows = (S.rows.calls || []).filter(function (c) { return hasAudio(c) && !live(c); });
   if (!rows.length) { toast('No finished calls with audio in the list.'); return; }
   btn.disabled = true;
   var label = btn.textContent, files = [], names = {}, total = 0, i = 0, missing = 0, full = false;
@@ -1522,8 +1528,8 @@ function callCard(c) {
 }
 function viewCalls() {
   var rows = fCalls();
-  var hasAudio = (S.audio && S.audio.on) || S.audOnly || IX.calls.some(function (c) { return !!c.audio; });
-  document.querySelectorAll('.callbar .audctl').forEach(function (e) { e.classList.toggle('off', !hasAudio); });
+  var anyAud = (S.audio && S.audio.on && !S.file) || S.audOnly || IX.calls.some(hasAudio);
+  document.querySelectorAll('.callbar .audctl').forEach(function (e) { e.classList.toggle('off', !anyAud); });
   table($('t-calls'), 'calls', [
     { label: 'Start (UTC)', cls: 'mono nowrap', k: function (c) { return c.start; }, cell: function (c) { return hms(c.start); } },
     { label: 'Duration', cls: 'nowrap', k: function (c) { return c.last - c.start; }, cell: durCell },
@@ -1535,8 +1541,8 @@ function viewCalls() {
     { label: 'From', k: function (c) { return c.src; }, cell: function (c) { return c.src ? rlink(c.src, c.alias || null) : '—'; } },
     { label: 'To', cls: 'tgcell', k: function (c) { return c.tgt; }, cell: toCell },
     { label: 'Type', cls: 'nowrap ctype', cell: typeBadges },
-    { label: 'Audio', cls: 'nowrap', k: function (c) { return c.audio && !S.file ? 1 : 0; }, cell: audioCell,
-      hideEmpty: function (c) { return !!c.audio && !S.file; } },
+    { label: 'Audio', cls: 'nowrap', k: function (c) { return hasAudio(c) ? 1 : 0; }, cell: audioCell,
+      hideEmpty: hasAudio },
     { label: 'Text', cls: 'wrap', cell: textCell, hideEmpty: function (c) { return !!(c.text || c.svc || c.pos); } }
   ], rows, (S.audOnly ? 'No calls with audio' : 'No calls heard yet') + (anyFilter() || S.q ? ' for this filter.' : '.'),
      null, null, callCard, function (c) { return sttSpan(c); });
@@ -2331,7 +2337,7 @@ function render() {
       [h('div', { class: 'n', text: String(c[1]) }), h('div', { class: 'l', text: c[0] })]));
   });
   renderFilters();
-  $('c-calls').textContent = S.audOnly && !S.file ? fCalls().length : calls.length;   // the list's own rows
+  $('c-calls').textContent = S.audOnly && (!S.file || !fAll(FILEAUDIO)) ? fCalls().length : calls.length;   // the list's own rows
   $('c-tgs').textContent = tgs.length;
   $('c-radios').textContent = radios.length; $('c-nets').textContent = IX.nets.length;
   renderView();
@@ -2340,6 +2346,7 @@ function render() {
 
 // ---------- export / open ----------
 $('exp').addEventListener('click', function (e) { e.stopPropagation(); $('expmenu').hidden = !$('expmenu').hidden; });
+$('exp-audio').addEventListener('click', function (e) { e.preventDefault(); $('expmenu').hidden = true; exportWithAudio(); });
 $('exp-kml').addEventListener('click', function (e) {
   e.preventDefault();
   $('expmenu').hidden = true;
@@ -2407,12 +2414,83 @@ function openData(d, name, report) {
   $('live').textContent = 'file view';
   render();
 }
+// ---- "export with audio" zips ----
+// The entries of a zip: [{name, data}] -- stored ones as they are, deflated
+// ones through the browser's decompressor (a zip re-packed by another tool).
+function unzip(buf) {
+  var v = new DataView(buf), u8 = new Uint8Array(buf), dec = new TextDecoder(), e = -1;
+  for (var i = buf.byteLength - 22; i >= Math.max(0, buf.byteLength - 66000); i--) if (v.getUint32(i, true) === 0x06054b50) { e = i; break; }
+  if (e < 0) return Promise.reject(new Error('not a zip file'));
+  var n = v.getUint16(e + 10, true), p = v.getUint32(e + 16, true), out = [];
+  for (var k = 0; k < n; k++) {
+    if (v.getUint32(p, true) !== 0x02014b50) return Promise.reject(new Error('damaged zip'));
+    var meth = v.getUint16(p + 10, true), csz = v.getUint32(p + 20, true), nl = v.getUint16(p + 28, true),
+        xl = v.getUint16(p + 30, true), cl = v.getUint16(p + 32, true), lo = v.getUint32(p + 42, true);
+    var name = dec.decode(u8.subarray(p + 46, p + 46 + nl));
+    var ds = lo + 30 + v.getUint16(lo + 26, true) + v.getUint16(lo + 28, true);
+    out.push({ name: name, meth: meth, data: u8.subarray(ds, ds + csz) });
+    p += 46 + nl + xl + cl;
+  }
+  return Promise.all(out.filter(function (x) { return !/\/$/.test(x.name); }).map(function (x) {
+    if (x.meth === 0) return { name: x.name, data: x.data };
+    if (x.meth === 8 && typeof DecompressionStream !== 'undefined')
+      return new Response(new Blob([x.data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer()
+        .then(function (b) { return { name: x.name, data: new Uint8Array(b) }; });
+    return null;
+  })).then(function (l) { return l.filter(Boolean); });
+}
+// A zip's export (its .json) -- and, with `audio`, its .wav files registered
+// for playback in the file view.
+function readZip(f, audio) {
+  return f.arrayBuffer().then(unzip).then(function (ents) {
+    var js = ents.filter(function (x) { return /\.json$/i.test(x.name); })[0];
+    if (!js) throw new Error('no explorer export (.json) in it');
+    if (audio) ents.forEach(function (x) {
+      if (/\.wav$/i.test(x.name)) FILEAUDIO[x.name.replace(/^.*\//, '')] = URL.createObjectURL(new Blob([x.data], { type: 'audio/wav' }));
+    });
+    return new TextDecoder().decode(js.data);
+  });
+}
+var EXPORT_AUDIO_MAX = 1024 * 1048576;          // the zip stops adding audio here (it is built in the browser)
+function exportWithAudio() {
+  var calls = [], files = [], total = 0, i = 0, missing = 0, full = false, seen = {};
+  toast('Making the export\u2026');
+  fetch('/net/export.json', { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+  .then(function (txt) {
+    var d = JSON.parse(txt);
+    for (var f in d.families) (d.families[f].calls || []).forEach(function (c) { if (c.audio && !seen[c.audio]) { seen[c.audio] = 1; calls.push(c); } });
+    function next() {
+      if (i >= calls.length || full) return Promise.resolve();
+      var c = calls[i++];
+      if (i % 20 === 0) toast('Adding audio ' + i + ' / ' + calls.length + '\u2026');
+      return fetch('/net/audio/' + encodeURIComponent(c.audio)).then(function (r) { if (!r.ok) throw new Error(); return r.arrayBuffer(); })
+        .then(function (b) {
+          if (total + b.byteLength > EXPORT_AUDIO_MAX) { full = true; return; }
+          total += b.byteLength;
+          files.push({ name: 'audio/' + c.audio, data: new Uint8Array(b) });
+        }, function () { ++missing; }).then(next);
+    }
+    return next().then(function () {
+      var name = 'dsd_net_export_' + stamp(now());
+      files.unshift({ name: name + '.json', data: new TextEncoder().encode(txt) });
+      var a = h('a', { href: URL.createObjectURL(zipBlob(files)), download: name + '.zip' });
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 60000);
+      var n = files.length - 1;
+      toast('Saved the explorer data with ' + n + ' call' + (n === 1 ? '\u2019s' : 's\u2019') + ' audio (' + mb(total) + ')' +
+            (full ? ' \u2014 the zip stops at ' + mb(EXPORT_AUDIO_MAX) + ', so ' + (calls.length - n - missing) + ' more are left out' : '') +
+            (missing ? '; ' + missing + ' no longer on the server' : '') + '.');
+    });
+  }).catch(function (e) { toast('Could not make the export (' + e.message + ').'); });
+}
 function readFile(f) {
+  if (/\.zip$/i.test(f.name)) return readZip(f, true);
   var gz = /\.gz$/i.test(f.name) && typeof DecompressionStream !== 'undefined';
   return gz ? new Response(f.stream().pipeThrough(new DecompressionStream('gzip'))).text() : f.text();
 }
 function openFile(f) {
   if (!f) return;
+  clearFileAudio();
   readFile(f).then(function (t) { openText(t, f.name); }).catch(function () { alert('Could not read "' + f.name + '".'); });
 }
 // Several files: merged by the server (the same merge as Import and
@@ -2420,6 +2498,7 @@ function openFile(f) {
 function openFiles(fl) {
   var files = Array.prototype.slice.call(fl || []);
   if (files.length < 2) { openFile(files[0]); return; }
+  clearFileAudio();
   Promise.all(files.map(function (f) {
     return readFile(f).then(function (t) { return { name: f.name, text: t }; });
   })).then(function (list) {
@@ -2433,6 +2512,8 @@ function openFiles(fl) {
   }).catch(function (e) { alert('Could not merge the files (' + e + ').'); });
 }
 function backToLive() {
+  if (PLAYER.a && PLAYER.name && S.file) { PLAYER.a.pause(); PLAYER.name = null; }
+  clearFileAudio();
   S.file = null; S.d = null; IX = null; S.fam = load('fam'); S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; GR.sig = ''; GR.fitted = false;
   document.body.classList.remove('filemode');
   $('filebar').hidden = true;
@@ -2458,7 +2539,8 @@ function importFiles(fl) {
   note.hidden = false;
   files.reduce(function (p, f) {
     return p.then(function () {
-      return fetch('/net/import?name=' + encodeURIComponent(f.name), { method: 'POST', cache: 'no-store', body: f })
+      var body = /\.zip$/i.test(f.name) ? readZip(f, false) : Promise.resolve(f);
+      return body.then(function (b) { return fetch('/net/import?name=' + encodeURIComponent(f.name), { method: 'POST', cache: 'no-store', body: b }); })
         .then(function (r) { return r.json(); })
         .then(function (r) { out.push(r); }, function (e) { out.push({ name: f.name, status: 'failed', message: String(e) }); });
     });

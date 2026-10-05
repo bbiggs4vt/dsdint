@@ -756,9 +756,13 @@ or talkgroup's recent calls.
   data call on the other slot is given to the voice call it came from. That
   copy follows the slot that last showed voice, so the other slot's control
   bursts (CSBK on a Capacity Plus channel) don't take it.
-- Audio stays on the server that recorded it: exports note which calls had
-  audio, but imports and merged views have no audio to play. Explorer
-  recordings (for replay) don't include audio either.
+- Audio stays on the server that recorded it: a plain export notes which
+  calls had audio. **Export ▾ → Explorer data with audio (.zip)** packs the
+  export and every call's audio (`audio/*.wav`) into one zip (built in the
+  browser, up to 1 GB of audio); **Open…** on that zip -- alone or merged with
+  other exports -- plays the audio in the file view. Imports into the live
+  view have no audio to play, and explorer recordings (for replay) don't
+  include audio either.
 
 Rules on keeping intercepted communications differ from place to place;
 check what applies to you before switching it on.

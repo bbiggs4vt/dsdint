@@ -680,6 +680,8 @@ public:
             std::stable_sort(C.begin(), C.end(), [](const DsCall& p, const DsCall& q) { return p.start > q.start; });
             cap_calls(C, max_calls_);
             for (std::size_t i = 0; i < C.size(); ++i) C[i].id = x.id * kImportIdStride + (C.size() - i);
+            // An imported call's audio isn't on this server: nothing to play.
+            for (auto& c : C) { c.audio.clear(); c.audio_ms = 0; }
         }
         r.id = x.id;
         r.status = replaced.empty() ? "imported" : "replaced";

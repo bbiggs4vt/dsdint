@@ -74,7 +74,7 @@ From top to bottom:
 | **♫ Audio** | Starts / stops recording each call's voice (off by default) — [section 10](#10-call-audio). Orange when on. |
 | **Pause** | Freezes the whole page (no updates) until pressed again. |
 | **Clear** | Forgets everything learned so far, and any imports. Asks first. |
-| **Export ▾** | Saves what the explorer shows: explorer data (.json), the association graph (.graphml), or the listed radios' positions (.kml). |
+| **Export ▾** | Saves what the explorer shows: explorer data (.json), the same with the calls' audio (.zip), the association graph (.graphml), or the listed radios' positions (.kml). |
 | **Import…** | Adds saved exports (e.g. from another receiver) to the live view. |
 | **Open…** | Views saved exports offline, read-only (several files are merged). You can also drop files onto the page. |
 | **Protocol tabs** | One per protocol with traffic (e.g. `DMR 62 radios · 1 live`). Protocols are never mixed: a DMR radio 1234 and a P25 radio 1234 are unrelated. |
@@ -314,8 +314,10 @@ What gets recorded:
   (unless the session has the key).
 - Disk use is capped (1 GB by default, about 18 hours of speech); the oldest
   files go first, and calls with audio stay in the call list longest.
-- Audio stays on the server that recorded it. Exports note which calls had
-  audio, but an imported or merged view has none to play.
+- Audio stays on the server that recorded it. A plain export notes which
+  calls had audio; **Export ▾ → Explorer data with audio (.zip)** also packs
+  the audio, and opening that zip plays it (§12). An **Import** into the live
+  view never has audio to play.
 
 Rules on keeping intercepted communications differ from place to place;
 check what applies to you before switching audio on.
@@ -354,6 +356,13 @@ goes into the audio zip's `calls.csv`.
   **Open…** it later (or drop it on the page) to browse it offline, with
   every view working; times are shown relative to the export. A blue bar
   says you are in a file view; **Back to live** returns.
+- **Export ▾ → Explorer data with audio (.zip)** is the same export plus
+  every call's audio (`audio/*.wav`), in one zip. **Open…** it (or drop it
+  on the page) to browse it with the audio playable — ▶, ⤓ and speech-to-text
+  work as live; opened together with other exports, its calls keep their
+  audio in the merged view. The zip is built in the browser and stops adding
+  audio at 1 GB (it says how many were left out). **Import…** takes the zip
+  too, without its audio.
 - **Export ▾ → Association graph (.graphml)** is for graph tools (Gephi,
   Cytoscape, yEd, networkx).
 - **Export ▾ → Positions (.kml)** saves the position reports of the radios

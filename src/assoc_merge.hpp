@@ -628,6 +628,9 @@ inline bool dataset_from_export(const mjson::V& root, const std::string& label, 
                 c.net = e.str("net"); c.site = e.str("site"); c.slot = e.str("slot"); c.src = e.str("src");
                 c.tgt = e.str("tgt"); c.alias = e.str("alias"); c.text = e.str("text");
                 c.svc = e.str("svc"); c.pos = e.str("pos");
+                // Its audio file's name (the audio itself stays with the server
+                // that recorded it, or travels in an "export with audio" zip).
+                c.audio = e.str("audio"); c.audio_ms = u(e, "audio_ms");
                 c.priv = e.boolean("priv"); c.voice = e.boolean("voice"); c.data = e.boolean("data");
                 c.emerg = e.boolean("emerg"); c.enc = e.boolean("enc");
                 c.open = false;                                  // history, not live

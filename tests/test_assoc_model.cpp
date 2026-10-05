@@ -862,6 +862,22 @@ int main() {
                   d.fams["p25"].radios["6745697"].pos == "39.03478,-76.98450" &&
                   d.fams["p25"].radios["6745697"].track.size() == 2,
               "export: positions and the track survive an export / import");
+        // An export names each call's audio file: a merge keeps the name (the
+        // file view plays it from an "export with audio" zip); a live import
+        // drops it -- the file isn't on this server.
+        std::string ex = p.to_export_json(1300);
+        const std::string at = "\"pos\":\"39.03478,-76.98450\"";
+        const std::size_t pp = ex.find(at, ex.find("\"calls\":["));
+        check(pp != std::string::npos, "export: the call to tag with audio");
+        ex.insert(pp, "\"audio\":\"call_1_x_1.wav\",\"audio_ms\":2000,");
+        Dataset da;
+        check(dataset_from_export_text(ex, "x", da, &err) && da.fams["p25"].calls.size() == 1 &&
+                  da.fams["p25"].calls[0].audio == "call_1_x_1.wav" && da.fams["p25"].calls[0].audio_ms == 2000,
+              "export: a call's audio file name is read back");
+        AssocModel live;
+        live.set_identity("0123456789abcdef", "other");
+        live.import_export(ex, "x.json", 2000);
+        check(live.to_json(2000).find("call_1_x_1.wav") == std::string::npos, "import: an imported call has no audio to play");
     }
 
     // ---- JSON escaping of decoder-derived text ----
