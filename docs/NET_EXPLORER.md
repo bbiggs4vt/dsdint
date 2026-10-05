@@ -78,7 +78,7 @@ From top to bottom:
 | **Import…** | Adds saved exports (e.g. from another receiver) to the live view. |
 | **Open…** | Views saved exports offline, read-only (several files are merged). You can also drop files onto the page. |
 | **Protocol tabs** | One per protocol with traffic (e.g. `DMR 62 radios · 1 live`). Protocols are never mixed: a DMR radio 1234 and a P25 radio 1234 are unrelated. |
-| **Stat cards** | Networks, Sites, Talkgroups, Radios, Calls (recent), **Calls / s** (last minute; hover for the 10-minute average and the total) and Live calls — for the current protocol, network filter and search. |
+| **Stat cards** | Networks, Sites, Talkgroups, Radios, Calls (recent), **Calls / s** (last minute; hover for the 10-minute average and the total) and Live calls — for the current protocol, network filter and search (not **With audio only**, which only shortens the Calls list). The protocol tab's "N live" counts all of its networks, so with a network filter or a search the two can differ. |
 | **Network chips** | One chip per network, with its call count. Click chips to pick one or more networks: the page shows only those. Click a picked chip again to drop it, or **All networks** to clear the filter. The list starts collapsed to **All networks** and the networks picked; click **▸ Networks** (or **show…** / **+N more…**) to open it, and again to close it. The browser remembers which. |
 | **View tabs** | Calls · Talkgroups · Radios · Graph · Links · Networks. |
 | **Details panel** | On the right (or a drawer on smaller screens): everything tied to the radio, talkgroup or network you click. |

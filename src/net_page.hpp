@@ -580,8 +580,10 @@ function qm() {
   }
   return false;
 }
-function fCalls(list) {
-  var aud = S.audOnly && !S.file;
+// The calls the filters let through. `allAudio`: ignore "With audio only" (a
+// Calls-list option; the stat cards count every call).
+function fCalls(list, allAudio) {
+  var aud = S.audOnly && !S.file && !allAudio;
   return (list || IX.calls).filter(function (c) {
     return (netAll() || S.nets[c.net]) && (!aud || c.audio) &&
       (!S.q || qm(c.src, c.tgt, c.alias, c.text, mhz(c.freq), IX.rById[c.src] && IX.rById[c.src].aliases));
@@ -1715,12 +1717,13 @@ function render() {
   fams.forEach(function (f) {
     var F = S.d.families[f], lv = F.calls.filter(live).length;
     ft.appendChild(h('button', { class: 'tab' + (f === S.fam ? ' active' : ''), type: 'button',
+      title: F.radios.length + ' radios' + (lv ? ', ' + lv + ' live calls' : '') + ' on all of its networks',
       onclick: function () { S.fam = f; store('fam', f); S.nets = {}; S.sel = null; GR.sig = ''; render(); } },
       [FAMN[f] || f.toUpperCase(), ' ', h('span', { class: 'count', text: F.radios.length + ' radios' + (lv ? ' · ' + lv + ' live' : '') })]));
   });
   index();
   netKeys().forEach(function (k) { if (!IX.netByKey[k]) delete S.nets[k]; });
-  var calls = fCalls(), tgs = fTgs(), radios = fRadios(), lv = calls.filter(live).length, sites = {};
+  var calls = fCalls(null, true), tgs = fTgs(), radios = fRadios(), lv = calls.filter(live).length, sites = {};
   IX.nets.forEach(function (n) { if (netAll() || S.nets[n.key]) n.sites.forEach(function (s) { sites[n.key + s] = 1; }); });
   var cards = $('cards');
   cards.textContent = '';
@@ -1728,7 +1731,9 @@ function render() {
   var kept = 'The newest calls are listed (up to ' + (S.d.max_calls || 5000) + ' per protocol; calls with audio are kept longest).';
   [['Networks', netAll() ? IX.nets.length : netKeys().length], ['Sites', Object.keys(sites).length], ['Talkgroups', tgs.length],
    ['Radios', radios.length], ['Calls (recent)', calls.length, kept], ['Calls / s', rate.text, rate.tip],
-   ['Live calls', lv]].forEach(function (c, i) {
+   ['Live calls', lv, netAll() && !S.q ? 'Calls heard in the last ' + LIVE_MS / 1000 + ' s.' :
+     'Calls heard in the last ' + LIVE_MS / 1000 + ' s' + (!netAll() ? ' on the networks picked' : '') +
+     (S.q ? ' matching the search' : '') + ' (the protocol tab counts all of them).']].forEach(function (c, i) {
     cards.appendChild(h('div', { class: 'card' + (i === 6 && lv ? ' live' : ''), title: c[2] || null, 'data-tip': c[2] || null },
       [h('div', { class: 'n', text: String(c[1]) }), h('div', { class: 'l', text: c[0] })]));
   });
@@ -1757,7 +1762,7 @@ function render() {
       nb.appendChild(h('span', { class: 'netmore', onclick: function () { setNetsOpen(true); },
         text: (picked.length ? '+' + (IX.nets.length - picked.length) + ' more' : 'show ' + IX.nets.length) + '\u2026' }));
   }
-  $('c-calls').textContent = calls.length; $('c-tgs').textContent = tgs.length;
+  $('c-calls').textContent = S.audOnly && !S.file ? fCalls().length : calls.length;   // the list's own rows $('c-tgs').textContent = tgs.length;
   $('c-radios').textContent = radios.length; $('c-nets').textContent = IX.nets.length;
   renderView();
   renderDetail();
