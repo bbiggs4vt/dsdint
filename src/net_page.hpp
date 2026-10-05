@@ -121,6 +121,22 @@ inline std::string render_net_page_html() {
   a.pos .nw { white-space: nowrap; }            /* lat and lon stay whole; the line may break between them */
   .posline { margin: .2rem 0 .6rem; }
   .trkbox { margin: .3rem 0 .5rem; }
+  .tmap { position: relative; overflow: hidden; background: #1f2327; border: 1px solid var(--comp-bd); border-radius: 4px;
+          height: 230px; cursor: grab; touch-action: none; user-select: none; }
+  .tmap.drag { cursor: grabbing; }
+  #mwrap .tmap { height: 640px; border: 0; border-radius: 0; }
+  .tm-tiles img { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; }
+  .tm-ov { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+  .tm-ov .tm-pt { pointer-events: auto; cursor: pointer; stroke: #12171b; stroke-width: 1.5; }
+  .tm-ov .tm-line { fill: none; stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; opacity: .85; }
+  .tm-ov .tm-line.sel { stroke-width: 4; opacity: 1; }
+  .tm-ov text { font: 600 11px 'Helvetica Neue', Arial, sans-serif; fill: #fff; paint-order: stroke; stroke: #12171b; stroke-width: 3px; }
+  .tm-zoom { position: absolute; left: 8px; top: 8px; display: flex; flex-direction: column; gap: 4px; z-index: 2; }
+  .tm-zoom .btn { padding: .1rem .5rem; font-size: .95rem; line-height: 1.2; }
+  .tm-att { position: absolute; right: 0; bottom: 0; background: rgba(255,255,255,.75); color: #333; font-size: .66rem;
+            padding: 1px 5px; z-index: 2; max-width: 100%; }
+  .tm-msg { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: var(--muted); font-size: .8rem;
+            background: rgba(31,35,39,.85); padding: .3rem .6rem; border-radius: 4px; z-index: 2; text-align: center; }
   .trk { display: block; background: #1f2327; border: 1px solid var(--comp-bd); border-radius: 4px; max-height: 170px; }
   .trkline { fill: none; stroke: var(--info); stroke-width: 1.5; stroke-linejoin: round; opacity: .8; }
   .trkpt { fill: var(--info); }
@@ -409,6 +425,7 @@ inline std::string render_net_page_html() {
     .gbar label { min-height: 40px; }
     .gbar input[type=checkbox] { width: 20px; height: 20px; }
     #gwrap { height: min(640px, max(320px, 66vh)); }
+    #mwrap .tmap { height: min(640px, max(320px, 66vh)); }
     .filebar a, .filebar .x { display: inline-block; padding: .45rem .2rem; }
   }
 </style>
@@ -462,6 +479,7 @@ inline std::string render_net_page_html() {
           <button class="tab" data-v="tgs">Talkgroups <span class="count" id="c-tgs"></span></button>
           <button class="tab" data-v="radios">Radios <span class="count" id="c-radios"></span></button>
           <button class="tab" data-v="graph">Graph</button>
+          <button class="tab" data-v="map">Map</button>
           <button class="tab" data-v="links">Links</button>
           <button class="tab" data-v="nets">Networks <span class="count" id="c-nets"></span></button>
         </div>
@@ -489,6 +507,15 @@ inline std::string render_net_page_html() {
           </div>
           <div id="gwrap"><svg id="gsvg"></svg></div>
           <div class="legend" id="g-legend"></div>
+        </div>
+        <div class="panel" id="v-map" hidden>
+          <div class="gbar">
+            <label>Map <select id="m-tiles"></select></label>
+            <label><input type="checkbox" id="m-paths" checked> Paths</label>
+            <button class="btn" id="m-fit" type="button">Fit</button>
+            <span id="m-note" style="color:var(--muted)"></span>
+          </div>
+          <div id="mwrap"></div>
         </div>
         <div class="panel" id="v-links" hidden><div class="scroll" id="t-links" style="max-height:78vh"></div></div>
         <div class="panel" id="v-nets" hidden><div class="scroll" id="t-nets"></div></div>
@@ -892,6 +919,203 @@ function posLink(pos) {
                   onclick: function (e) { e.stopPropagation(); } },
            [h('span', { class: 'nw', text: '\u{1F4CD} ' + la + ',' }), ' ', h('span', { class: 'nw', text: lo })]);
 }
+// ---- maps: tiles from a public (or your own) tile server, drawn by the
+// page -- no key, no library. Positions, paths and labels are an SVG layer
+// on top. A single position also links to Google Maps (posLink). ----
+var TILESETS = {
+  osm:  { name: 'OpenStreetMap', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', max: 19,
+          attrib: '\u00A9 OpenStreetMap contributors' },
+  dark: { name: 'CARTO Dark', url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', sub: 'abcd', max: 19,
+          attrib: '\u00A9 OpenStreetMap contributors \u00A9 CARTO' },
+  sat:  { name: 'Esri imagery', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', max: 19,
+          attrib: 'Imagery \u00A9 Esri, Maxar, Earthstar Geographics' },
+  topo: { name: 'OpenTopoMap', url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', sub: 'abc', max: 17,
+          attrib: '\u00A9 OpenStreetMap contributors, SRTM \u00B7 \u00A9 OpenTopoMap (CC-BY-SA)' },
+  off:  { name: 'No map (sketch only)' }
+};
+// The tile sets on offer: the server's own (DSD_NET_MAP_TILES) first, if set.
+function tilesets() {
+  var m = S.d && S.d.map, out = {};
+  if (m && m.tiles) out.server = { name: 'This server\u2019s map', url: m.tiles, max: 19, attrib: m.attrib || '' };
+  for (var k in TILESETS) out[k] = TILESETS[k];
+  return out;
+}
+function tileKey() { var t = tilesets(), k = load('map.tiles'); return t[k] ? k : t.server ? 'server' : 'osm'; }
+function tileset() { return tilesets()[tileKey()]; }
+function wx(lon, z) { return (lon + 180) / 360 * 256 * Math.pow(2, z); }
+function wy(lat, z) {
+  var s = Math.sin(Math.max(-85.05, Math.min(85.05, lat)) * Math.PI / 180);
+  return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * 256 * Math.pow(2, z);
+}
+// A slippy map. set(layers, key) gives it lines (paths) and points; a new
+// key fits the view to them, the same key keeps the user's pan / zoom (the
+// page re-renders on every poll). Tiles already loaded are reused.
+function TileMap(opts) {
+  var m = this;
+  m.opts = opts || {};
+  m.z = 3; m.cx = 0; m.cy = 0; m.key = null; m.layers = { lines: [], pts: [] }; m.imgs = {}; m.ok = 0; m.bad = 0; m.ts = null;
+  m.tiles = h('div', { class: 'tm-tiles' });
+  m.svg = sv('svg', { class: 'tm-ov' });
+  m.att = h('div', { class: 'tm-att' });
+  m.msg = h('div', { class: 'tm-msg', hidden: true });
+  var zb = function (t, title, f) { return h('button', { class: 'btn', type: 'button', title: title, 'aria-label': title,
+                                                         onclick: function (e) { e.stopPropagation(); f(); } }, t); };
+  m.el = h('div', { class: 'tmap' }, [m.tiles, m.svg,
+    h('div', { class: 'tm-zoom' }, [zb('+', 'Zoom in', function () { m.zoomAt(1); }), zb('\u2212', 'Zoom out', function () { m.zoomAt(-1); }),
+                                    zb('\u2922', 'Fit', function () { m.fit(); m.draw(); })]), m.att, m.msg]);
+  var drag = null;
+  m.el.addEventListener('pointerdown', function (e) {
+    if (e.button !== 0 || e.target.closest('.tm-zoom') || e.target.closest('.tm-pt')) return;
+    drag = { x: e.clientX, y: e.clientY, cx: m.cx, cy: m.cy };
+    m.el.setPointerCapture(e.pointerId); m.el.classList.add('drag');
+  });
+  m.el.addEventListener('pointermove', function (e) {
+    if (!drag) return;
+    m.cx = drag.cx - (e.clientX - drag.x); m.cy = drag.cy - (e.clientY - drag.y); m.draw();
+  });
+  var end = function () { drag = null; m.el.classList.remove('drag'); };
+  m.el.addEventListener('pointerup', end); m.el.addEventListener('pointercancel', end);
+  m.el.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    var r = m.el.getBoundingClientRect();
+    m.zoomAt(e.deltaY < 0 ? 1 : -1, e.clientX - r.left - r.width / 2, e.clientY - r.top - r.height / 2);
+  }, { passive: false });
+  m.el.addEventListener('dblclick', function (e) {
+    if (e.target.closest('.tm-zoom')) return;
+    var r = m.el.getBoundingClientRect();
+    m.zoomAt(1, e.clientX - r.left - r.width / 2, e.clientY - r.top - r.height / 2);
+  });
+}
+TileMap.prototype.maxZ = function () { return (this.ts && this.ts.max) || 19; };
+TileMap.prototype.zoomAt = function (dz, ox, oy) {
+  var z = Math.max(1, Math.min(this.maxZ(), this.z + dz));
+  if (z === this.z) return;
+  var f = Math.pow(2, z - this.z);
+  ox = ox || 0; oy = oy || 0;
+  this.cx = (this.cx + ox) * f - ox; this.cy = (this.cy + oy) * f - oy; this.z = z;
+  this.draw();
+};
+TileMap.prototype.bounds = function () {
+  var b = null, add = function (p) {
+    if (!b) b = [p[0], p[1], p[0], p[1]];
+    else { b[0] = Math.min(b[0], p[0]); b[1] = Math.min(b[1], p[1]); b[2] = Math.max(b[2], p[0]); b[3] = Math.max(b[3], p[1]); }
+  };
+  this.layers.lines.forEach(function (l) { l.pts.forEach(add); });
+  this.layers.pts.forEach(function (p) { add(p.ll); });
+  return b;
+};
+TileMap.prototype.fit = function () {
+  var b = this.bounds(), w = this.el.clientWidth || 300, hh = this.el.clientHeight || 200;
+  if (!b) return;
+  var z = Math.min(this.maxZ(), 17);
+  while (z > 1 && (wx(b[3], z) - wx(b[1], z) > w - 60 || wy(b[0], z) - wy(b[2], z) > hh - 60)) --z;
+  this.z = z;
+  this.cx = (wx(b[1], z) + wx(b[3], z)) / 2; this.cy = (wy(b[0], z) + wy(b[2], z)) / 2;
+};
+TileMap.prototype.set = function (layers, key) {
+  this.layers = layers;
+  var ts = tileset();
+  if (ts !== this.ts) { this.ts = ts; this.tiles.textContent = ''; this.imgs = {}; this.ok = this.bad = 0; }
+  if (key !== this.key && this.el.clientWidth) { this.key = key; this.fit(); }
+  else if (key !== this.key) this.pendingKey = key;
+  this.draw();
+};
+TileMap.prototype.draw = function () {
+  var m = this, w = m.el.clientWidth, hh = m.el.clientHeight;
+  if (!w || !hh) { if (m.el.isConnected && !m.wait) { m.wait = true; requestAnimationFrame(function () { m.wait = false; m.draw(); }); } return; }
+  if (m.pendingKey !== undefined) { m.key = m.pendingKey; m.pendingKey = undefined; m.fit(); }
+  var ts = m.ts || tileset(), z = m.z, n = Math.pow(2, z), x0 = m.cx - w / 2, y0 = m.cy - hh / 2;
+  // tiles
+  var want = {};
+  if (ts && ts.url) {
+    for (var tx = Math.floor(x0 / 256); tx <= Math.floor((x0 + w) / 256); tx++)
+      for (var ty = Math.floor(y0 / 256); ty <= Math.floor((y0 + hh) / 256); ty++) {
+        if (ty < 0 || ty >= n) continue;
+        var k = z + '/' + tx + '/' + ty, img = m.imgs[k];
+        want[k] = 1;
+        if (!img) {
+          var xx = ((tx % n) + n) % n, sub = ts.sub ? ts.sub.charAt((xx + ty) % ts.sub.length) : '';
+          img = h('img', { alt: '', draggable: 'false', src: ts.url.replace('{z}', z).replace('{x}', xx).replace('{y}', ty).replace('{s}', sub) });
+          img.addEventListener('load', function () { m.ok++; m.status(); });
+          img.addEventListener('error', function () { this.style.visibility = 'hidden'; m.bad++; m.status(); });
+          m.imgs[k] = img; m.tiles.appendChild(img);
+        }
+        img.style.left = (tx * 256 - x0) + 'px'; img.style.top = (ty * 256 - y0) + 'px';
+      }
+  }
+  for (var key in m.imgs) if (!want[key]) { m.imgs[key].remove(); delete m.imgs[key]; }
+  m.att.textContent = ts && ts.url ? ts.attrib : '';
+  m.att.hidden = !(ts && ts.url && ts.attrib);
+  // overlay
+  var svg = m.svg;
+  svg.textContent = '';
+  svg.setAttribute('width', w); svg.setAttribute('height', hh);
+  var P = function (ll) { return [wx(ll[1], z) - x0, wy(ll[0], z) - y0]; };
+  m.layers.lines.forEach(function (l) {
+    if (l.pts.length < 2) return;
+    svg.appendChild(sv('polyline', { class: 'tm-line' + (l.sel ? ' sel' : ''), stroke: l.color || '#5bc0de',
+      points: l.pts.map(function (p) { var q = P(p); return q[0].toFixed(1) + ',' + q[1].toFixed(1); }).join(' ') }));
+  });
+  m.layers.pts.forEach(function (p) {
+    var q = P(p.ll);
+    if (q[0] < -50 || q[1] < -50 || q[0] > w + 50 || q[1] > hh + 50) return;
+    var c = sv('circle', { class: 'tm-pt', cx: q[0].toFixed(1), cy: q[1].toFixed(1), r: p.r || 5, fill: p.color || '#5bc0de' });
+    if (p.title) { var t = document.createElementNS(SVGNS, 'title'); t.textContent = p.title; c.appendChild(t); }
+    if (p.onclick) c.addEventListener('click', p.onclick);
+    svg.appendChild(c);
+    if (p.label) { var tx = sv('text', { x: (q[0] + (p.r || 5) + 3).toFixed(1), y: (q[1] + 4).toFixed(1) }); tx.textContent = p.label; svg.appendChild(tx); }
+  });
+  m.status();
+};
+TileMap.prototype.status = function () {
+  var ts = this.ts || tileset();
+  var off = !ts || !ts.url, failed = !off && this.bad > 0 && this.ok === 0;
+  this.msg.hidden = !failed && !(off && !this.opts.quietOff);
+  this.msg.textContent = failed ? 'The map tiles didn\u2019t load (offline?) \u2014 pick another map, or set DSD_NET_MAP_TILES' :
+                         'No map tiles (positions only)';
+};
+// The Map view: each listed radio's latest position (labelled) and path;
+// the selected radio's path stands out, with every fix.
+var MV = null;
+function viewMap() {
+  if (!MV) {
+    MV = new TileMap();
+    $('mwrap').appendChild(MV.el);
+    var sel = $('m-tiles'), ts = tilesets();
+    for (var k in ts) sel.appendChild(h('option', { value: k }, ts[k].name));
+    sel.value = tileKey();
+    sel.addEventListener('change', function () { store('map.tiles', sel.value); renderView(); renderDetail(); });
+    $('m-paths').addEventListener('change', function () { renderView(); });
+    $('m-fit').addEventListener('click', function () { MV.fit(); MV.draw(); });
+  }
+  var rs = fRadios().filter(function (r) { return trackOf(r).length; });
+  var selId = S.sel && S.sel.type === 'radio' ? S.sel.id : null, lines = [], pts = [];
+  rs.forEach(function (r) {
+    var tr = trackOf(r), col = nodeColor({ ref: r }), me = r.id === selId;
+    if ($('m-paths').checked || me) lines.push({ pts: tr.map(function (f) { return ll(f[1]); }), color: col, sel: me });
+    if (me) tr.slice(0, -1).forEach(function (f) { pts.push({ ll: ll(f[1]), r: 3, color: col, title: 'Radio ' + r.id + ' ' + hms(f[0]) + '  ' + f[1] }); });
+    var last = tr[tr.length - 1], al = r.aliases.length ? ' ' + r.aliases[r.aliases.length - 1] : '';
+    pts.push({ ll: ll(last[1]), r: me ? 7 : 5.5, color: col, label: r.id + al,
+               title: 'Radio ' + r.id + al + ' \u2014 ' + tr.length + ' position' + (tr.length > 1 ? 's' : '') + ', latest ' + hms(last[0]) + ' (' + ago(last[0]) + ')',
+               onclick: function () { select('radio', r.id); } });
+  });
+  MV.set({ lines: lines, pts: pts }, S.fam + '|' + (S.file || 'live'));
+  $('m-note').textContent = rs.length ? rs.length + ' radio' + (rs.length > 1 ? 's' : '') + ' with positions' +
+    (anyFilter() || S.q ? ' (with the filters)' : '') + ' \u00B7 drag to pan, scroll to zoom, click a radio' : 'No position reports among the listed radios yet.';
+}
+// The map in a radio's details (kept across re-renders so it doesn't reload).
+var DMAP = null;
+function radioMap(r) {
+  var tr = trackOf(r), col = nodeColor({ ref: r }), id = S.fam + '|' + r.id;
+  if (!DMAP || DMAP.id !== id) DMAP = { id: id, map: new TileMap({ quietOff: true }) };
+  var pts = tr.map(function (f, i) {
+    return { ll: ll(f[1]), r: i === tr.length - 1 ? 6 : i === 0 ? 5 : 3.5, color: i === tr.length - 1 ? '#d9534f' : i === 0 ? '#5cb85c' : col,
+             title: hms(f[0]) + '  ' + f[1] };
+  });
+  DMAP.map.set({ lines: [{ pts: tr.map(function (f) { return ll(f[1]); }), color: col }], pts: pts }, id);
+  return DMAP.map.el;
+}
+
 // ---- position history ----
 function trackOf(r) { return r.track && r.track.length ? r.track : r.pos ? [[r.pos_t, r.pos]] : []; }
 function ll(p) { var a = p.split(','); return [+a[0], +a[1]]; }
@@ -924,11 +1148,6 @@ function trackSketch(tr) {
   for (var i = 1; i < pts.length; i++) moved += metres(pts[i - 1], pts[i]);
   return h('div', { class: 'trkbox' }, [svg, h('div', { class: 'hint', text: pts.length + ' fixes \u00B7 spans ' + dist(span) +
     ' \u00B7 moved ' + dist(moved) + ' \u00B7 ' + hms(tr[0][0]) + '\u2013' + hms(tr[tr.length - 1][0]) + ' (UTC)' })]);
-}
-// Google Maps directions through the latest fixes, in time order (it allows
-// about ten stops; it routes them by road -- the order, not the exact path).
-function mapsRoute(tr) {
-  return 'https://www.google.com/maps/dir/' + tr.slice(-10).map(function (f) { return f[1]; }).join('/');
 }
 function xmlEsc(s) { return String(s).replace(/[<>&"']/g, function (c) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[c]; }); }
 // KML of radios' tracks: a line through each radio's fixes and a timestamped
@@ -965,14 +1184,21 @@ function positionsSection(d, r) {
   d.appendChild(h('h4', { text: 'Positions (' + tr.length + ')' }));
   d.appendChild(h('div', { class: 'posline' }, [posLink(r.pos), h('span', { class: 'hint', text: ' ' + ago(r.pos_t) })]));
   if (tr.length < 2) {
-    d.appendChild(h('div', { class: 'hint', text: 'Every report so far is from this one place. A track (sketch, route, KML) ' +
-                                                   'appears once it reports from somewhere else.' }));
+    if (tileset() && tileset().url) { d.appendChild(radioMap(r)); DMAP.map.draw(); }
+    d.appendChild(h('div', { class: 'hint', text: 'Every report so far is from this one place; a path appears once it reports from somewhere else.' }));
     return;
   }
-  d.appendChild(trackSketch(tr));
+  var ts = tileset();
+  if (ts && ts.url) {
+    var el = radioMap(r);
+    d.appendChild(el);
+    DMAP.map.draw();
+    var sk = trackSketch(tr);                     // its summary line (fixes, span, distance, times)
+    d.appendChild(sk.lastChild);
+  } else d.appendChild(trackSketch(tr));
   d.appendChild(h('div', { class: 'tagrow' }, [
-    h('a', { class: 'btn sm', href: mapsRoute(tr), target: '_blank', rel: 'noopener',
-             title: 'The latest ' + Math.min(10, tr.length) + ' fixes, in time order, as a Google Maps route (drawn along roads)' }, 'Route in Google Maps'),
+    h('a', { class: 'btn sm', href: '#', title: 'All radios\u2019 positions on the Map view',
+             onclick: function (e) { e.preventDefault(); setView('map'); } }, 'Map view'),
     h('button', { class: 'btn sm', type: 'button', title: 'The exact track and fixes, for Google Earth or Google My Maps (Import)',
                   onclick: function () { saveText('radio_' + safeName(r.id) + '_track.kml', tracksKml([r], 'Radio ' + r.id), 'application/vnd.google-earth.kml+xml'); } },
       'Download KML')]));
@@ -1929,7 +2155,7 @@ function setView(v) {
   S.view = v; store('view', v);
   var tabs = document.querySelectorAll('#viewtabs .tab');
   for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-v') === v);
-  ['calls', 'tgs', 'radios', 'graph', 'links', 'nets'].forEach(function (x) { $('v-' + x).hidden = x !== v; });
+  ['calls', 'tgs', 'radios', 'graph', 'map', 'links', 'nets'].forEach(function (x) { $('v-' + x).hidden = x !== v; });
   renderView();
 }
 function renderView() {
@@ -1940,6 +2166,7 @@ function renderView() {
   else if (S.view === 'nets') viewNets();
   else if (S.view === 'links') viewLinks();
   else if (S.view === 'graph') { legend(); buildGraph(); highlight(); run(); }
+  else if (S.view === 'map') viewMap();
 }
 // Calls per second: the server's count for the whole protocol (every call,
 // however many are still listed) -- or, with a network / search filter or in

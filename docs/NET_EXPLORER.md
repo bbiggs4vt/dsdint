@@ -80,7 +80,7 @@ From top to bottom:
 | **Protocol tabs** | One per protocol with traffic (e.g. `DMR 62 radios · 1 live`). Protocols are never mixed: a DMR radio 1234 and a P25 radio 1234 are unrelated. |
 | **Stat cards** | Networks, Sites, Talkgroups, Radios, Calls (recent), **Calls / s** (last minute; hover for the 10-minute average and the total) and Live calls — for the current protocol, network filter and search (not **With audio only**, which only shortens the Calls list). The protocol tab's "N live" counts all of its networks, so with a network filter or a search the two can differ. |
 | **Filters** | Everything that narrows the page, in one section under the stat cards (§9). Collapsed (the default) it is one row: **▸ Filters**, a [chip](#appendix-c-glossary) for each filter in force (click one to drop it) and **Clear all**; with none it says *none — showing everything*. Click **▸ Filters** to open it: a row each for networks (one chip per network, with its call count), talkgroups and radios (each with a box to type ids into), and the search. The browser remembers whether it is open. |
-| **View tabs** | Calls · Talkgroups · Radios · Graph · Links · Networks. |
+| **View tabs** | Calls · Talkgroups · Radios · Graph · Map · Links · Networks. |
 | **Details panel** | On the right (or a drawer on smaller screens): everything tied to the radio, talkgroup or network you click. |
 
 On a narrow window the header's buttons fold into a **☰ Menu**.
@@ -187,6 +187,24 @@ The analysis view — evidence of how radios, talkgroups and systems relate:
 ![Figure 5](img/links.png)
 *Figure 5: Links: talk communities, a talkgroup and a radio seen on two networks, and hub radios.*
 
+### The Map view
+
+Radios that sent **position reports** (DMR LRRP / GPS, P25 Motorola GPS):
+each one's latest position as a labelled dot in its network's colour, and
+— with **Paths** ticked — the path through its positions, in time order and
+straight from fix to fix (no road snapping). Click a dot to select the
+radio: its path stands out, with every fix. Drag to pan, scroll or **+ / −**
+to zoom, **Fit** to see them all. It follows the filters and the search.
+
+The map is drawn by the page from **map tiles** — no key or account. **Map**
+picks the tiles: **OpenStreetMap**, **CARTO Dark**, **Esri imagery**
+(satellite), **OpenTopoMap**, or **No map** (positions only, and the sketch
+in a radio's details); the browser remembers the choice. The browser fetches
+the tiles itself, so it needs the internet — or set `DSD_NET_MAP_TILES` to a
+tile server of your own (e.g. a local OpenStreetMap server, for use
+offline); it then comes first as **This server's map**. A single position
+(📍 in a call, a radio's fixes) opens in **Google Maps**.
+
 ## 7. Networks
 
 One row per network the explorer has identified:
@@ -219,11 +237,9 @@ tablet or phone the details are a drawer: **Close** or Esc.
   used** (by calls); **Private calls with**; **Shares talkgroups with** —
   other radios on its talkgroups, with how many in common; **Positions (N)**
   when it sent position reports — N different places (repeats of the same
-  spot count once): the latest, linked to Google Maps; with two or more, a
-  sketch of the track (oldest
-  fix green, latest red; how far it spans and moved), **Route in Google
-  Maps** (the latest ten fixes in time order — Google draws them as a road
-  route, so it shows the order rather than the exact path), **Download KML**
+  spot count once): the latest, linked to Google Maps; a **map** of its
+  positions and path (oldest fix green, latest red — a sketch instead with
+  **No map**), how far it spans and moved, **Map view**, **Download KML**
   (the exact track and every fix, timestamped, for Google Earth or Google My
   Maps' *Import*) and the fixes, newest first; **Recent
   calls**, with ▶ where audio exists and, under each, its text, what a data
@@ -430,6 +446,7 @@ Server environment variables that affect the explorer (details in the README):
 | `DSD_NET_AUDIO_DIR` | `net_audio/` in the log dir | Where call audio goes. |
 | `DSD_NET_AUDIO_MAX_MB` / `DSD_NET_AUDIO_MAX_AGE_H` | 1024 / none | Audio disk cap and maximum age. |
 | `DSD_NET_ASR_DIR` | `net_asr/` in the log dir | Speech-to-text files (`tools/get_asr_assets.sh`). |
+| `DSD_NET_MAP_TILES` / `DSD_NET_MAP_ATTRIB` | (public tiles) | A map tile server of your own — a URL template with `{z}` `{x}` `{y}` (e.g. `http://maps.local/tile/{z}/{x}/{y}.png`) — and its credit line, for the Map view. |
 | `DSD_NET_ASR_MODEL` / `DSD_NET_ASR_LANG` | most accurate present / english | Default speech model and language. |
 | `DSD_NET_LOG` | off | `1` records from startup. |
 | `DSD_NET_LOG_DIR` / `DSD_NET_LOG_MAX_MB` | IQ-capture dir, else working dir / 1024 | Where recordings go, and their size cap. |

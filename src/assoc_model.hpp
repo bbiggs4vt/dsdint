@@ -746,8 +746,22 @@ private:
                ",\"instance\":" + assocjson::q(instance_) + ",\"name\":" + assocjson::q(name_) +
                ",\"since\":" + std::to_string(since_) + ",\"rec\":" + rec_json_locked() +
                ",\"audio\":" + audio_json_locked() + ",\"max_calls\":" + std::to_string(max_calls_) +
+               ",\"map\":" + map_json() +
                ",\"rates\":" + rates_json_locked(now) + ",\"imports\":" + im +
                ",\"families\":";
+    }
+    // The explorer's map: a tile server of your own (DSD_NET_MAP_TILES, a URL
+    // template with {z} {x} {y} -- e.g. a local OpenStreetMap tile server for
+    // use offline -- and DSD_NET_MAP_ATTRIB, its credit line). The browser
+    // fetches the tiles itself; unset, the page offers public ones.
+    static std::string map_json() {
+        static const std::string j = [] {
+            const char* t = std::getenv("DSD_NET_MAP_TILES");
+            const char* a = std::getenv("DSD_NET_MAP_ATTRIB");
+            const std::string tiles = t ? t : "";
+            return "{\"tiles\":" + assocjson::q(tiles) + ",\"attrib\":" + assocjson::q(a ? a : "") + "}";
+        }();
+        return j;
     }
     // Calls per second per protocol: averages over the last 1 and 10 minutes
     // (over the time since the server started or was cleared, if shorter),

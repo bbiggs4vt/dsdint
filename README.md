@@ -824,6 +824,24 @@ no files on the server the page offers to load them from the internet
 - Transcripts are kept in that browser (`localStorage`, the last ~1000), not
   on the server; a call still in progress is transcribed again when replayed.
 
+### Positions and the map
+
+Position reports (DMR LRRP / GPS, P25 Motorola GPS) are put on their call and
+kept per radio (its latest 100 distinct fixes). The explorer's **Map** view
+shows each radio's latest position and its path, and a radio's details show
+a map of its own fixes; a single position (📍) opens in Google Maps, and
+**Download KML** / **Export ▾ → Positions (.kml)** save tracks for Google
+Earth or Google My Maps.
+
+The map is drawn by the page from map tiles -- no key or account. It offers
+OpenStreetMap, CARTO Dark, Esri imagery and OpenTopoMap, fetched by the
+browser. To use your own tile server (e.g. offline), set:
+
+    DSD_NET_MAP_TILES=http://maps.local/tile/{z}/{x}/{y}.png
+    DSD_NET_MAP_ATTRIB="© OpenStreetMap contributors"
+
+It then comes first in the Map view's **Map** menu.
+
 ### Recording explorer data for analysis
 
 The explorer can record **everything its association model receives** -- every
