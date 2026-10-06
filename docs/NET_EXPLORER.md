@@ -150,8 +150,10 @@ column header to sort.
 A live picture of who talks on what: **talkgroups** and **radios** are nodes,
 a line joins a radio to each talkgroup it used, and a **dashed orange line**
 joins two radios that made a private call. Node colour is the network; a
-**white dashed ring** marks a radio or talkgroup seen on two or more networks;
-a talkgroup's size grows with its calls.
+**white dashed ring** marks a radio or talkgroup seen on two or more networks
+(drawn in the colour of the busiest of them when it first appears, and it
+keeps that colour while it stays on that network, rather than changing with
+every shift in traffic); a talkgroup's size grows with its calls.
 
 The layout arranges itself: linked nodes pull together and every node pushes
 the others away, harder the more links it has. So a busy talkgroup, or a radio

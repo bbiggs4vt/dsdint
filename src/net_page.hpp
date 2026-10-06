@@ -973,9 +973,18 @@ function index() {
   X.netRank = {};
   X.nets.slice().sort(function (a, b) { return b.calls - a.calls; }).forEach(function (n, i) { X.netRank[n.key] = i; });
 }
-function primaryNet(list) {
+// A node on several networks is drawn in one network's colour: the busiest
+// when it is first drawn, then kept (NODENET) for as long as it is still on
+// that network. Re-picking the busiest on every update made shared nodes
+// flip colour back and forth whenever two networks' call totals crossed.
+var NODENET = {};
+function primaryNet(list, id) {
+  list = list || [];
+  var key = id ? S.fam + '|' + id : null, kept = key && NODENET[key];
+  if (kept && list.indexOf(kept) >= 0) return kept;
   var best = null;
-  (list || []).forEach(function (k) { if (best == null || (IX.netRank[k] || 0) < (IX.netRank[best] || 0)) best = k; });
+  list.forEach(function (k) { if (best == null || (IX.netRank[k] || 0) < (IX.netRank[best] || 0)) best = k; });
+  if (key && best) NODENET[key] = best;
   return best;
 }
 // The network filter (S.nets): key -> 'in' (picked: show only the picked
@@ -2279,7 +2288,7 @@ function buildGraph() {
   }
   run();
 }
-function nodeColor(n) { var k = primaryNet(n.ref.networks); return k ? colorFor(k) : '#7a8288'; }
+function nodeColor(n) { var k = primaryNet(n.ref.networks, n.id); return k ? colorFor(k) : '#7a8288'; }
 function nodeR(n) {
   return n.kind === 'tg' ? 7 + Math.min(14, Math.sqrt(n.ref.calls) * 2) : 4 + Math.min(6, Math.sqrt(n.ref.calls));
 }
