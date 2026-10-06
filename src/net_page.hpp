@@ -49,6 +49,9 @@ inline std::string render_net_page_html() {
   h1 { font-size: 1.4rem; margin: 0; font-weight: 500; color: var(--heading); text-shadow: 0 -1px 0 rgba(0,0,0,.4); }
   h1 .accent { color: var(--info); }
   .sub { color: var(--muted); font-size: .82rem; margin-top: .2rem; }
+  /* The status line never wraps: a longer status must not move the page (a
+     click in progress would land on another row). */
+  div.sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .hdr-actions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
   input[type=search] { background: #1f2327; color: var(--heading); border: 1px solid var(--comp-bd);
                        border-radius: 4px; padding: .35rem .6rem; font: inherit; width: 16rem; max-width: 100%; }
@@ -3019,9 +3022,49 @@ $('aud').addEventListener('click', function () {
   }).then(updateAudio).catch(function () {});
 });
 
+// An update rebuilds the lists and the details, which would cut short what
+// the user is doing: a click (the button is replaced between press and
+// release, so the click is lost), a drag, a text selection (to copy an id),
+// a scroll (momentum on a touch screen stops). While one of those is under
+// way the update waits -- checked again shortly, and the status line says
+// why. (The details' Merge into... list and a phone's Sort menu guard
+// themselves: mergePickBusy, poll.)
+var HOLD = { down: 0, scroll: 0 };
+document.addEventListener('pointerdown', function (e) {
+  if (e.target.closest && e.target.closest('#main')) HOLD.down = Date.now();
+}, true);
+['pointerup', 'pointercancel', 'dragend'].forEach(function (ev) {
+  document.addEventListener(ev, function () { HOLD.down = 0; }, true);
+});
+window.addEventListener('blur', function () { HOLD.down = 0; });
+document.addEventListener('scroll', function (e) {
+  var t = e.target;
+  if (t === document || (t.closest && t.closest('#main'))) HOLD.scroll = Date.now();
+}, true);
+function holdReason() {
+  var t = Date.now();
+  if (HOLD.down && t - HOLD.down < 30000) return ['clicking', 'while you click or drag'];
+  if (t - HOLD.scroll < 500) return ['scrolling', 'while you scroll'];
+  var s = window.getSelection && getSelection();
+  if (s && !s.isCollapsed && s.rangeCount) {
+    var n = s.getRangeAt(0).commonAncestorContainer;
+    if (n && n.nodeType !== 1) n = n.parentNode;
+    if (n && n.closest && n.closest('#main')) return ['text selected', 'while text is selected (click anywhere to clear the selection)'];
+  }
+  return null;
+}
 function poll() {
   if (S.paused || S.file || document.hidden) { setTimeout(poll, POLL); return; }
+  var held = S.d && holdReason();
+  if (held) {
+    $('live').textContent = 'live · held: ' + held[0];
+    $('live').title = 'The page waits to update ' + held[1] + ', so it isn\u2019t pulled away from under you.';
+    setTimeout(poll, 250);
+    return;
+  }
+  $('live').title = '';
   fetch('/net.json', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
+    if (holdReason()) return;                          // started while this was on its way: it waits for the next one
     S.skew = d.now - Date.now();
     updateRec(d.rec);
     updateAudio(d.audio);

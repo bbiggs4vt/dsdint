@@ -68,7 +68,7 @@ From top to bottom:
 
 | Part | What it does |
 |---|---|
-| **Status line** | `live · updated 12:34:56Z`, or `paused`, `file view`, `disconnected — retrying`. Links back to the status page. |
+| **Status line** | `live · updated 12:34:56Z`, or `paused`, `file view`, `disconnected — retrying`. Links back to the status page. The page updates every 1.5 s, but waits while you are in the middle of something — `live · held: clicking` (a button or mouse held down, a drag), `held: scrolling`, or `held: text selected` (so you can copy an id; click anywhere to clear the selection) — and catches up right after. Where the details panel was scrolled to stays put across updates. |
 | **Search box** | Finds radios, talkgroups, aliases, SMS text and frequencies. Filters every view. See [section 9](#9-searching-filtering-and-sorting). |
 | **Record** | Records everything the explorer receives, for replay and troubleshooting ([section 13](#13-recording-a-session-for-troubleshooting)). While on, the header shows the file name, its size and a **Download** link. |
 | **♫ Audio** | Starts / stops recording each call's voice (off by default) — [section 10](#10-call-audio). Orange when on. |
