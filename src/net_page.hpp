@@ -2082,9 +2082,17 @@ function recent(filter) {
   });
   return ul;
 }
+// The details are rebuilt on every update: keep where the panel was scrolled
+// to while the same item stays selected (a new selection starts at the top).
 function renderDetail(force) {
   if (!force && mergePickBusy()) return;
-  var d = $('detail');
+  var d = $('detail'), sel = S.sel, who = sel ? sel.type + ':' + sel.id : '';
+  var y = who === renderDetail.who ? d.scrollTop : 0;
+  renderDetail.who = who;
+  detailBody(d);
+  d.scrollTop = y;
+}
+function detailBody(d) {
   d.textContent = '';
   var sel = S.sel;
   if (!sel) document.body.classList.remove('sheet');
