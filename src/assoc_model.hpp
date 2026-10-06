@@ -352,6 +352,17 @@ public:
         // call on the slot into sub-second pieces, each with a scrap of audio.)
         if (is_roster(up)) return;
 
+        // A DMR terminator (TLC): the talker unkeyed. The repeater then holds
+        // the slot for its hang time (a few seconds), repeating the call's ids
+        // with every terminator: that keeps the call alive (live, and one call
+        // if the talker keys up again) but isn't part of it -- its length ends
+        // here. Voice on the slot again resumes it.
+        if (ev.kind == "sync" && has(up, "| TLC")) {
+            if (Call* k = fresh_call(c, F, slot, now))
+                if (!k->tx_end_ms) k->tx_end_ms = k->last_ms;
+            return;
+        }
+
         // Unknown lines (identity broadcasts, P25 LCW, ...) never open calls or
         // introduce ids -- they only refine the call in progress on this slot.
         if (ev.kind == "unknown") {
@@ -432,8 +443,10 @@ public:
         // (A call header printed on a voice frame -- D-STAR "AMBE ... DST:" --
         // is voice too.)
         if (ev.kind == "voice" || (ev.kind == "sync" && is_voice_sync(up)) ||
-            (ev.kind == "call" && has(" " + up, " AMBE ")))
+            (ev.kind == "call" && has(" " + up, " AMBE "))) {
             cur->voice = true;
+            cur->tx_end_ms = 0;                  // talking again (re-keyed in the hang time)
+        }
         if (data) cur->data = true;
         note_service(F, *cur, extra, now);
         if (emerg) cur->emergency = true;
@@ -914,7 +927,9 @@ private:
                 c.alias = k.alias; c.text = k.text; c.svc = k.svc; c.pos = k.pos;
                 c.priv = k.priv; c.voice = k.voice; c.data = k.data; c.emerg = k.emergency; c.enc = k.encrypted;
                 c.open = k.open && now - k.last_ms <= kContinueMs;
-                c.start = k.start_ms; c.last = k.last_ms;
+                // Its length ends when the talker unkeyed, not with the
+                // repeater's hang time after it.
+                c.start = k.start_ms; c.last = k.tx_end_ms ? k.tx_end_ms : k.last_ms;
                 D.calls.push_back(std::move(c));
             }
         }
@@ -1008,6 +1023,7 @@ private:
         bool keep = false;                              // has audio: rolls off the list last (recorded)
         bool no_audio = false;                          // encrypted: never record
         std::int64_t start_ms = 0, last_ms = 0;
+        std::int64_t tx_end_ms = 0;                     // talker unkeyed (DMR terminator; 0 = talking)
         std::uint32_t frames = 0;
         std::uint32_t streams = 1;                      // receivers that heard it (see adopt_twin)
         std::int64_t freq = 0;                          // channel, Hz (0 = unknown)

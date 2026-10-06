@@ -741,6 +741,11 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     static const std::regex target_re(R"(\bTarget:?\s*(\d+))", std::regex::icase);
     if (ev.talkgroup.empty() && std::regex_search(line, m, target_re))
         ev.talkgroup = strip_leading_zeros(m[1].str());
+    // P25 link control (LCW) names the talkgroup as "Group N": "LCW Encrypted
+    // Circuit Priority 4 Group Voice Channel User - Group 1 Source 6746067".
+    static const std::regex lcw_group_re(R"(Voice Channel User\b.*?\bGroup\s+(\d+))", std::regex::icase);
+    if (ev.talkgroup.empty() && std::regex_search(line, m, lcw_group_re))
+        ev.talkgroup = strip_leading_zeros(m[1].str());
     if (std::regex_search(line, m, src_re)) ev.source_id = strip_leading_zeros(m[1].str());
     // A Capacity Plus channel status or a Connect Plus grant names a slot
     // ("TS: 1") of the channel it reports on, not the burst it came in.

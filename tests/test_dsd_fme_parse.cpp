@@ -175,6 +175,9 @@ int main() {
     {
         DsdEvent e = classify_dsd_fme_line(" P25 LCW  Group Call; Emergency");
         check(e.emergency == "1", "P25 LCW: emergency flag");
+        DsdEvent g = classify_dsd_fme_line(" LCW Encrypted Circuit Priority 4 Group Voice Channel User - Group 1 Source 6746067");
+        check(g.talkgroup == "1" && g.source_id == "6746067" && g.kind == "voice",
+              "P25 LCW Group Voice Channel User: talkgroup from \"Group N\", source");
     }
     // P25 trunking system identity -- these are REAL lines from a P25
     // Phase 1 control-channel capture (both dsd-fme forms: colon and

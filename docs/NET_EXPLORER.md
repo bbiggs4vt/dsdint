@@ -97,7 +97,7 @@ decoder lines (sync, voice frames, call headers, aliases, SMS) — see
 | Column | Meaning |
 |---|---|
 | **Start (UTC)** | When the call began. |
-| **Duration** | How long it lasted; a pulsing green dot and running time while it is live. |
+| **Duration** | How long it lasted; a pulsing green dot and running time while it is live. A DMR call ends when the talker unkeys: the repeater's hang time after it (terminators repeating the call's ids for a few seconds) isn't counted, though a talker keying up again within it continues the same call. The audio can still be a little shorter: silence at the start of a transmission isn't recorded. |
 | **Network** | The network it was heard on (coloured swatch). When the MHz column already shows the frequency, it is left out of the name here; hover for the full name. |
 | **MHz** | The channel frequency (when the client sent it). |
 | **Slot** | TDMA timeslot where the decoder reports one (DMR's 1 or 2; P25 Phase 2); `—` otherwise. |

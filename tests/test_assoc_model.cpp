@@ -408,6 +408,39 @@ int main() {
               "cap+: the slot's real call (23021 -> TG 12, voice) is one call, not cut by the roster");
     }
 
+    // ---- DMR hang time: the call ends when the talker unkeys (real lines, 460.575 MHz) ----
+    {
+        auto talk = [](AssocModel& m, std::int64_t& t, int bursts) {
+            for (int f = 0; f < bursts; ++f, t += 60) {
+                line(m, 1, "16:49:03 Sync: +DMR   slot1  [slot2] | Color Code=05 | VC2 ", t);
+                line(m, 1, " SLOT 2 TGT=13 SRC=9112 FLCO=0x00 FID=0x10 SVC=0x20 Group TXI Call  ", t);
+            }
+        };
+        auto hang = [](AssocModel& m, std::int64_t& t, int bursts) {   // terminators, ids repeated
+            for (int f = 0; f < bursts; ++f, t += 100) {
+                line(m, 1, "16:49:05 Sync: +DMR   slot1  [slot2] | Color Code=05 | TLC  ", t);
+                line(m, 1, " SLOT 2 TGT=13 SRC=9112 FLCO=0x00 FID=0x10 SVC=0x20 Group TXI Call  ", t);
+            }
+        };
+        AssocModel m;
+        m.begin_stream(1, "dmr", 0);
+        std::int64_t t = 1000;
+        talk(m, t, 50);                                // 3 s of voice: 1000 .. 3940
+        const std::int64_t unkey = t - 60;
+        hang(m, t, 30);                                // 3 s of hang time
+        J j = snap(m, t);
+        const J& F = j["families"]["dmr"];
+        check(F["calls"].size() == 1, "hang time: one call");
+        const J& c = F["calls"].at(0);
+        check(c["start"].n == 1000 && c["last"].n == static_cast<double>(unkey),
+              "hang time: the call's length ends when the talker unkeyed, not with the repeater's terminators");
+        check(c["open"].b, "hang time: still open while the repeater holds the slot");
+        talk(m, t, 10);                                // keys up again within the hang time
+        J j2 = snap(m, t);
+        check(j2["families"]["dmr"]["calls"].size() == 1 && j2["families"]["dmr"]["calls"].at(0)["last"].n == static_cast<double>(t - 60),
+              "hang time: talking again within it resumes the same call");
+    }
+
     // ---- the real DMR SMS sequence (direct mode): one data call carrying the text ----
     {
         AssocModel m;
