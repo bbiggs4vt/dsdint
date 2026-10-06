@@ -874,19 +874,52 @@ function syncPlay() {
 function playAudio(c) {
   if (!PLAYER.a) {
     PLAYER.a = new Audio();
-    PLAYER.a.addEventListener('ended', function () { PLAYER.name = null; syncPlay(); npProgress(); });
+    PLAYER.a.addEventListener('ended', function () { if (!followLive()) playDone(); });
     PLAYER.a.addEventListener('error', function () { if (PLAYER.name) toast('This call\'s audio is no longer available.'); PLAYER.name = null; syncPlay(); });
     PLAYER.a.addEventListener('timeupdate', npProgress);
   }
   if (PLAYER.name === c.audio) { PLAYER.a.pause(); PLAYER.name = null; syncPlay(); return; }
   PLAYER.name = c.audio;
   PLAYER.call = c;
+  PLAYER.waits = 0;
   PLAYER.a.src = audioUrl(c);
   var p = PLAYER.a.play();
   if (p && p.catch) p.catch(function () {});
   syncPlay();
   showNp();
-  if (ASR.on) transcribe(c);
+  // A live call is transcribed once it is over (its audio is still growing).
+  PLAYER.txLater = ASR.on && live(c);
+  if (ASR.on && !PLAYER.txLater) transcribe(c);
+}
+// This call's latest record (the list is rebuilt on every poll).
+function callNow(c) { return (IX && IX.calls.filter(function (x) { return x.audio === c.audio; })[0]) || c; }
+function playDone() {
+  var c = PLAYER.call;
+  PLAYER.name = null; syncPlay(); npProgress();
+  if (PLAYER.txLater && c) { PLAYER.txLater = false; transcribe(callNow(c)); }
+}
+// A live call's audio file is still being written: the server sends it as far
+// as it has got. At the end of that, fetch it again and carry on from the
+// same point -- waiting a moment when nothing new has arrived yet -- until
+// the call is over and all of it has played.
+function followLive() {
+  var c = PLAYER.call, a = PLAYER.a;
+  if (!c || !PLAYER.name || S.file) return false;
+  var cur = callNow(c), at = a.duration || a.currentTime || 0;
+  if (!(live(cur) || (cur.audio_ms || 0) / 1000 > at + 0.15) || ++PLAYER.waits > 120) return false;
+  var name = PLAYER.name;
+  a.addEventListener('loadedmetadata', function once() {
+    a.removeEventListener('loadedmetadata', once);
+    if (PLAYER.name !== name) return;
+    if (a.duration > at + 0.05) {                    // more audio: go on from where it stopped
+      PLAYER.waits = 0;
+      a.currentTime = at;
+      var p = a.play();
+      if (p && p.catch) p.catch(function () {});
+    } else setTimeout(function () { if (PLAYER.name === name && !followLive()) playDone(); }, 500);
+  });
+  a.src = audioUrl(cur) + '?t=' + Date.now();
+  return true;
 }
 function playBtn(c) {
   if (!hasAudio(c)) return null;
