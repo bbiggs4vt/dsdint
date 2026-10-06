@@ -21,6 +21,9 @@
 #include <set>
 #include <vector>
 #include <filesystem>
+#include <map>
+#include <mutex>
+#include <sstream>
 
 namespace dsdsrv {
 
@@ -167,6 +170,55 @@ bool env_on(const char* name) {
     if (!v || !v[0]) return false;
     const std::string s(v);
     return s[0] == '1' || s[0] == 'y' || s[0] == 'Y' || s[0] == 't' || s[0] == 'T' || s == "on";
+}
+
+// The explorer's switches remembered across restarts ({"audio":true} -- the
+// Audio switch): DSD_NET_SETTINGS_FILE, or net_settings.json in the
+// recordings folder. Missing or unreadable = nothing remembered.
+std::string net_settings_file() {
+    const char* f = std::getenv("DSD_NET_SETTINGS_FILE");
+    return (f && f[0]) ? std::string(f) : (std::filesystem::path(net_log_dir()) / "net_settings.json").string();
+}
+// -1 = not remembered, 0 = off, 1 = on.
+int net_setting(const char* key) {
+    std::ifstream in(net_settings_file(), std::ios::binary);
+    if (!in) return -1;
+    std::stringstream ss;
+    ss << in.rdbuf();
+    mjson::V root;
+    if (!mjson::parse(ss.str(), root) || root.t != mjson::V::Obj) return -1;
+    const mjson::V* v = root.get(key);
+    if (!v || v->t != mjson::V::Bool) return -1;
+    return v->b ? 1 : 0;
+}
+void remember_net_setting(const char* key, bool on) {
+    static std::mutex mu;                      // two requests at once: one writer
+    std::lock_guard<std::mutex> lk(mu);
+    const std::string path = net_settings_file(), tmp = path + ".tmp";
+    mjson::V root;
+    {
+        std::ifstream in(path, std::ios::binary);
+        std::stringstream ss;
+        if (in) ss << in.rdbuf();
+        if (!mjson::parse(ss.str(), root) || root.t != mjson::V::Obj) root = mjson::V();
+    }
+    std::map<std::string, bool> vals;          // keep the other switches
+    if (root.t == mjson::V::Obj)
+        for (const auto& kv : root.o) if (kv.second.t == mjson::V::Bool) vals[kv.first] = kv.second.b;
+    vals[key] = on;
+    std::error_code ec;
+    const auto dir = std::filesystem::path(path).parent_path();
+    if (!dir.empty()) std::filesystem::create_directories(dir, ec);
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (!out) return;
+        out << "{";
+        bool first = true;
+        for (const auto& kv : vals) { out << (first ? "" : ",") << assocjson::q(kv.first) << ":" << (kv.second ? "true" : "false"); first = false; }
+        out << "}\n";
+        if (!out) return;
+    }
+    std::filesystem::rename(tmp, path, ec);
 }
 
 // gzip `in` into `out` (fast compression level: the explorer's poll).
@@ -648,14 +700,17 @@ void Session::serve_http() {
         res->body() = stats_ ? net_rec_json(stats_->assoc().recording()) : std::string("{}");
     } else if (target == "/net/audio/on" || target == "/net/audio/off") {
         // Explorer Audio switch: record each call's decoded voice (off by
-        // default; see net_audio_dir and the DSD_NET_AUDIO_* settings).
+        // default; see net_audio_dir and the DSD_NET_AUDIO_* settings). The
+        // choice is remembered for the next start (net_settings_file).
         bool ok = true;
         if (stats_) {
             if (target == "/net/audio/on") {
                 ok = stats_->assoc().start_audio(net_audio_dir(), net_audio_max_bytes(), net_audio_max_age_ms());
                 std::cerr << (ok ? "net audio: recording calls into " : "net audio: cannot write to ") << net_audio_dir() << "\n";
+                if (ok) remember_net_setting("audio", true);
             } else {
                 stats_->assoc().stop_audio();
+                remember_net_setting("audio", false);
             }
         }
         res->result(ok ? http::status::ok : http::status::internal_server_error);
@@ -1731,8 +1786,11 @@ Server::Server(net::io_context& ioc, const tcp::endpoint& endpoint)
     if (stats_->assoc().use_merges_file(net_merges_file()))
         std::cerr << "net merges: loaded " << merges_count(stats_->assoc().merges()) << " from " << net_merges_file() << "\n";
 
-    // DSD_NET_AUDIO=1: record each call's decoded voice from startup.
-    if (env_on("DSD_NET_AUDIO")) {
+    // Record each call's decoded voice from startup: DSD_NET_AUDIO=1 (=0 never),
+    // or, with it unset, as the explorer's Audio switch was last left.
+    const char* na = std::getenv("DSD_NET_AUDIO");
+    const bool audio_at_start = (na && na[0]) ? env_on("DSD_NET_AUDIO") : net_setting("audio") == 1;
+    if (audio_at_start) {
         if (stats_->assoc().start_audio(net_audio_dir(), net_audio_max_bytes(), net_audio_max_age_ms()))
             std::cerr << "net audio: recording calls into " << net_audio_dir() << "\n";
         else

@@ -1106,7 +1106,7 @@ over HTTP and the connection closed:
 | `GET /net/log/on` | starts recording every input of the explorer's model to `net_<UTC>.jsonl.gz` (`?clear=1` clears the model first so the recording replays exactly); returns the recording status |
 | `GET /net/log/off` | stops recording (the file ends with a snapshot of the model); returns the recording status |
 | `GET /net/log/download` | `application/gzip` — the current or most recent recording; `404` if there is none |
-| `GET /net/audio/on` | starts recording each call's decoded voice (off by default; see `/net.json` `audio`); returns the audio status |
+| `GET /net/audio/on` | starts recording each call's decoded voice (off by default; see `/net.json` `audio`); returns the audio status. `on` / `off` is remembered for the next start (`DSD_NET_SETTINGS_FILE`, default `net_settings.json` in the recordings folder) unless `DSD_NET_AUDIO` is set |
 | `GET /net/audio/off` | stops recording call audio (finished files stay playable); returns the audio status |
 | `GET /net/audio/<file>.wav` | `audio/wav` — a call's audio (the `audio` file a call lists); supports `Range` (`206`); `404` for any name the server didn't create |
 | `GET /net/asr/config.json` | `application/json` — the explorer's speech-to-text assets (`DSD_NET_ASR_DIR`): `{"local","lib","models":[…],"model","language","dir"}` — `local` when the library and at least one model are present |

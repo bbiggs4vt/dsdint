@@ -362,7 +362,9 @@ tablet or phone the details are a drawer: **Close** or Esc.
 
 The explorer can keep each call's decoded voice so you can play it back.
 **Off by default.** Turn it on with **♫ Audio** in the header, or start the
-server with `DSD_NET_AUDIO=1`.
+server with `DSD_NET_AUDIO=1`. The server remembers the switch: after a
+restart, audio recording is on or off as you last left it (unless the server
+is started with `DSD_NET_AUDIO` set, which decides at every start).
 
 - **▶** plays a call (press again, or ■, to stop). The call playing stays in
   a **bar at the bottom of the window** — time, channel, who → whom,
@@ -528,7 +530,8 @@ Server environment variables that affect the explorer (details in the README):
 | `DSD_NET_FREQ_STEP_HZ` | 1250 | Channel raster frequencies are snapped to. |
 | `DSD_NET_MERGES_FILE` | `net_merges.json` in the log dir | Where the [network merges](#merging-networks) are kept across restarts. |
 | `DSD_NET_CHANNEL_MERGE` | (merge) | `receiver` keeps different receivers' channel networks apart when merging. |
-| `DSD_NET_AUDIO` | off | `1` records call audio from startup. |
+| `DSD_NET_AUDIO` | (as last left) | `1` records call audio from startup, `0` never at startup; unset, the **♫ Audio** switch is remembered across restarts. |
+| `DSD_NET_SETTINGS_FILE` | `net_settings.json` in the log dir | Where remembered switches (♫ Audio) are kept. |
 | `DSD_NET_AUDIO_DIR` | `net_audio/` in the log dir | Where call audio goes. |
 | `DSD_NET_AUDIO_MAX_MB` / `DSD_NET_AUDIO_MAX_AGE_H` | 1024 / none | Audio disk cap and maximum age. |
 | `DSD_NET_ASR_DIR` | `net_asr/` in the log dir | Speech-to-text files (`tools/get_asr_assets.sh`). |

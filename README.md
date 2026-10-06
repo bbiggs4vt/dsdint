@@ -741,7 +741,10 @@ easy to tell apart.
 
 The explorer can keep each call's decoded voice and play it back: switch on
 **♫ Audio** in the explorer header (in the **Menu** on small screens), or start
-the server with `DSD_NET_AUDIO=1`. It is **off by default**. Calls with audio
+the server with `DSD_NET_AUDIO=1`. It is **off by default**; the switch is
+remembered across restarts (in `net_settings.json` next to the recordings, or
+`DSD_NET_SETTINGS_FILE`) unless `DSD_NET_AUDIO` is set (`1` on, `0` off, at
+every start). Calls with audio
 then get a **▶** button (with their length) in the Calls view and in a radio's
 or talkgroup's recent calls.
 
