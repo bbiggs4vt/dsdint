@@ -118,6 +118,22 @@ public:
         if (it != open_.end()) { close_file(it->second); open_.erase(it); }
         remove_entry(name);
     }
+    // Delete every finished file of ours (the explorer's Clear, when asked):
+    // the files this store indexed -- this run's and earlier runs' in its
+    // folder. A call still being recorded keeps its file. Returns how many
+    // files and bytes went.
+    std::pair<std::uint64_t, std::uint64_t> remove_all() {
+        std::uint64_t n = 0, bytes = 0;
+        for (auto it = index_.begin(); it != index_.end();) {
+            if (open_.count(it->name)) { ++it; continue; }
+            std::error_code ec;
+            std::filesystem::remove(dir_ + "/" + it->name, ec);
+            ++n; bytes += it->bytes;
+            total_ -= std::min(total_, it->bytes);
+            it = index_.erase(it);
+        }
+        return { n, bytes };
+    }
     std::uint64_t samples(const std::string& name) const {
         auto it = open_.find(name);
         return it == open_.end() ? 0 : it->second.samples;

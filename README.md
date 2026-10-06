@@ -503,7 +503,7 @@ session exactly as before; anything else is answered over HTTP:
 | `/status.json` | the same data as JSON, for health checks / scraping |
 | `/iq_log/on`, `/iq_log/off` | flip the global IQ-capture switch (the page's **Log IQ** checkbox); returns `{"iq_log_enabled":…}` |
 | `/net` | the network explorer page (see [Network explorer](#network-explorer)) |
-| `/net.json`, `/net/clear` | the explorer's association model as JSON; forget it (and its imports) |
+| `/net.json`, `/net/clear` | the explorer's association model as JSON; forget it (and its imports; `?audio=1` also deletes the call audio files) |
 | `/net/export.json`, `/net/export.graphml` | export what the explorer shows: native (re-openable) / GraphML |
 | `POST /net/import`, `/net/imports/remove`, `/net/imports/clear`, `POST /net/merge` | add exports to the live view, remove them; merge exports without the live data |
 | `/net/log/on`, `/net/log/off`, `/net/log/download` | record the explorer's inputs (`?clear=1` clears first); stop; download the current / last recording |

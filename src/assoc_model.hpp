@@ -220,6 +220,15 @@ public:
         if (rec_.on()) rec_.write("{\"op\":\"clear\",\"t\":" + std::to_string(now) + "}", now);
         clear_locked(now);
     }
+    // Clear, and also delete the call audio files (the forgotten calls' --
+    // and any others the audio folder holds). Returns files and bytes deleted.
+    std::pair<std::uint64_t, std::uint64_t> clear_with_audio(std::int64_t now = now_ms()) {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (rec_.on()) rec_.write("{\"op\":\"clear\",\"t\":" + std::to_string(now) + "}", now);
+        clear_locked(now);                     // finishes the calls' files first
+        ++version_;
+        return audio_.remove_all();
+    }
 
     // ---- recording (see assoc_log.hpp) ------------------------------------
     struct RecStatus {

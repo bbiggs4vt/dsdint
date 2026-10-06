@@ -2692,7 +2692,16 @@ $('pause').addEventListener('click', function () {
 $('clear').addEventListener('click', function () {
   if (!confirm('Forget all calls, talkgroups, radios and networks learned so far' +
                (S.d && S.d.imports && S.d.imports.length ? ', and the imports' : '') + '?')) return;
-  fetch('/net/clear', { cache: 'no-store' }).then(function () { S.sel = null; S.nets = {}; S.tgf = {}; S.rf = {}; GR.sig = ''; });
+  // The call audio files stay unless asked: they are on the server's disk.
+  var au = S.d && S.d.audio, audio = false;
+  if (au && au.files > 0)
+    audio = confirm('Also delete the ' + au.files + ' call audio file' + (au.files === 1 ? '' : 's') + ' (' + mb(au.bytes) +
+                    ') from the server?\n\nOK deletes them \u2014 they can\u2019t be recovered. Cancel keeps them (still playable from exports and downloads made earlier).');
+  if (audio && PLAYER.a && PLAYER.name) { PLAYER.a.pause(); PLAYER.name = null; syncPlay(); }
+  fetch('/net/clear' + (audio ? '?audio=1' : ''), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (r) {
+    S.sel = null; S.nets = {}; S.tgf = {}; S.rf = {}; GR.sig = '';
+    toast('Cleared.' + (audio ? ' Deleted ' + r.audio_files + ' audio file' + (r.audio_files === 1 ? '' : 's') + ' (' + mb(r.audio_bytes) + ').' : ''));
+  }, function () { toast('Could not clear (is the server reachable?).'); });
 });
 ['(max-width: 640px)', '(max-width: 1050px)'].forEach(function (q) {
   if (!window.matchMedia) return;

@@ -475,6 +475,12 @@ int main() {
         std::vector<int16_t> s;
         check(wav(m.audio_path(name, 1LL << 40), s) && s.size() == 800 && !m.audio_path(name, 1500).empty(),
               "clear: the explorer forgets the call; its finished file stays (until the cap)");
+        // Clear with audio (the page asks): the files are deleted from disk.
+        const std::string fpath = m.audio_path(name, 1600);
+        const auto gone = m.clear_with_audio(1700);
+        check(gone.first == 1 && gone.second >= 44 + 1600 && !std::filesystem::exists(fpath) && m.audio_path(name, 1800).empty() &&
+                  m.audio_status().files == 0 && m.audio_status().bytes == 0,
+              "clear with audio: the call audio files are deleted, and the store is empty");
     }
 
     fs::remove_all(dir);

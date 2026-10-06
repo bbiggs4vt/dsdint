@@ -654,10 +654,16 @@ void Session::serve_http() {
         // Explorer Clear button: forget everything learned so far, and the
         // imports (a side-effecting GET, matching /log/clear's style for
         // these pages).
-        if (stats_) stats_->assoc().clear();
+        // ?audio=1 also deletes the call audio files.
+        std::pair<std::uint64_t, std::uint64_t> gone{0, 0};
+        if (stats_) {
+            if (query.find("audio=1") != std::string::npos) gone = stats_->assoc().clear_with_audio();
+            else stats_->assoc().clear();
+        }
         res->result(http::status::ok);
         res->set(http::field::content_type, "application/json");
-        res->body() = std::string("{\"ok\":true}");
+        res->body() = "{\"ok\":true,\"audio_files\":" + std::to_string(gone.first) +
+                      ",\"audio_bytes\":" + std::to_string(gone.second) + "}";
     } else if (target == "/iq_log/on" || target == "/iq_log/off") {
         // Status-page "Log IQ" switch: flip the global IQ-capture toggle. Every
         // active session opens (on) or closes (off) its BLUE capture, and new
