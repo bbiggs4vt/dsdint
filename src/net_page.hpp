@@ -1215,7 +1215,7 @@ function positionsSection(d, r) {
   d.appendChild(ul);
   if (tr.length > 25) d.appendChild(h('div', { class: 'hint', text: 'and ' + (tr.length - 25) + ' earlier (all of them in the KML)' }));
 }
-// The Text column: the message, else the data service; and a position report.
+// The Content column: the message, else the data service; and a position report.
 function textCell(c) {
   var parts = [];
   if (c.text) parts.push(c.text);
@@ -1543,7 +1543,7 @@ function viewCalls() {
     { label: 'Type', cls: 'nowrap ctype', cell: typeBadges },
     { label: 'Audio', cls: 'nowrap', k: function (c) { return hasAudio(c) ? 1 : 0; }, cell: audioCell,
       hideEmpty: hasAudio },
-    { label: 'Text', cls: 'wrap', cell: textCell, hideEmpty: function (c) { return !!(c.text || c.svc || c.pos); } }
+    { label: 'Content', cls: 'wrap', cell: textCell, hideEmpty: function (c) { return !!(c.text || c.svc || c.pos); } }
   ], rows, (S.audOnly ? 'No calls with audio' : 'No calls heard yet') + (anyFilter() || S.q ? ' for this filter.' : '.'),
      null, null, callCard, function (c) { return sttSpan(c); });
 }
@@ -1685,7 +1685,7 @@ function lst(items, max) {
 }
 function kv(pairs) { return h('div', { class: 'kv' }, pairs.map(function (p) { return h('div', null, [h('b', { text: String(p[1]) }), h('span', { text: p[0] })]); })); }
 // Under a recent call: its text (quoted), else what the data call carried;
-// and a position report -- as the Calls view's Text column shows them.
+// and a position report -- as the Calls view's Content column shows them.
 function recentNote(c) {
   var kids = [];
   if (c.text) kids.push('\u201C' + c.text + '\u201D');
