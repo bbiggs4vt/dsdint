@@ -1356,7 +1356,7 @@ function wy(lat, z) {
 function TileMap(opts) {
   var m = this;
   m.opts = opts || {};
-  m.z = 3; m.cx = 0; m.cy = 0; m.key = null; m.layers = { lines: [], pts: [] }; m.imgs = {}; m.ok = 0; m.bad = 0; m.ts = null;
+  m.z = 2; m.cx = 512; m.cy = 512;           // the world, centred (until fit()) m.key = null; m.layers = { lines: [], pts: [] }; m.imgs = {}; m.ok = 0; m.bad = 0; m.ts = null;
   m.tiles = h('div', { class: 'tm-tiles' });
   m.svg = sv('svg', { class: 'tm-ov' });
   m.att = h('div', { class: 'tm-att' });
@@ -1409,7 +1409,12 @@ TileMap.prototype.bounds = function () {
 };
 TileMap.prototype.fit = function () {
   var b = this.bounds(), w = this.el.clientWidth || 300, hh = this.el.clientHeight || 200;
-  if (!b) return;
+  this.empty = !b;                           // (the first positions to arrive get fitted: set())
+  if (!b) {                                  // nothing to show: the whole world, centred
+    this.z = Math.max(1, Math.min(this.maxZ(), Math.ceil(Math.log(w / 256) / Math.LN2)));
+    this.cx = this.cy = 128 * Math.pow(2, this.z);
+    return;
+  }
   var z = Math.min(this.maxZ(), 17);
   while (z > 1 && (wx(b[3], z) - wx(b[1], z) > w - 60 || wy(b[0], z) - wy(b[2], z) > hh - 60)) --z;
   this.z = z;
@@ -1421,6 +1426,7 @@ TileMap.prototype.set = function (layers, key) {
   if (ts !== this.ts) { this.ts = ts; this.tiles.textContent = ''; this.imgs = {}; this.ok = this.bad = 0; }
   if (key !== this.key && this.el.clientWidth) { this.key = key; this.fit(); }
   else if (key !== this.key) this.pendingKey = key;
+  else if (this.empty && this.el.clientWidth && this.bounds()) this.fit();   // first positions on an empty map
   this.draw();
 };
 TileMap.prototype.draw = function () {
