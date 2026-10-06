@@ -227,6 +227,11 @@ inline std::string render_net_page_html() {
   .lst li .c { color: var(--muted); font-variant-numeric: tabular-nums; font-size: .8rem; }
   .bar { height: 3px; background: var(--info); border-radius: 2px; margin-top: 2px; opacity: .7; }
   .tagrow { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .4rem; }
+  .mrow { display: flex; align-items: center; gap: .5rem; padding: .22rem 0; border-bottom: 1px solid rgba(0,0,0,.25); }
+  .mrow .ml { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .mpick { margin-top: .7rem; align-items: center; }
+  .msel { flex: 1; min-width: 0; max-width: 100%; background: #1f2327; color: var(--heading); border: 1px solid var(--comp-bd);
+          border-radius: 3px; font: inherit; font-size: .85rem; padding: .15rem .2rem; }
   .ids { font-family: Menlo, Monaco, Consolas, monospace; font-size: .8rem; color: var(--text); }
   .grid2 { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(330px, 100%), 1fr)); gap: .8rem; padding: .8rem; }
   .comm { background: var(--panel2); border: 1px solid var(--comp-bd); border-radius: 4px; padding: .6rem .75rem; }
@@ -421,7 +426,7 @@ inline std::string render_net_page_html() {
     .netc { padding: .3rem 0; }
     .scroll { max-height: none !important; overflow-y: visible; overflow-x: auto; }
     .lst li { padding: .45rem 0; }
-    .gbar select, .sortbar select { min-height: 40px; }
+    .gbar select, .sortbar select, .msel { min-height: 40px; }
     .gbar label { min-height: 40px; }
     .gbar input[type=checkbox] { width: 20px; height: 20px; }
     #gwrap { height: min(640px, max(320px, 66vh)); }
@@ -598,6 +603,169 @@ function keys(o) { return o ? Object.keys(o) : []; }
 function sum(o) { var t = 0; for (var k in o) t += o[k]; return t; }
 function live(c) { return !S.file && c.open && now() - c.last < LIVE_MS; }
 
+// ---------- network merges ----------
+// d.merges (per protocol: network key -> the key it is shown under) are the
+// server's shared "these are one network" rules -- e.g. one channel heard at
+// two frequency offsets. applyMerges shows each group as one network (its
+// parts in .parts) that every talkgroup, radio and call refers to. The data
+// underneath stays apart (kept in networks0 / networks0 / net0), so it can be
+// re-applied whenever the rules change, and Unmerge just drops a rule.
+var CONF_RANK = { strong: 3, channel: 2, weak: 1, none: 0 };
+function applyMerges(d) {
+  var M = d.merges || {};
+  keys(d.families).forEach(function (f) {
+    var F = d.families[f], R = M[f] || {};
+    if (!F.networks0 && !keys(R).length) return;       // nothing merged, ever: leave it as it came
+    if (!F.networks0) F.networks0 = F.networks;
+    var root = function (k) { return R[k] || k; }, by = {}, out = [];
+    F.networks0.slice().sort(function (a, b) { return (R[a.key] ? 1 : 0) - (R[b.key] ? 1 : 0); }).forEach(function (n) {
+      var r = root(n.key), g = by[r];
+      if (!g) {                                          // a target first, so its label names the group
+        g = by[r] = Object.assign({}, n, { key: r, ids: Object.assign({}, n.ids), sites: n.sites.slice(),
+                                           freqs: (n.freqs || []).slice(), parts: [n] });
+        out.push(g);
+        return;
+      }
+      g.parts.push(n);
+      if ((CONF_RANK[n.confidence] || 0) > (CONF_RANK[g.confidence] || 0)) g.confidence = n.confidence;
+      keys(n.ids).forEach(function (k) { if (!(k in g.ids)) g.ids[k] = n.ids[k]; });
+      n.sites.forEach(function (x) { if (g.sites.indexOf(x) < 0) g.sites.push(x); });
+      (n.freqs || []).forEach(function (x) { if (g.freqs.indexOf(x) < 0) g.freqs.push(x); });
+      g.freqs.sort(function (a, b) { return a - b; });
+      g.sessions += n.sessions; g.calls += n.calls;
+      g.first = !g.first ? n.first : !n.first ? g.first : Math.min(g.first, n.first);
+      g.last = Math.max(g.last, n.last);
+    });
+    F.networks = out;
+    var remap = function (o) {
+      if (!o.networks0) o.networks0 = o.networks;
+      var l = [];
+      o.networks0.forEach(function (k) { k = root(k); if (l.indexOf(k) < 0) l.push(k); });
+      o.networks = l;
+    };
+    F.talkgroups.forEach(remap);
+    F.radios.forEach(remap);
+    F.calls.forEach(function (c) { if (c.net0 == null) c.net0 = c.net; c.net = root(c.net0); });
+  });
+}
+// The same rules as the server's (merges_add / merges_remove), for file views.
+function mergesAdd(M, f, from, to) {
+  var F = M[f] = M[f] || {}, r = F[to] || to;
+  if (r === from || (F[from] || from) === r) return false;
+  F[from] = r;
+  keys(F).forEach(function (k) { if (F[k] === from) F[k] = r; });
+  return true;
+}
+function mergesRemove(M, f, key) {
+  var F = M[f];
+  if (!F) return false;
+  if (F[key]) { delete F[key]; return true; }
+  var ch = false;
+  keys(F).forEach(function (k) { if (F[k] === key) { delete F[k]; ch = true; } });
+  return ch;
+}
+// Merge networks `froms` into `to` (live: on the server, for everyone; file
+// view: in this view only), or undo (`to` null: unmerge each of `froms`).
+function changeMerges(froms, to, done) {
+  var fam = S.fam;
+  var after = function (merges, n) {
+    S.d.merges = merges;
+    applyMerges(S.d);
+    if (S.sel && S.sel.type === 'net' && to && froms.indexOf(S.sel.id) >= 0) S.sel = { type: 'net', id: to };
+    GR.sig = '';
+    render();
+    if (done) done(n);
+  };
+  if (S.file) {
+    var M = JSON.parse(JSON.stringify(S.d.merges || {})), n = 0;
+    froms.forEach(function (k) { if (to ? mergesAdd(M, fam, k, to) : mergesRemove(M, fam, k)) ++n; });
+    after(M, n);
+    return;
+  }
+  var res = null, n = 0, chain = Promise.resolve();
+  froms.forEach(function (k) {
+    chain = chain.then(function () {
+      var u = to ? '/net/networks/merge?fam=' + encodeURIComponent(fam) + '&from=' + encodeURIComponent(k) + '&to=' + encodeURIComponent(to)
+                 : '/net/networks/unmerge?fam=' + encodeURIComponent(fam) + '&key=' + encodeURIComponent(k);
+      return fetch(u, { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) { res = j.merges; if (j.ok) ++n; });
+    });
+  });
+  chain.then(function () { if (res) after(res, n); })
+       .catch(function () { toast('Could not reach the server to change the merge.'); });
+}
+function mergeInto(froms, to) {
+  changeMerges(froms, to, function (n) {
+    var t = IX.netByKey[to];
+    toast(n ? 'Merged ' + (froms.length > 1 ? froms.length + ' networks' : 'the network') + ' into ' + (t ? t.label : to) +
+              (S.file ? ' (in this file view only)' : '') + '. Unmerge undoes it.'
+            : 'Nothing to merge — already one network.');
+  });
+}
+function unmerge(keysList) {
+  changeMerges(keysList, null, function (n) { toast(n ? 'Unmerged.' : 'Not merged.'); });
+}
+// Networks this one could be the same as, likeliest first: the same short
+// code (color code / NAC / RAN...) on the nearest frequency, then shared
+// talkgroups and radios.
+function mergeCandidates(n) {
+  var code = function (x) { var o = x.ids || {}; return o.cc || o.nac || o.ran || o.rpt1 || o.downlink || ''; };
+  var dist = function (a, b) {
+    var best = Infinity;
+    (a.freqs || []).forEach(function (f) { (b.freqs || []).forEach(function (g) { best = Math.min(best, Math.abs(f - g)); }); });
+    return best;
+  };
+  var shared = function (o) {
+    var c = 0;
+    IX.tgs.forEach(function (t) { if (t.networks.indexOf(n.key) >= 0 && t.networks.indexOf(o.key) >= 0) ++c; });
+    IX.radios.forEach(function (r) { if (r.networks.indexOf(n.key) >= 0 && r.networks.indexOf(o.key) >= 0) ++c; });
+    return c;
+  };
+  var me = code(n);
+  return IX.nets.filter(function (o) { return o.key !== n.key; }).map(function (o) {
+    return { n: o, same: !!me && code(o) === me, d: dist(n, o), s: shared(o) };
+  }).sort(function (a, b) { return (b.same - a.same) || (a.d - b.d) || (b.s - a.s) || (b.n.calls - a.n.calls); });
+}
+function khz(hz) { return hz < 1e6 ? String(+(hz / 1000).toFixed(2)) + ' kHz' : mhz(hz) + ' MHz'; }
+// The network details' merge section: what it is made of (with Unmerge) and
+// a picker to merge it into another network.
+function mergeSection(d, n) {
+  var parts = (n.parts || [n]).filter(function (p) { return p.key !== n.key; });
+  if (parts.length) {
+    d.appendChild(h('h4', { text: 'Merged networks' }));
+    d.appendChild(h('div', { class: 'hint', style: 'font-size:.8rem;margin-bottom:.3rem',
+      text: 'Shown as one network' + (S.file ? ' in this file view.' : ' for everyone viewing this server, and in exports.') +
+            ' The networks stay apart underneath: Unmerge separates them again.' }));
+    var ul = h('div', { class: 'mlist' });
+    (n.parts || []).forEach(function (p) {
+      var main = p.key === n.key;
+      ul.appendChild(h('div', { class: 'mrow' }, [
+        h('span', { class: 'ml' }, [h('b', { text: p.label }), h('span', { class: 'alias', text: ' · ' + p.calls + ' calls' +
+          ((p.freqs || []).some(function (f) { return p.label.indexOf(mhz(f)) < 0; }) ? ' · ' + p.freqs.map(mhz).join(', ') + ' MHz' : '') +
+          (main ? ' · main' : '') })]),
+        main ? null : h('button', { class: 'btn sm', type: 'button', title: 'Show it as a network of its own again',
+                                    onclick: function () { unmerge([p.key]); } }, 'Unmerge')]));
+    });
+    d.appendChild(ul);
+    if (parts.length > 1)
+      d.appendChild(h('button', { class: 'btn sm', type: 'button', style: 'margin-top:.3rem', onclick: function () { unmerge([n.key]); } }, 'Unmerge all'));
+  }
+  var cands = mergeCandidates(n);
+  if (!cands.length) return;
+  var selEl = h('select', { class: 'msel', 'aria-label': 'Network to merge this one into' },
+    [h('option', { value: '' }, 'Merge into…')].concat(cands.map(function (c) {
+      var why = [];
+      if (c.same) why.push('same code');
+      if (isFinite(c.d)) why.push(c.d ? khz(c.d) + ' away' : 'same channel');
+      if (c.s) why.push(c.s + ' shared');
+      return h('option', { value: c.n.key }, c.n.label + (why.length ? '  (' + why.join(', ') + ')' : ''));
+    })));
+  var go = h('button', { class: 'btn sm', type: 'button', disabled: true,
+    title: 'Show this network as part of the one picked (one channel heard at two frequency offsets, say)',
+    onclick: function () { if (selEl.value) mergeInto([n.key], selEl.value); } }, 'Merge');
+  selEl.addEventListener('change', function () { go.disabled = !selEl.value; });
+  d.appendChild(h('div', { class: 'tagrow mpick' }, [selEl, go]));
+}
+
 // ---------- indexing ----------
 function colorFor(key) {
   var n = IX && IX.netByKey[key];
@@ -706,6 +874,8 @@ function sw(key) { return h('span', { class: 'sw', style: 'background:' + colorF
 function netc(key, hz) {
   var n = IX.netByKey[key], label = n ? n.label : key;
   var short = hz ? label.replace(' \u00B7 ' + mhz(hz) + ' MHz', '') : label;
+  // A merged network spans channels: its own label's one goes too.
+  if (hz && n && n.parts && n.parts.length > 1) short = short.replace(/ \u00B7 [\d.]+ MHz$/, '');
   return h('span', { class: 'netc', title: label,
                      onclick: function (e) { e.stopPropagation(); select('net', key); } }, [sw(key), short || label]);
 }
@@ -1614,7 +1784,10 @@ function viewRadios() {
 function viewNets() {
   var rows = IX.nets.slice().sort(function (a, b) { return b.last - a.last; });
   table($('t-nets'), 'nets', [
-    { label: 'Network', k: function (n) { return n.label; }, dir: 1, cell: function (n) { return netc(n.key); } },
+    { label: 'Network', k: function (n) { return n.label; }, dir: 1, cell: function (n) {
+        var m = (n.parts || []).length - 1;
+        return m > 0 ? h('span', null, [netc(n.key), h('span', { class: 'alias', style: 'white-space:nowrap', title: 'Networks merged into this one (see its details)',
+                                                                text: ' +' + m + ' merged' })]) : netc(n.key); } },
     { label: 'Identity', cell: function (n) { return confBadge(n.confidence); } },
     { label: 'Identifiers', cls: 'ids', hideMd: true, cell: function (n) { return keys(n.ids).map(function (k) { return k + '=' + n.ids[k]; }).join('  '); } },
     { label: 'Sites', cell: function (n) { return n.sites.join(', ') || '—'; } },
@@ -1824,6 +1997,7 @@ function renderDetail() {
     d.appendChild(h('h4', { text: 'Channels' }));
     d.appendChild(h('div', { class: 'mono', text: (n.freqs || []).map(function (f) { return mhz(f) + ' MHz'; }).join(', ') ||
       'Unknown (the client sent no center_freq).' }));
+    mergeSection(d, n);
     if (n.confidence !== 'strong')
       d.appendChild(h('div', { class: 'hint', style: 'margin-top:.6rem;font-size:.8rem',
         text: n.confidence === 'channel'
@@ -2316,8 +2490,14 @@ function renderFilters() {
   FUI.body.hidden = !S.fOpen;
   if (!S.fOpen) return;
   var fill = function (row, items) { row.items.textContent = ''; items.forEach(function (x) { row.items.appendChild(x); }); };
+  // Two or more networks picked: they can be merged into one (the busiest).
+  var picked = byCalls.filter(function (n) { return S.nets[n.key] === 'in'; });
   fill(FUI.net, [h('span', { class: 'chip' + (netAll() ? ' active' : ''), onclick: function () { setNets([]); } }, 'All networks')]
-    .concat(byCalls.map(netChip)));
+    .concat(byCalls.map(netChip)).concat(picked.length < 2 ? [] : [h('button', { class: 'btn sm', type: 'button',
+      title: 'Show the ' + picked.length + ' picked networks as one -- under ' + picked[0].label + ', the busiest' +
+             (S.file ? ' (in this file view only)' : ' (for everyone viewing this server; Unmerge in its details undoes it)'),
+      onclick: function () { mergeInto(picked.slice(1).map(function (n) { return n.key; }), picked[0].key); } },
+      'Merge picked (' + picked.length + ')')]));
   fill(FUI.tg, [h('span', { class: 'chip' + (tgAll() ? ' active' : ''), onclick: function () { setF('tgf', {}); } }, 'All talkgroups')]
     .concat(tgIds.map(tgChip)));
   fill(FUI.r, [h('span', { class: 'chip' + (fAll(S.rf) ? ' active' : ''), onclick: function () { setF('rf', {}); } }, 'All radios')]
@@ -2427,7 +2607,8 @@ function openData(d, name, report) {
   if (d.format === 'dsd-net-export' && d.format_version > 1)
     alert('This export uses a newer format (v' + d.format_version + '); some details may not show.');
   S.file = { name: name, exported: d.exported || d.now, source: d.name || d.source || '' };
-  S.d = { version: -Date.now(), now: d.now || d.exported, families: d.families, rec: {} };
+  S.d = { version: -Date.now(), now: d.now || d.exported, families: d.families, rec: {}, merges: d.merges || {} };
+  applyMerges(S.d);
   S.fam = null; S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; S.q = ''; $('q').value = ''; GR.sig = ''; GR.fitted = false;
   document.body.classList.add('filemode');
   var fb = $('filebar'), srcs = d.sources || [];
@@ -2668,6 +2849,7 @@ function poll() {
     updateAudio(d.audio);
     updateImports(d.imports);
     var changed = !S.d || d.version !== S.d.version;
+    applyMerges(d);
     S.d = d;
     $('live').textContent = 'live · updated ' + hms(d.now) + 'Z';
     if (changed || S.view === 'calls') render();

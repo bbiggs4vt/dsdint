@@ -49,6 +49,8 @@
 #include <cstdlib>
 #include <ctime>
 #include <deque>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <mutex>
 #include <random>
@@ -714,6 +716,63 @@ public:
         return imports_.size();
     }
 
+    // ---- network merges (NetMerges, assoc_merge.hpp) ------------------------
+    // Shared by everyone viewing this server, kept through Clear, and -- with
+    // a file (use_merges_file) -- through restarts. The data is never changed:
+    // the explorer shows each group as one network, exports carry the rules.
+    // Import adds an export's rules for its own networks to that layer.
+    //
+    // Keep the rules in `path` ({"merges":{...}}): load it now, save on change.
+    bool use_merges_file(const std::string& path) {
+        std::lock_guard<std::mutex> lk(mu_);
+        merges_file_ = path;
+        std::ifstream f(path, std::ios::binary);
+        if (!f) return false;
+        std::stringstream ss;
+        ss << f.rdbuf();
+        mjson::V root;
+        if (!mjson::parse(ss.str(), root) || root.t != mjson::V::Obj) return false;
+        const mjson::V* mg = root.get("merges");
+        if (!mg || mg->t != mjson::V::Obj) return false;
+        NetMerges m;
+        for (const auto& fk : mg->o)
+            if (fk.second.t == mjson::V::Obj)
+                for (const auto& kv : fk.second.o)
+                    if (kv.second.t == mjson::V::Str) merges_add(m, fk.first, kv.first, kv.second.s);
+        merges_ = std::move(m);
+        ++version_;
+        return true;
+    }
+    // Show network `from` (and any merged into it) as part of `to`.
+    bool merge_networks(const std::string& family, const std::string& from, const std::string& to) {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (!merges_add(merges_, family, from, to)) return false;
+        // A rule an import brought for `from` gives way to this one.
+        for (auto& x : imports_) {
+            auto f = x.merges.find(family);
+            if (f != x.merges.end()) f->second.erase(from);
+        }
+        ++version_;
+        save_merges_locked();
+        return true;
+    }
+    // Undo: `key` is a merged network (it goes back to being its own) or a
+    // network others were merged into (they all go back).
+    bool unmerge_network(const std::string& family, const std::string& key) {
+        std::lock_guard<std::mutex> lk(mu_);
+        bool changed = merges_remove(merges_, family, key);
+        for (auto& x : imports_) changed = merges_remove(x.merges, family, key) || changed;
+        if (!changed) return false;
+        ++version_;
+        save_merges_locked();
+        return true;
+    }
+    // The rules in effect (the server's own, then the imports').
+    NetMerges merges() const {
+        std::lock_guard<std::mutex> lk(mu_);
+        return view_merges_locked();
+    }
+
     // This server run's identity in exports (see assoc_merge.hpp). The
     // instance is random per process; the name is DSD_SERVER_NAME or the
     // host name. Tests and replays set them explicitly.
@@ -759,6 +818,7 @@ private:
                ",\"audio\":" + audio_json_locked() + ",\"max_calls\":" + std::to_string(max_calls_) +
                ",\"map\":" + map_json() +
                ",\"rates\":" + rates_json_locked(now) + ",\"imports\":" + im +
+               ",\"merges\":" + merges_json(view_merges_locked()) +
                ",\"families\":";
     }
     // The explorer's map: a tile server of your own (DSD_NET_MAP_TILES, a URL
@@ -860,9 +920,30 @@ private:
         }
         return d;
     }
+    NetMerges view_merges_locked() const {
+        NetMerges m = merges_;
+        for (const auto& x : imports_) merges_union(m, x.merges);
+        return m;
+    }
+    void save_merges_locked() const {
+        if (merges_file_.empty()) return;
+        const std::string tmp = merges_file_ + ".tmp";
+        std::error_code ec;
+        const auto dir = std::filesystem::path(merges_file_).parent_path();
+        if (!dir.empty()) std::filesystem::create_directories(dir, ec);
+        {
+            std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+            if (!f) return;
+            f << "{\"merges\":" << merges_json(merges_) << "}\n";
+            if (!f) return;
+        }
+        std::filesystem::rename(tmp, merges_file_, ec);
+    }
+
     // Live data with the imports merged in.
     Dataset view_locked(std::int64_t now) const {
         Dataset d = dataset_locked(now);
+        d.merges = merges_;
         if (imports_.empty()) return d;
         for (const auto& x : imports_) merge_into(d, x);
         finalize_merge(d, false, max_calls_);
@@ -1676,6 +1757,8 @@ private:
     std::int64_t since_ = now_ms();
     std::vector<Dataset> imports_;
     std::uint64_t next_import_ = 0;
+    NetMerges merges_;                                 // network merges (shared; kept through Clear)
+    std::string merges_file_;                          // where they are kept ("" = memory only)
     bool per_receiver_ = default_per_receiver();
     std::size_t max_calls_ = max_calls_setting();
     CallAudioStore audio_;

@@ -1097,7 +1097,9 @@ over HTTP and the connection closed:
 | `GET /iq_log/off` | turns it off (finalizes every session's capture); returns `{"iq_log_enabled":false}` |
 | `GET /net` | `text/html` network explorer (calls / talkgroups / radios / networks and their associations; polls `/net.json`); sent with `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: credentialless` so it can be cross-origin isolated (multi-threaded speech-to-text) |
 | `GET /net.json` | `application/json` association model (see below) |
-| `GET /net/clear` | forgets everything the explorer learned, and its imports; returns `{"ok":true}` |
+| `GET /net/clear` | forgets everything the explorer learned, and its imports (`?audio=1` also deletes the call audio files); returns `{"ok":true,"audio_files":N,"audio_bytes":B}` |
+| `GET /net/networks/merge?fam=&from=&to=` | network merge: show network `from` (and any merged into it) as part of `to`, for every viewer; returns `{"ok":true\|false,"merges":{…}}` (`ok` false = nothing changed) |
+| `GET /net/networks/unmerge?fam=&key=` | undo: a merged network becomes its own again, or a network others were merged into lets them all go; same response |
 | `GET /net/export.json` | `application/json` attachment `net_export_<UTC>.json` — the explorer export (below) |
 | `GET /net/export.graphml` | `application/graphml+xml` attachment — the association graph for graph tools |
 | `GET /net/log/on` | starts recording every input of the explorer's model to `net_<UTC>.jsonl.gz` (`?clear=1` clears the model first so the recording replays exactly); returns the recording status |
@@ -1223,6 +1225,14 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
   began (server start or the last Clear). `imports` lists the exports imported
   into the view (see *Merging* below); `families` shows the live data and the
   imports merged.
+- `merges` are the network merges in effect, per protocol: network key → the
+  key it is shown under (`{"dmr": {"cc:1@436627500": "cc:1@436625000"}}`).
+  They are rules for display -- `families` still lists the networks apart,
+  and the explorer shows each group as one. Always flat (a target is never
+  itself merged). Set with `/net/networks/merge` / `unmerge`; shared by every
+  viewer, kept through Clear and restarts (`DSD_NET_MERGES_FILE`, default
+  `net_merges.json` in the recordings folder), and an import adds its
+  export's rules (this server's own win).
 - `max_calls` is how many calls are kept per protocol (`DSD_NET_MAX_CALLS`,
   default 5000; when full, calls without audio roll off first). `rates` gives
   per protocol `per_s_1m` / `per_s_10m` (calls per second over the last 1 / 10
@@ -1278,8 +1288,14 @@ header, so the explorer (and other tools) can open it later:
  "instance": "3f9a0c1d22b4e871", "name": "rx-north",
  "exported": 1790000000000, "now": 1790000000000,
  "sources": [{"instance": "3f9a0c1d22b4e871", "name": "rx-north", "since": 1789999000000, "through": 1790000000000}],
+ "merges": {"dmr": {"cc:1@436627500": "cc:1@436625000"}},
  "families": { ... as /net.json ... }}
 ```
+
+`merges` (only when there are any) are the network merges -- as in
+`/net.json` -- about networks the export holds (at least one end of each
+rule; the other may be in another receiver's export). Readers apply them for
+display; a reader that ignores them sees the networks apart.
 
 `sources` is the export's provenance: for each server run whose data it holds
 (this run's live data, plus anything it had imported), the span covered. A
@@ -1323,6 +1339,11 @@ same merge, `src/assoc_merge.hpp`):
   Data from different runs, or from before and after a Clear, merges freely.
   Other statuses: `imported` / `merged`, and `invalid` (not an export -- e.g.
   a recording -- with the reason).
+- Network merges (`merges`) are combined too; an imported rule's keys are
+  qualified like its networks', and a rule about another run's stream-scoped
+  network is dropped. Two sources' records of one call on networks merged
+  into one count as one call. GraphML output applies the merges (one network
+  node per group).
 - Imported calls get ids `<import id> × 10⁹ + n`, apart from live call ids.
   Imports last until removed or Clear; recordings never include them.
 

@@ -470,6 +470,91 @@ int main() {
               "default: another receiver's channel network joins the live one");
     }
 
+    // ---- network merges (NetMerges): rules, not changes to the data ----
+    {
+        NetMerges m;
+        check(merges_add(m, "dmr", "b", "a") && merge_root(m, "dmr", "b") == "a", "merges: b shown as a");
+        check(!merges_add(m, "dmr", "a", "b") && !merges_add(m, "dmr", "b", "a"), "merges: already one network -> no change");
+        check(merges_add(m, "dmr", "a", "c") && merge_root(m, "dmr", "a") == "c" && merge_root(m, "dmr", "b") == "c",
+              "merges: a group merged on moves all of it (rules stay flat)");
+        check(merges_add(m, "dmr", "d", "b") && m["dmr"]["d"] == "c", "merges: into a merged network = into its group");
+        check(merges_remove(m, "dmr", "a") && merge_root(m, "dmr", "a") == "a" && merge_root(m, "dmr", "b") == "c",
+              "merges: unmerge one");
+        check(merges_remove(m, "dmr", "c") && m.empty(), "merges: unmerge a target lets the whole group go");
+
+        const std::int64_t F1 = 436625000, F2 = 436627500;    // one channel, two frequency offsets
+        auto dmr_on = [](AssocModel& mm, std::uint64_t sid, std::int64_t t, std::int64_t f, const std::string& tg,
+                         const std::string& src) {
+            mm.begin_stream(sid, "dmr", t, "", f);
+            line(mm, sid, "19:54:55 Sync: +DMR  slot1  [SLOT2] | Color Code=01 | VC6 ", t + 10);
+            line(mm, sid, "19:54:55 Sync: +DMR  slot1  [SLOT2] | Color Code=01 | VC1 ", t + 20);
+            line(mm, sid, " SLOT 2 TGT=" + tg + " SRC=" + src + " Group Call  ", t + 30);
+            mm.end_stream(sid, t + 100);
+        };
+        const std::string A = "cc:1@436625000", B = "cc:1@436627500";
+        AssocModel X;
+        X.set_identity("abababab00000000", "north");
+        X.set_since(1000);
+        dmr_on(X, 1, 2000, F1, "9", "77");
+        dmr_on(X, 2, 9000, F2, "9", "78");
+        check(X.merge_networks("dmr", B, A) && !X.merge_networks("dmr", B, A), "merges: model takes a rule once");
+        mjson::V j = parse(X.to_json(20000));
+        const mjson::V* mg = j.get("merges");
+        check(mg && mg->get("dmr") && mg->get("dmr")->str(B.c_str()) == A, "merges: /net.json carries the rules");
+        check(arr(fam(j, "dmr"), "networks").a.size() == 2, "merges: the networks themselves stay apart");
+        const std::string ex = X.to_export_json(20000);
+        Dataset back;
+        check(dataset_from_export_text(ex, "x", back, nullptr) && merge_root(back.merges, "dmr", B) == A, "merges: exports carry them");
+        const std::string gm = X.to_graphml(20000);
+        std::size_t nn = 0;
+        for (std::size_t p = 0; (p = gm.find("<data key=\"type\">network</data>", p)) != std::string::npos; ++p) ++nn;
+        check(nn == 1 && gm.find("dmr:n:" + B) == std::string::npos, "merges: GraphML shows the group as one network");
+        X.clear(21000);
+        check(merge_root(X.merges(), "dmr", B) == A, "merges: kept through Clear");
+        check(X.unmerge_network("dmr", B) && X.merges().empty() && !X.unmerge_network("dmr", B), "merges: unmerge");
+
+        // Kept in a file across restarts.
+        const std::string path = "test_net_merges.json";
+        std::remove(path.c_str());
+        {
+            AssocModel S1;
+            check(!S1.use_merges_file(path), "merges file: none yet");
+            S1.merge_networks("dmr", B, A);
+        }
+        AssocModel S2;
+        check(S2.use_merges_file(path) && merge_root(S2.merges(), "dmr", B) == A, "merges file: loaded by the next run");
+        std::remove(path.c_str());
+
+        // Imported with the export, under the keys the import gives them
+        // (here: another receiver's channels kept apart).
+        AssocModel L;
+        L.set_identity("cdcdcdcd00000000", "south");
+        L.set_channels_per_receiver(true);
+        X.merge_networks("dmr", B, A);
+        dmr_on(X, 3, 22000, F1, "9", "79");
+        dmr_on(X, 4, 23000, F2, "9", "80");
+        check(L.import_export(X.to_export_json(30000), "x", 30000).status == "imported", "merges import: accepted");
+        check(merge_root(L.merges(), "dmr", B + "~north") == A + "~north", "merges import: rule follows the qualified keys");
+        check(L.unmerge_network("dmr", B + "~north") && L.merges().empty(), "merges import: an imported rule can be undone");
+
+        // Two receivers heard one call at different offsets: with the
+        // networks merged, a merge of their exports counts it once.
+        AssocModel P, Q;
+        P.set_identity("1111111100000000", "p");
+        Q.set_identity("2222222200000000", "q");
+        P.set_since(1000); Q.set_since(1000);
+        dmr_on(P, 1, 2000, F1, "9", "77");
+        dmr_on(Q, 1, 2050, F2, "9", "77");
+        std::vector<MergeReport> rep;
+        Dataset u = merge_exports({{"p", P.to_export_json(5000)}, {"q", Q.to_export_json(5000)}}, rep);
+        check(u.fams["dmr"].calls.size() == 2, "merges twins: without a rule, two calls");
+        P.merge_networks("dmr", B, A);
+        rep.clear();
+        Dataset w = merge_exports({{"p", P.to_export_json(5000)}, {"q", Q.to_export_json(5000)}}, rep);
+        check(w.fams["dmr"].calls.size() == 1 && w.fams["dmr"].calls[0].streams == 2,
+              "merges twins: with the networks merged, one call heard twice");
+    }
+
     // ---- merged calls are bounded ----
     {
         auto big = [](const std::string& inst, std::int64_t t0) {

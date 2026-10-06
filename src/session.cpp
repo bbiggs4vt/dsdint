@@ -35,6 +35,12 @@ std::string net_log_dir() {
     }
     return ".";
 }
+// Where the explorer's network merges are kept: DSD_NET_MERGES_FILE, or
+// net_merges.json in the recordings folder.
+std::string net_merges_file() {
+    const char* f = std::getenv("DSD_NET_MERGES_FILE");
+    return (f && f[0]) ? std::string(f) : (std::filesystem::path(net_log_dir()) / "net_merges.json").string();
+}
 std::uint64_t net_log_max_bytes() {
     const char* m = std::getenv("DSD_NET_LOG_MAX_MB");
     unsigned long mb = (m && m[0]) ? std::strtoul(m, nullptr, 10) : 1024;
@@ -640,6 +646,23 @@ void Session::serve_http() {
         res->result(ok ? http::status::ok : http::status::internal_server_error);
         res->set(http::field::content_type, "application/json");
         res->body() = stats_ ? net_audio_json(stats_->assoc().audio_status()) : std::string("{}");
+    } else if (target == "/net/networks/merge" || target == "/net/networks/unmerge") {
+        // Explorer network merges (NetMerges, assoc_merge.hpp), shared by every
+        // viewer: ?fam=dmr&from=KEY&to=KEY shows `from` as part of `to`;
+        // unmerge ?fam=dmr&key=KEY undoes it. Returns the rules now in effect.
+        bool ok = false;
+        std::string merges = "{}";
+        if (stats_) {
+            AssocModel& m = stats_->assoc();
+            const std::string fam = query_param(query, "fam");
+            ok = target == "/net/networks/merge"
+                     ? m.merge_networks(fam, query_param(query, "from"), query_param(query, "to"))
+                     : m.unmerge_network(fam, query_param(query, "key"));
+            merges = merges_json(m.merges());
+        }
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "application/json");
+        res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + ",\"merges\":" + merges + "}";
     } else if (target == "/net/imports/remove" || target == "/net/imports/clear") {
         // Remove one import (?id=N) or all of them; the live data stays.
         bool ok = true;
@@ -1688,6 +1711,10 @@ Server::Server(net::io_context& ioc, const tcp::endpoint& endpoint)
         else
             std::cerr << "net recording: could not create a file in " << net_log_dir() << "\n";
     }
+
+    // The explorer's network merges, kept across restarts.
+    if (stats_->assoc().use_merges_file(net_merges_file()))
+        std::cerr << "net merges: loaded " << merges_count(stats_->assoc().merges()) << " from " << net_merges_file() << "\n";
 
     // DSD_NET_AUDIO=1: record each call's decoded voice from startup.
     if (env_on("DSD_NET_AUDIO")) {

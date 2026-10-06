@@ -504,6 +504,7 @@ session exactly as before; anything else is answered over HTTP:
 | `/iq_log/on`, `/iq_log/off` | flip the global IQ-capture switch (the page's **Log IQ** checkbox); returns `{"iq_log_enabled":…}` |
 | `/net` | the network explorer page (see [Network explorer](#network-explorer)) |
 | `/net.json`, `/net/clear` | the explorer's association model as JSON; forget it (and its imports; `?audio=1` also deletes the call audio files) |
+| `/net/networks/merge`, `/net/networks/unmerge` | show two networks as one (`?fam=dmr&from=KEY&to=KEY`), or undo it (`?fam=dmr&key=KEY`) -- shared by every viewer, kept in `DSD_NET_MERGES_FILE` (default `net_merges.json` in the recordings folder) and in exports |
 | `/net/export.json`, `/net/export.graphml` | export what the explorer shows: native (re-openable) / GraphML |
 | `POST /net/import`, `/net/imports/remove`, `/net/imports/clear`, `POST /net/merge` | add exports to the live view, remove them; merge exports without the live data |
 | `/net/log/on`, `/net/log/off`, `/net/log/download` | record the explorer's inputs (`?clear=1` clears first); stop; download the current / last recording |
@@ -632,7 +633,12 @@ no code decoded yet is `Unidentified · 434.4250 MHz`. The status page still
 lists sessions by session number. Frequencies are snapped to
 `DSD_NET_FREQ_STEP_HZ` (default 1250 Hz -- the 6.25 kHz and 2.5 kHz channel
 plans stay exact and an offset up to ±625 Hz off still lands on its channel);
-a `set_freq_offset` moves the stream to the new channel. P25's NAC is the exception: a stream
+a `set_freq_offset` moves the stream to the new channel. If one channel still
+shows up as two networks (a tuning offset beyond that), **Merge into…** in the
+network's details (or **Merge picked** in the Filters) shows them as one --
+for everyone viewing the server, kept across restarts in
+`DSD_NET_MERGES_FILE` (default `net_merges.json` in the recordings folder)
+and carried in exports; **Unmerge** undoes it. P25's NAC is the exception: a stream
 that only hears a NAC is resolved to the known WACN/SysID network carrying
 that NAC, if exactly one does. Neighbour-site broadcasts are recorded as
 sites without moving the stream's identity, and a short code must be seen

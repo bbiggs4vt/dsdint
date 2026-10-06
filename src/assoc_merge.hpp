@@ -35,6 +35,11 @@
 // stream 3) are only unique within one server run, so an imported one is
 // qualified with its run ("cc:1@s3~1a2b3c4d") and labelled with the source's
 // name.
+//
+// Network merges (NetMerges) are the user's "these are one network" rules --
+// e.g. one channel heard at two frequency offsets. They travel with the data
+// (exports, imports, merges) but never change it: readers show each group as
+// one network, and only GraphML gets them applied (apply_merges).
 
 #pragma once
 
@@ -379,12 +384,62 @@ struct DsSource {
     std::string instance, name;
     std::int64_t since = 0, through = 0;
 };
+// Network merges: the explorer's "these are one network" rules (e.g. one
+// channel heard at two frequency offsets), per protocol: network key -> the
+// key it is shown under. Rules, not a merge of the data: the networks stay
+// apart underneath, so a merge can always be undone. Always flat -- a target
+// is never itself merged into another.
+using NetMerges = std::map<std::string, std::map<std::string, std::string>>;
+constexpr std::size_t kMaxMergesPerFamily = 500;
+
+// The key a network is shown under.
+inline std::string merge_root(const NetMerges& m, const std::string& fam, const std::string& key) {
+    auto f = m.find(fam);
+    if (f == m.end()) return key;
+    auto it = f->second.find(key);
+    return it == f->second.end() ? key : it->second;
+}
+// Show `from` (and whatever is merged into it) under `to`'s network. False
+// when nothing changes (already one network, or the rule list is full).
+inline bool merges_add(NetMerges& m, const std::string& fam, const std::string& from, const std::string& to) {
+    if (fam.empty() || from.empty() || to.empty()) return false;
+    const std::string r = merge_root(m, fam, to);
+    if (r == from || merge_root(m, fam, from) == r) return false;
+    auto& F = m[fam];
+    if (!F.count(from) && F.size() >= kMaxMergesPerFamily) return false;
+    F[from] = r;
+    for (auto& kv : F) if (kv.second == from) kv.second = r;
+    return true;
+}
+// Undo a merge: a merged network goes back to being its own; a network others
+// were merged into lets all of them go.
+inline bool merges_remove(NetMerges& m, const std::string& fam, const std::string& key) {
+    auto f = m.find(fam);
+    if (f == m.end()) return false;
+    auto& F = f->second;
+    bool changed = F.erase(key) > 0;
+    if (!changed) {
+        for (auto it = F.begin(); it != F.end();) {
+            if (it->second == key) { it = F.erase(it); changed = true; }
+            else ++it;
+        }
+    }
+    if (F.empty()) m.erase(f);
+    return changed;
+}
+inline std::size_t merges_count(const NetMerges& m) {
+    std::size_t n = 0;
+    for (const auto& f : m) n += f.second.size();
+    return n;
+}
+
 struct Dataset {
     std::uint64_t id = 0;                      // import id (live model layers)
     std::string label;                         // file name, or "live"
     std::int64_t exported = 0;
     std::vector<DsSource> sources;
     std::map<std::string, DsFamily> fams;
+    NetMerges merges;                          // network merges (see NetMerges)
 };
 
 // How many calls the explorer keeps per protocol (the live model's list and
@@ -485,13 +540,40 @@ inline std::string sources_json(const std::vector<DsSource>& ss) {
     return o + "]";
 }
 
+// {"dmr":{"cc:1@436627500":"cc:1@436625000"}, ...}
+inline std::string merges_json(const NetMerges& m) {
+    using namespace assocjson;
+    std::string o = "{";
+    bool firstf = true;
+    for (const auto& f : m) {
+        if (f.second.empty()) continue;
+        o += (firstf ? "" : ",") + q(f.first) + ":" + obj(f.second);
+        firstf = false;
+    }
+    return o + "}";
+}
+// The rules about networks the dataset holds (either end -- the other may be
+// in another receiver's export): what an export keeps.
+inline NetMerges merges_held(const Dataset& d) {
+    NetMerges out;
+    for (const auto& f : d.merges) {
+        auto fi = d.fams.find(f.first);
+        if (fi == d.fams.end()) continue;
+        for (const auto& kv : f.second)
+            if (fi->second.networks.count(kv.first) || fi->second.networks.count(kv.second)) out[f.first].insert(kv);
+    }
+    return out;
+}
+
 // A self-describing export ("dsd-net-export" v1) of a dataset.
 inline std::string export_json(const Dataset& d, std::int64_t now, const std::string& instance,
                                const std::string& name) {
     using namespace assocjson;
+    const NetMerges mg = merges_held(d);
     return "{\"format\":\"dsd-net-export\",\"format_version\":1,\"source\":\"dsd-server\",\"instance\":" + q(instance) +
            ",\"name\":" + q(name) + ",\"exported\":" + std::to_string(now) + ",\"now\":" + std::to_string(now) +
-           ",\"sources\":" + sources_json(d.sources) + ",\"families\":" + families_json(d) + "}";
+           ",\"sources\":" + sources_json(d.sources) +
+           (mg.empty() ? std::string() : ",\"merges\":" + merges_json(mg)) + ",\"families\":" + families_json(d) + "}";
 }
 
 // 64-bit FNV-1a, for content-derived identities.
@@ -661,9 +743,10 @@ inline bool dataset_from_export(const mjson::V& root, const std::string& label, 
     // Qualify this run's local network keys (already-qualified ones contain
     // '~'): stream-scoped ones with the run, channel ones with the receiver
     // when channels are kept per receiver.
+    std::map<std::string, std::map<std::string, std::string>> remaps;     // family -> old key -> new
+    const std::string tag = instance.substr(0, std::min<std::size_t>(8, instance.size()));
+    const std::string who = name.empty() ? tag : name;
     if (!instance.empty()) {
-        const std::string tag = instance.substr(0, std::min<std::size_t>(8, instance.size()));
-        const std::string who = name.empty() ? tag : name;
         for (auto& fk : d.fams) {
             DsFamily& F = fk.second;
             std::map<std::string, std::string> remap;
@@ -686,6 +769,7 @@ inline bool dataset_from_export(const mjson::V& root, const std::string& label, 
             }
             F.networks = std::move(nets);
             if (remap.empty()) continue;
+            remaps[fk.first] = remap;
             auto fix = [&](std::set<std::string>& s) {
                 std::set<std::string> o;
                 for (const auto& k : s) { auto it = remap.find(k); o.insert(it == remap.end() ? k : it->second); }
@@ -696,6 +780,35 @@ inline bool dataset_from_export(const mjson::V& root, const std::string& label, 
             for (auto& c : F.calls) { auto it = remap.find(c.net); if (it != remap.end()) c.net = it->second; }
         }
     }
+
+    // Its network merges, under the keys as qualified above. A rule may name
+    // a network the export doesn't hold (another receiver's channel offset,
+    // say): that key is qualified as it would be if it were held -- and a
+    // rule about a stream-scoped network of some other run is dropped (no
+    // telling which network it meant).
+    if (const mjson::V* mg = root.get("merges"); mg && mg->t == mjson::V::Obj)
+        for (const auto& fk : mg->o) {
+            auto fi = d.fams.find(fk.first);
+            if (fi == d.fams.end() || fk.second.t != mjson::V::Obj) continue;
+            const auto& rm = remaps[fk.first];
+            const auto& nets = fi->second.networks;
+            auto key = [&](const std::string& k) -> std::string {
+                if (auto it = rm.find(k); it != rm.end()) return it->second;
+                if (nets.count(k) || k.find('~') != std::string::npos) return k;
+                const std::size_t at = k.rfind('@');
+                if (k.rfind("unknown:", 0) == 0 || (at != std::string::npos && at + 1 < k.size() && k[at + 1] == 's'))
+                    return std::string();                            // stream-scoped
+                if (at != std::string::npos && cm.per_receiver && !instance.empty() && who != cm.home)
+                    return k + "~" + who;                            // a channel, kept per receiver
+                return k;
+            };
+            for (const auto& kv : fk.second.o) {
+                if (kv.second.t != mjson::V::Str) continue;
+                const std::string from = key(kv.first), to = key(kv.second.s);
+                if (from.empty() || to.empty() || (!nets.count(from) && !nets.count(to))) continue;
+                merges_add(d.merges, fk.first, from, to);
+            }
+        }
     return true;
 }
 
@@ -764,8 +877,20 @@ inline void fold_call(DsCall& twin, const DsCall& dup) {
 // Fold `from` into `into` (same protocols merge; ids and strong network keys
 // join; counts add up). A call both sides heard -- same network, parties and
 // time -- is kept once (heard on more streams), and counted once.
+// Add another dataset's network merges to `into`'s, where `into` has no say
+// on that network yet (its own rules win).
+inline void merges_union(NetMerges& into, const NetMerges& from) {
+    for (const auto& f : from)
+        for (const auto& kv : f.second) {
+            auto fi = into.find(f.first);
+            if (fi != into.end() && fi->second.count(kv.first)) continue;
+            merges_add(into, f.first, kv.first, kv.second);
+        }
+}
+
 inline void merge_into(Dataset& into, const Dataset& from) {
     auto lo = [](std::int64_t a, std::int64_t b) { return !a ? b : !b ? a : std::min(a, b); };
+    merges_union(into.merges, from.merges);
     for (const auto& fk : from.fams) {
         DsFamily& T = into.fams[fk.first];
         const DsFamily& F = fk.second;
@@ -817,13 +942,16 @@ inline void merge_into(Dataset& into, const Dataset& from) {
         std::multimap<std::string, std::size_t> by_tgt;
         for (std::size_t i = 0; i < T.calls.size(); ++i)
             if (!T.calls[i].src.empty() && !T.calls[i].tgt.empty()) by_tgt.emplace(T.calls[i].tgt, i);
+        // (Networks merged into one count as one: two receivers can hear one
+        // channel at different frequency offsets.)
+        auto root = [&](const std::string& k) { return merge_root(into.merges, fk.first, k); };
         for (const DsCall& c : F.calls) {
             DsCall* twin = nullptr;
             if (!c.src.empty() && !c.tgt.empty() && !c.net.empty()) {
                 auto range = by_tgt.equal_range(c.tgt);
                 for (auto it = range.first; it != range.second && !twin; ++it) {
                     DsCall& o = T.calls[it->second];
-                    if (o.net == c.net && o.src == c.src && o.priv == c.priv && c.start <= o.last + kTwinGapMs &&
+                    if ((o.net == c.net || root(o.net) == root(c.net)) && o.src == c.src && o.priv == c.priv && c.start <= o.last + kTwinGapMs &&
                         o.start <= c.last + kTwinGapMs)
                         twin = &o;
                 }
@@ -979,9 +1107,52 @@ inline Dataset merge_exports(const std::vector<std::pair<std::string, std::strin
     return out;
 }
 
+// Apply the network merges to the data itself: each group becomes one
+// network under its target's key (and label, when the target is there). For
+// outputs that can't show the rules -- GraphML.
+inline void apply_merges(Dataset& d) {
+    auto lo = [](std::int64_t a, std::int64_t b) { return !a ? b : !b ? a : std::min(a, b); };
+    for (auto& fk : d.fams) {
+        auto mi = d.merges.find(fk.first);
+        if (mi == d.merges.end() || mi->second.empty()) continue;
+        const auto& R = mi->second;
+        auto root = [&](const std::string& k) { auto it = R.find(k); return it == R.end() ? k : it->second; };
+        DsFamily& F = fk.second;
+        std::map<std::string, DsNetwork> nets;
+        for (int pass = 0; pass < 2; ++pass)               // targets first: theirs are the labels
+            for (const auto& nk : F.networks) {
+                const std::string r = root(nk.first);
+                if ((r == nk.first) != (pass == 0)) continue;
+                const DsNetwork& m = nk.second;
+                auto it = nets.find(r);
+                if (it == nets.end()) { DsNetwork n = m; n.key = r; nets.emplace(r, std::move(n)); continue; }
+                DsNetwork& n = it->second;
+                if (detail::rank(m.confidence) > detail::rank(n.confidence)) n.confidence = m.confidence;
+                for (const auto& i : m.ids) n.ids.insert(i);
+                n.sites.insert(m.sites.begin(), m.sites.end());
+                n.freqs.insert(m.freqs.begin(), m.freqs.end());
+                n.sessions += m.sessions; n.calls += m.calls;
+                n.first = lo(n.first, m.first); n.last = std::max(n.last, m.last);
+            }
+        F.networks = std::move(nets);
+        auto fix = [&](std::set<std::string>& s) {
+            std::set<std::string> o;
+            for (const auto& k : s) o.insert(root(k));
+            s = std::move(o);
+        };
+        for (auto& kv : F.tgs) fix(kv.second.networks);
+        for (auto& kv : F.radios) fix(kv.second.networks);
+        for (auto& c : F.calls) c.net = root(c.net);
+    }
+    d.merges.clear();
+}
+
 // ---- GraphML (Gephi, Cytoscape, yEd, networkx) ------------------------------
-inline std::string graphml(const Dataset& d, std::int64_t now) {
+inline std::string graphml(const Dataset& in, std::int64_t now) {
     using namespace assocjson;
+    Dataset merged;
+    if (!in.merges.empty()) { merged = in; apply_merges(merged); }
+    const Dataset& d = in.merges.empty() ? in : merged;
     std::ostringstream o;
     o << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
          "<graphml xmlns=\"http://graphml.graphdrawing.org/xmlns\" "

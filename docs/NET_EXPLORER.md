@@ -222,6 +222,40 @@ One row per network the explorer has identified:
 ![Figure 6](img/networks.png)
 *Figure 6: Networks: a strongly identified P25 system (three sites, two channels) and a NAC heard on a known channel; the system's details on the right.*
 
+### Merging networks
+
+A network without a system id is named by its code and channel
+(`Color Code 1 · 436.6250 MHz`). If the frequency reported for the same
+channel drifts — receivers or sessions with different tuning offsets — the
+same repeater can show up twice (`… 436.6250 MHz` and `… 436.6275 MHz`), with
+its talkgroups and radios split between the two. Merge them to see them as
+one:
+
+- In a network's details, **Merge into…** lists the other networks of the
+  protocol, likeliest first: the same code (`same code`), the nearest channel
+  (`2.5 kHz away`) and how many talkgroups and radios they share
+  (`3 shared`). Pick one and press **Merge**: this network becomes part of
+  that one.
+- Or pick two or more networks in the open **Filters**' Networks row and
+  press **Merge picked (N)**: they are merged into the busiest of them.
+
+A merged network keeps the name of the one merged into, lists every channel,
+and adds up the counts; the Networks view marks it **+N merged**, and every
+view, filter, the graph and the map treat it as one network. Its details list
+**Merged networks** — each part with its calls and channels — with
+**Unmerge** for each (and **Unmerge all**). Nothing is changed underneath: the
+networks stay apart in the data, so unmerging gives back exactly what was
+there.
+
+Merges are **shared**: everyone viewing the server sees them, they stay
+through **Clear** and restarts (the server keeps them in `net_merges.json`
+next to the recordings, or `DSD_NET_MERGES_FILE`), and exports carry them —
+opening or importing that export shows the networks merged too. In a file
+view, merging and unmerging only change that view.
+
+![Figure 6b](img/networks-merge.png)
+*Figure 6b: Two DMR networks — one repeater heard 2.5 kHz apart — merged into one; its details list the parts with Unmerge, and Merge into… suggests the remaining network.*
+
 ## 8. The details panel
 
 Click any radio, talkgroup or network — in a table, the graph, a chip or a
@@ -250,8 +284,9 @@ tablet or phone the details are a drawer: **Close** or Esc.
   **Recent calls**.
 - **Network**: **Only** (show only this network; **All** undoes it) and
   **Exclude** (hide it; **Include** undoes it); counts;
-  identifiers; sites; channels; first and last heard; its busiest talkgroups
-  and radios.
+  identifiers; sites; channels; **Merged networks** with **Unmerge**, and
+  **Merge into…** ([Merging networks](#merging-networks)); first and last
+  heard; its busiest talkgroups and radios.
 
 ## 9. Searching, filtering and sorting
 
@@ -263,7 +298,8 @@ tablet or phone the details are a drawer: **Close** or Esc.
     each click adds or drops one). In a network's details, **Only** picks
     just that one and **Exclude** hides it (its calls, talkgroups and radios).
     The Networks view still lists every network, so an excluded one can be
-    included again.
+    included again. With two or more picked, **Merge picked** shows them as
+    one network ([Merging networks](#merging-networks)).
   - **Talkgroups** — from a talkgroup's details (**Only** / **Exclude**), or
     by typing ids into the box in the open Filters' Talkgroups row: **Pick**
     (or Enter) adds them to the picked ones, **Exclude** excludes them.
@@ -385,6 +421,8 @@ receivers both heard counts once (**2 RX**). The same data is never counted
 twice: duplicate or overlapping exports are skipped or refused, with the
 reason shown. Name each receiver with `DSD_SERVER_NAME` so its networks are
 easy to tell apart. `net-merge` does the same from the command line.
+Exports carry their [network merges](#merging-networks); combined files keep
+them all (a merge made on this server wins over an imported one).
 
 ## 13. Recording a session for troubleshooting
 
@@ -453,6 +491,7 @@ Server environment variables that affect the explorer (details in the README):
 | `DSD_SERVER_NAME` | host name | This receiver's name in exports and merged views. |
 | `DSD_NET_MAX_CALLS` | 5000 | Calls kept per protocol. |
 | `DSD_NET_FREQ_STEP_HZ` | 1250 | Channel raster frequencies are snapped to. |
+| `DSD_NET_MERGES_FILE` | `net_merges.json` in the log dir | Where the [network merges](#merging-networks) are kept across restarts. |
 | `DSD_NET_CHANNEL_MERGE` | (merge) | `receiver` keeps different receivers' channel networks apart when merging. |
 | `DSD_NET_AUDIO` | off | `1` records call audio from startup. |
 | `DSD_NET_AUDIO_DIR` | `net_audio/` in the log dir | Where call audio goes. |
@@ -602,6 +641,14 @@ channel stays per receiver (`… · stream 3 · rx-north`). Calls are folded as 
 A.5 across files. Each export records its server run and the time span it
 covers, so the same data is never counted twice.
 
+Network merges are rules, not changes to the data: per protocol, a network
+key and the key it is shown under (`cc:1@436627500` → `cc:1@436625000`). The
+page applies them when it shows the data; exports keep the rules about the
+networks they hold, combining files keeps them all, and GraphML — which has
+no place for rules — gets the networks already merged. When files are
+combined, two receivers' records of one call on two merged networks fold into
+one call (**2 RX**), as they would on one network.
+
 ### A.7 Audio
 
 Decoded voice arrives per stream and per slot (DMR's two slots are the left and
@@ -720,6 +767,7 @@ Encrypted calls are not recorded (unless the session has the key).
 |---|---|
 | **Stream** | One decode session: one receiver channel, one protocol. |
 | **Network** | A radio system as the explorer identifies it (Appendix A.2). |
+| **Merge (networks)** | Showing two or more networks as one — e.g. one repeater heard at two frequency offsets. Shared by everyone on the server and kept in exports; **Unmerge** undoes it ([Merging networks](#merging-networks)). |
 | **Chip** | A small rounded, clickable label on the page, like a tag. In the **Filters**, each network chip names one network (with its colour swatch and call count), and each talkgroup, radio or search in force has one. A highlighted chip is picked, a dashed struck-through one excluded; click it to drop it from the filter. |
 | **Strong / weak / channel identity** | How a network was identified: a unique system id / only a short shared code / a short code on a known frequency. |
 | **Talkgroup (TG)** | A group address many radios listen to. |
