@@ -674,6 +674,7 @@ function changeMerges(froms, to, done) {
     if (S.sel && S.sel.type === 'net' && to && froms.indexOf(S.sel.id) >= 0) S.sel = { type: 'net', id: to };
     GR.sig = '';
     render();
+    renderDetail(true);                                 // even with the pointer still on the picker
     if (done) done(n);
   };
   if (S.file) {
@@ -694,6 +695,8 @@ function changeMerges(froms, to, done) {
        .catch(function () { toast('Could not reach the server to change the merge.'); });
 }
 function mergeInto(froms, to) {
+  S.mpick = null;
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   changeMerges(froms, to, function (n) {
     var t = IX.netByKey[to];
     toast(n ? 'Merged ' + (froms.length > 1 ? froms.length + ' networks' : 'the network') + ' into ' + (t ? t.label : to) +
@@ -751,7 +754,7 @@ function mergeSection(d, n) {
   }
   var cands = mergeCandidates(n);
   if (!cands.length) return;
-  var selEl = h('select', { class: 'msel', 'aria-label': 'Network to merge this one into' },
+  var selEl = h('select', { class: 'msel', 'aria-label': 'Network to merge this one into', 'data-net': n.key },
     [h('option', { value: '' }, 'Merge into…')].concat(cands.map(function (c) {
       var why = [];
       if (c.same) why.push('same code');
@@ -762,8 +765,29 @@ function mergeSection(d, n) {
   var go = h('button', { class: 'btn sm', type: 'button', disabled: true,
     title: 'Show this network as part of the one picked (one channel heard at two frequency offsets, say)',
     onclick: function () { if (selEl.value) mergeInto([n.key], selEl.value); } }, 'Merge');
-  selEl.addEventListener('change', function () { go.disabled = !selEl.value; });
+  // The pick survives the panel being rebuilt (S.mpick: this network's).
+  if (S.mpick && S.mpick.net === n.key && cands.some(function (c) { return c.n.key === S.mpick.to; })) {
+    selEl.value = S.mpick.to;
+    go.disabled = false;
+  }
+  selEl.addEventListener('change', function () {
+    go.disabled = !selEl.value;
+    S.mpick = selEl.value ? { net: n.key, to: selEl.value } : null;
+  });
+  // Rebuilds held off while it was in use (see mergePickBusy) catch up.
+  selEl.addEventListener('blur', function () { setTimeout(function () { if (!mergePickBusy()) renderDetail(); }, 0); });
   d.appendChild(h('div', { class: 'tagrow mpick' }, [selEl, go]));
+}
+// The Merge into… picker is in use: its list is open (it has focus) or the
+// pointer is on it (about to click Merge). Rebuilding the details now would
+// close the list or swallow the click, so renderDetail waits.
+function mergePickBusy() {
+  var ae = document.activeElement, sel = S.sel;
+  if (!sel || sel.type !== 'net') return false;
+  var row = $('detail').querySelector('.mpick');
+  if (!row) return false;
+  if (ae && ae.classList && ae.classList.contains('msel') && row.contains(ae) && ae.getAttribute('data-net') === sel.id) return true;
+  try { return row.matches(':hover'); } catch (e) { return false; }
 }
 
 // ---------- indexing ----------
@@ -1913,7 +1937,8 @@ function recent(filter) {
   });
   return ul;
 }
-function renderDetail() {
+function renderDetail(force) {
+  if (!force && mergePickBusy()) return;
   var d = $('detail');
   d.textContent = '';
   var sel = S.sel;
@@ -2852,7 +2877,12 @@ function poll() {
     applyMerges(d);
     S.d = d;
     $('live').textContent = 'live · updated ' + hms(d.now) + 'Z';
-    if (changed || S.view === 'calls') render();
+    // A phone's Sort menu open: rebuilding the list would close it -- this
+    // update waits for the next poll. (The details panel guards its own
+    // picker: mergePickBusy.)
+    var ae = document.activeElement;
+    if (ae && ae.tagName === 'SELECT' && ae.closest('.sortbar')) { if (changed) S.d.version = -1; }
+    else if (changed || S.view === 'calls') render();
     else { renderDetail(); }
   }).catch(function () { $('live').textContent = 'disconnected — retrying'; })
     .then(function () { setTimeout(poll, POLL); });
