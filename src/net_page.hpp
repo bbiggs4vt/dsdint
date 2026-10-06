@@ -193,6 +193,12 @@ inline std::string render_net_page_html() {
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   td.mono, .mono { font-family: Menlo, Monaco, Consolas, 'Courier New', monospace; font-size: .82rem; }
   td.wrap { white-space: pre-wrap; word-break: break-word; }
+  /* Calls: a call with many badges (VOICE GROUP EMERGENCY ENCRYPTED) wraps
+     them instead of widening the column for every row, and the Content column
+     (the one that wraps) keeps a readable width. */
+  td.ctype { white-space: normal; min-width: 7.5rem; line-height: 1.9; }
+  #t-calls td.wrap { min-width: 12rem; }
+  @media (max-width: 1480px) { #t-calls td.wrap { min-width: 7rem; } }
   td.nowrap { white-space: nowrap; }
   .empty { color: var(--muted); padding: 1rem .85rem; }
   .more { color: var(--muted); font-size: .8rem; padding: .5rem .85rem; border-top: 1px solid var(--table-bd); }
@@ -374,7 +380,6 @@ inline std::string render_net_page_html() {
   /* Narrow tables: let headers and badges wrap rather than scroll sideways. */
   @media (max-width: 1400px), (pointer: coarse) {
     thead th { white-space: normal; }
-    td.ctype { white-space: normal; min-width: 6.5rem; }
     td.ids { word-break: break-word; }
   }
   @media (max-width: 900px) { th, td { padding-left: .5rem; padding-right: .5rem; } td .netc { max-width: 9.5rem; } }
@@ -1920,7 +1925,7 @@ function viewCalls() {
       dropEmpty: function (c) { return !!c.slot; } },
     { label: 'From', k: function (c) { return c.src; }, cell: function (c) { return c.src ? rlink(c.src, c.alias || null) : '—'; } },
     { label: 'To', cls: 'tgcell', k: function (c) { return c.tgt; }, cell: toCell },
-    { label: 'Type', cls: 'nowrap ctype', cell: typeBadges },
+    { label: 'Type', cls: 'ctype', cell: typeBadges },
     { label: 'Audio', cls: 'nowrap', k: function (c) { return hasAudio(c) ? 1 : 0; }, cell: audioCell,
       hideEmpty: hasAudio },
     { label: 'Content', cls: 'wrap', cell: textCell, hideEmpty: function (c) { return !!(c.text || c.svc || c.pos); } }
