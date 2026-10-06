@@ -829,7 +829,7 @@ private:
                ",\"instance\":" + assocjson::q(instance_) + ",\"name\":" + assocjson::q(name_) +
                ",\"since\":" + std::to_string(since_) + ",\"rec\":" + rec_json_locked() +
                ",\"audio\":" + audio_json_locked() + ",\"max_calls\":" + std::to_string(max_calls_) +
-               ",\"map\":" + map_json() +
+               ",\"map\":" + map_json() + ",\"dev\":" + (dev_tools() ? "true" : "false") +
                ",\"rates\":" + rates_json_locked(now) + ",\"imports\":" + im +
                ",\"merges\":" + merges_json(view_merges_locked()) +
                ",\"families\":";
@@ -838,6 +838,15 @@ private:
     // template with {z} {x} {y} -- e.g. a local OpenStreetMap tile server for
     // use offline -- and DSD_NET_MAP_ATTRIB, its credit line). The browser
     // fetches the tiles itself; unset, the page offers public ones.
+    // DSD_NET_DEV=1: the explorer shows its developer tools (Record) to
+    // everyone (otherwise only to a browser opened with /net?dev=1).
+    static bool dev_tools() {
+        static const bool on = [] {
+            const char* v = std::getenv("DSD_NET_DEV");
+            return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T' || std::string(v) == "on");
+        }();
+        return on;
+    }
     static std::string map_json() {
         static const std::string j = [] {
             const char* t = std::getenv("DSD_NET_MAP_TILES");

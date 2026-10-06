@@ -867,7 +867,9 @@ decoded event (including the lines clients never see), every session start /
 stop, with the exact timestamps the model used -- so a live test can be
 replayed offline and reproduce precisely what the explorer showed.
 
-- **From the page:** click **Record** in the explorer header (if the explorer
+- **From the page:** click **Record** in the explorer header -- a developer
+  tool, hidden unless the browser opened the explorer once as `/net?dev=1`
+  (remembered; `?dev=0` hides it) or the server runs with `DSD_NET_DEV=1` (if the explorer
   already has data it offers to clear first -- recommended, so the replay is
   exact). The header shows `REC net_<UTC>.jsonl.gz` and its size; click
   **Stop recording**, then **Download** to save the file from your browser.

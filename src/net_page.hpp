@@ -90,6 +90,9 @@ inline std::string render_net_page_html() {
   .report .st.ok { color: var(--success); } .report .st.skip { color: var(--muted); }
   .report .st.bad { color: var(--danger); }
   body.filemode .live-only { display: none !important; }
+  /* Developer tools (Record): shown with /net?dev=1 (this browser) or a
+     server run with DSD_NET_DEV=1. */
+  body:not(.devtools) .dev-only { display: none !important; }
   body.dragging { outline: 3px dashed var(--info); outline-offset: -6px; }
   .recst { color: var(--muted); font-size: .78rem; max-width: 26rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .recst .live { color: var(--danger); font-weight: 600; }
@@ -469,10 +472,10 @@ inline std::string render_net_page_html() {
   </div>
   <div class="hdr-actions">
     <input id="q" type="search" placeholder="Find radio, talkgroup, alias, text&hellip;" autocomplete="off">
-    <span id="recst" class="recst live-only"></span>
+    <span id="recst" class="recst live-only dev-only"></span>
     <button id="more" class="btn" type="button" aria-haspopup="true" aria-expanded="false" title="Actions">&#9776; Menu</button>
     <div class="acts" id="acts">
-    <button id="rec" class="btn live-only" type="button" title="Record everything the explorer receives, to replay and analyse offline">&#9679; Record</button>
+    <button id="rec" class="btn live-only dev-only" type="button" title="Record everything the explorer receives, to replay and analyse offline">&#9679; Record</button>
     <button id="aud" class="btn live-only" type="button" title="Record each call's decoded voice, to play back here (off by default)">&#9835; Audio</button>
     <button id="pause" class="btn live-only" type="button">Pause</button>
     <button id="clear" class="btn live-only" type="button" title="Forget everything learned so far">Clear</button>
@@ -2990,6 +2993,15 @@ $('importfile').addEventListener('change', function () { importFiles(this.files)
 
 // ---------- recording (Record button) ----------
 function mb(n) { return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
+// Developer tools (Record and its status): hidden from regular users. One
+// browser opts in with /net?dev=1 (remembered; ?dev=0 hides them again); a
+// server started with DSD_NET_DEV=1 shows them to everyone.
+(function () {
+  var m = /[?&]dev=([01])\b/.exec(location.search);
+  if (m) store('dev', m[1] === '1' ? '1' : '');
+})();
+function updateDev() { document.body.classList.toggle('devtools', load('dev') === '1' || !!(S.d && S.d.dev)); }
+updateDev();
 function updateRec(r) {
   S.rec = r || {};
   var b = $('rec'), st = $('recst');
@@ -3087,6 +3099,7 @@ function poll() {
     var changed = !S.d || d.version !== S.d.version;
     applyMerges(d);
     S.d = d;
+    updateDev();
     $('live').textContent = 'live · updated ' + hms(d.now) + 'Z';
     // A phone's Sort menu open: rebuilding the list would close it -- this
     // update waits for the next poll. (The details panel guards its own

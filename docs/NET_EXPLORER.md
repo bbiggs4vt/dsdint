@@ -70,7 +70,7 @@ From top to bottom:
 |---|---|
 | **Status line** | `live · updated 12:34:56Z`, or `paused`, `file view`, `disconnected — retrying`. Links back to the status page. The page updates every 1.5 s, but waits while you are in the middle of something — `live · held: clicking` (a button or mouse held down, a drag), `held: scrolling`, or `held: text selected` (so you can copy an id; click anywhere to clear the selection) — and catches up right after. Where the details panel was scrolled to stays put across updates. |
 | **Search box** | Finds radios, talkgroups, aliases, SMS text and frequencies. Filters every view. See [section 9](#9-searching-filtering-and-sorting). |
-| **Record** | Records everything the explorer receives, for replay and troubleshooting ([section 13](#13-recording-a-session-for-troubleshooting)). While on, the header shows the file name, its size and a **Download** link. |
+| **Record** | A developer tool, hidden unless turned on ([section 13](#13-recording-a-session-for-troubleshooting)): records everything the explorer receives, for replay and troubleshooting. While on, the header shows the file name, its size and a **Download** link. |
 | **♫ Audio** | Starts / stops recording each call's voice (off by default) — [section 10](#10-call-audio). Orange when on. |
 | **Pause** | Freezes the whole page (no updates) until pressed again. |
 | **Clear** | Forgets everything learned so far, and any imports. Asks first — and, if there are recorded call audio files, whether to delete those from the server too (Cancel keeps them). |
@@ -467,6 +467,11 @@ If something in the explorer looks wrong (phantom calls, calls cut short,
 networks split or merged wrongly), a **recording** lets it be reproduced
 exactly:
 
+**Record** is a developer tool, so it is hidden from regular users. To show
+it in your browser, open the explorer once as `http://<server>/net?dev=1` —
+the browser remembers it (`?dev=0` hides it again). A server started with
+`DSD_NET_DEV=1` shows it to everyone.
+
 1. Click **Record** (accept the offer to clear first — the replay is then
    exact).
 2. Let the problem happen, then click **Stop recording** and **Download**
@@ -538,6 +543,7 @@ Server environment variables that affect the explorer (details in the README):
 | `DSD_NET_MAP_TILES` / `DSD_NET_MAP_ATTRIB` | (public tiles) | A map tile server of your own — a URL template with `{z}` `{x}` `{y}` (e.g. `http://maps.local/tile/{z}/{x}/{y}.png`) — and its credit line, for the Map view. |
 | `DSD_NET_ASR_MODEL` / `DSD_NET_ASR_LANG` | most accurate present / english | Default speech model and language. |
 | `DSD_NET_LOG` | off | `1` records from startup. |
+| `DSD_NET_DEV` | off | `1` shows the developer tools (**Record**) to everyone; otherwise a browser opts in with `/net?dev=1`. |
 | `DSD_NET_LOG_DIR` / `DSD_NET_LOG_MAX_MB` | IQ-capture dir, else working dir / 1024 | Where recordings go, and their size cap. |
 
 ---
