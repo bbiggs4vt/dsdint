@@ -635,7 +635,9 @@ lists sessions by session number. Frequencies are snapped to
 plans stay exact and an offset up to ±625 Hz off still lands on its channel);
 a `set_freq_offset` moves the stream to the new channel. If one channel still
 shows up as two networks (a tuning offset beyond that), **Merge into…** in the
-network's details (or **Merge picked** in the Filters) shows them as one --
+network's details (or **Merge picked** in the Filters, or a suggestion under
+**Links → Probably the same network**, which weighs calls heard on both, the
+code, the channel gap and hand-offs) shows them as one --
 for everyone viewing the server, kept across restarts in
 `DSD_NET_MERGES_FILE` (default `net_merges.json` in the recordings folder)
 and carried in exports; **Unmerge** undoes it. P25's NAC is the exception: a stream

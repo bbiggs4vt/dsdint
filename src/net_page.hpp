@@ -237,6 +237,14 @@ inline std::string render_net_page_html() {
   .comm { background: var(--panel2); border: 1px solid var(--comp-bd); border-radius: 4px; padding: .6rem .75rem; }
   .comm h5 { margin: 0 0 .35rem; color: var(--heading); font-size: .85rem; font-weight: 500; }
   .comm .meta { color: var(--muted); font-size: .75rem; margin-bottom: .4rem; }
+  .comm.same h5 { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; }
+  .comm.same .amp { color: var(--muted); }
+  .tier { margin-left: auto; font-size: .68rem; text-transform: uppercase; letter-spacing: .05em; padding: .05rem .35rem;
+          border-radius: 3px; border: 1px solid var(--comp-bd); color: var(--muted); }
+  .tier.t3 { color: #62c462; border-color: #62c462; }
+  .tier.t2 { color: #e6c229; border-color: #e6c229; }
+  .why { margin: 0 0 .5rem; padding-left: 1.1rem; color: var(--text); font-size: .78rem; }
+  .why li.against { color: #f89406; }
   .comm .ents { display: flex; flex-wrap: wrap; gap: .25rem .6rem; }
   .section { padding: .8rem .9rem 0; color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; }
   .note { color: var(--muted); font-size: .8rem; padding: .3rem .9rem .2rem; }
@@ -707,26 +715,156 @@ function mergeInto(froms, to) {
 function unmerge(keysList) {
   changeMerges(keysList, null, function (n) { toast(n ? 'Unmerged.' : 'Not merged.'); });
 }
-// Networks this one could be the same as, likeliest first: the same short
-// code (color code / NAC / RAN...) on the nearest frequency, then shared
-// talkgroups and radios.
+// ---- "probably the same network" ----
+// Evidence that two networks of this protocol are one (a channel heard at two
+// frequency offsets, say), from the data on the page. Per pair of networks
+// (pairKey): twins -- the same call (source, target, kind; no more than 4 s
+// apart) heard on both, by different streams: near-proof; clash -- different
+// calls on the same slot at the same moment: two channels; sameStream -- one
+// stream heard both at once: two channels for certain; shared talkgroups /
+// radios. Worked out once per data version.
+var SAME = { sig: '', ev: {} };
+function pairKey(a, b) { return a < b ? a + '\n' + b : b + '\n' + a; }
+function sameEvidence() {
+  var sig = S.d.version + '|' + S.fam + '|' + IX.nets.length + '|' + IX.calls.length;
+  if (SAME.sig === sig) return SAME.ev;
+  var ev = {};
+  var E = function (a, b) { var k = pairKey(a, b); return ev[k] || (ev[k] = { twins: 0, clash: 0, sameStream: 0, tgs: 0, radios: 0 }); };
+  // Twins: calls with the same source, target and kind, by bucket.
+  var by = {};
+  IX.calls.forEach(function (c) { if (c.src && c.tgt && c.net) (by[c.src + '|' + c.tgt + '|' + (c.priv ? 1 : 0)] = by[c.src + '|' + c.tgt + '|' + (c.priv ? 1 : 0)] || []).push(c); });
+  var twinOf = {};
+  keys(by).forEach(function (k) {
+    var L = by[k];
+    if (L.length < 2) return;
+    L.sort(function (a, b) { return a.start - b.start; });
+    for (var i = 0; i < L.length; i++)
+      for (var j = i + 1; j < L.length && L[j].start <= L[i].last + 4000; j++)
+        if (L[j].net !== L[i].net && L[j].session !== L[i].session) {
+          E(L[i].net, L[j].net).twins++;
+          twinOf[L[i].id + '|' + L[j].id] = twinOf[L[j].id + '|' + L[i].id] = 1;
+        }
+  });
+  // Clashes: calls on two networks at the same moment.
+  var all = IX.calls.filter(function (c) { return c.net; }).sort(function (a, b) { return a.start - b.start; }), act = [];
+  all.forEach(function (c) {
+    act = act.filter(function (o) { return o.last >= c.start; });
+    act.forEach(function (o) {
+      if (o.net === c.net || twinOf[o.id + '|' + c.id]) return;
+      if (o.session === c.session) E(o.net, c.net).sameStream++;
+      else if (o.slot === c.slot && !(o.src === c.src && o.tgt === c.tgt)) E(o.net, c.net).clash++;
+    });
+    act.push(c);
+  });
+  // Shared talkgroups and radios.
+  var share = function (list, f) {
+    list.forEach(function (x) {
+      var ns = x.networks;
+      for (var i = 0; i < ns.length; i++) for (var j = i + 1; j < ns.length; j++) E(ns[i], ns[j])[f]++;
+    });
+  };
+  share(IX.tgs, 'tgs');
+  share(IX.radios, 'radios');
+  SAME = { sig: sig, ev: ev };
+  return ev;
+}
+var CODE_NAME = { cc: 'color code', nac: 'NAC', ran: 'RAN', rpt1: 'repeater', downlink: 'downlink' };
+function netCode(x) {
+  var o = x.ids || {};
+  for (var k in CODE_NAME) if (o[k]) return { k: k, v: o[k] };
+  return null;
+}
+function freqGap(a, b) {
+  var best = Infinity;
+  (a.freqs || []).forEach(function (f) { (b.freqs || []).forEach(function (g) { best = Math.min(best, Math.abs(f - g)); }); });
+  return best;
+}
+// How likely networks a and b are one: null when the evidence rules it out
+// (both have a system id; different codes; one stream heard both at once;
+// different calls on one slot at the same moment, with no call heard on both;
+// channels more than 6.25 kHz apart, or unknown, with no call heard on both).
+// Otherwise { tier: 3 very likely | 2 likely | 1 possible, why: [...], against: [...] }.
+function sameJudge(a, b, e) {
+  e = e || { twins: 0, clash: 0, sameStream: 0, tgs: 0, radios: 0 };
+  var ca = netCode(a), cb = netCode(b), gap = freqGap(a, b);
+  var sameCode = ca && cb && ca.k === cb.k && ca.v === cb.v;
+  if (a.confidence === 'strong' && b.confidence === 'strong') return null;
+  if (ca && cb && !sameCode) return null;
+  if (e.sameStream) return null;
+  if (e.clash && !e.twins) return null;
+  if (!e.twins && !(gap <= 6250)) return null;
+  var why = [], against = [];
+  if (e.twins) why.push(e.twins + ' call' + (e.twins > 1 ? 's' : '') + ' heard on both');
+  if (sameCode) why.push('same ' + CODE_NAME[ca.k] + ' (' + ca.v + ')');
+  if (isFinite(gap)) why.push(gap ? khz(gap) + ' apart' : 'same channel');
+  var handoff = a.last && b.last && (a.last < b.first || b.last < a.first);
+  if (handoff) why.push('one took over when the other stopped');
+  if (e.tgs || e.radios) why.push([e.tgs ? e.tgs + ' talkgroup' + (e.tgs > 1 ? 's' : '') : '', e.radios ? e.radios + ' radio' + (e.radios > 1 ? 's' : '') : '']
+                                  .filter(Boolean).join(' and ') + ' shared');
+  if (e.clash) against.push('different calls at the same moment ' + e.clash + '\u00D7');
+  var tier = e.twins && !e.clash ? 3 : e.twins || (sameCode && gap <= 2500 && (handoff || e.tgs || e.radios)) ? 2 : 1;
+  return { tier: tier, why: why, against: against, gap: gap, twins: e.twins };
+}
+// Pairs the user said are not the same (per browser): protocol -> [pairKey].
+function notSame() { try { return JSON.parse(load('notSame') || '{}') || {}; } catch (x) { return {}; } }
+function setNotSame(a, b, on) {
+  var m = notSame(), l = m[S.fam] || [], k = pairKey(a, b), i = l.indexOf(k);
+  if (on && i < 0) l.push(k);
+  if (!on && i >= 0) l.splice(i, 1);
+  m[S.fam] = l;
+  store('notSame', JSON.stringify(m));
+}
+// Every likely pair, likeliest first ({ a, b, j }; a the busier), and how
+// many were set aside with Not the same.
+function sameSuggestions() {
+  var ev = sameEvidence(), hidden = notSame()[S.fam] || [], out = [], nh = 0;
+  var ns = IX.nets;
+  for (var i = 0; i < ns.length; i++)
+    for (var k = i + 1; k < ns.length; k++) {
+      var a = ns[i], b = ns[k], pk = pairKey(a.key, b.key);
+      var j = sameJudge(a, b, ev[pk]);
+      if (!j) continue;
+      if (hidden.indexOf(pk) >= 0) { ++nh; continue; }
+      out.push(a.calls >= b.calls ? { a: a, b: b, j: j } : { a: b, b: a, j: j });
+    }
+  out.sort(function (x, y) { return (y.j.tier - x.j.tier) || (y.j.twins - x.j.twins) || (x.j.gap - y.j.gap) || (y.a.calls + y.b.calls - x.a.calls - x.b.calls); });
+  return { list: out, hidden: nh };
+}
+var TIER = { 3: 'very likely', 2: 'likely', 1: 'possible' };
+// The Links view's "Probably the same network" cards.
+function sameSection(cont) {
+  var sg = sameSuggestions();
+  if (!sg.list.length && !sg.hidden) return false;
+  cont.appendChild(h('div', { class: 'section', text: 'Probably the same network — merge suggestions (' + sg.list.length + ')' }));
+  cont.appendChild(h('div', { class: 'note', text: 'Networks that look like one channel heard at different frequency offsets (or by different receivers). ' +
+    'Nothing is merged until you press Merge' + (S.file ? ' (in this file view only)' : ' (for everyone viewing this server; Unmerge in the network’s details undoes it)') + '.' }));
+  var grid = h('div', { class: 'grid2' });
+  sg.list.slice(0, 40).forEach(function (x) {
+    grid.appendChild(h('div', { class: 'comm same' }, [
+      h('h5', null, [netc(x.a.key), h('span', { class: 'amp', text: ' \u21C4 ' }), netc(x.b.key),
+                     h('span', { class: 'tier t' + x.j.tier, text: TIER[x.j.tier] })]),
+      h('ul', { class: 'why' }, x.j.why.map(function (w) { return h('li', { text: w }); })
+        .concat(x.j.against.map(function (w) { return h('li', { class: 'against', text: 'but: ' + w }); }))),
+      h('div', { class: 'tagrow' }, [
+        h('button', { class: 'btn sm', type: 'button', title: 'Show ' + x.b.label + ' as part of ' + x.a.label + ' (the busier one)',
+                      onclick: function () { mergeInto([x.b.key], x.a.key); } }, 'Merge'),
+        h('button', { class: 'btn sm', type: 'button', title: 'Stop suggesting this pair (in this browser)',
+                      onclick: function () { setNotSame(x.a.key, x.b.key, true); renderView(); } }, 'Not the same')])]));
+  });
+  cont.appendChild(grid);
+  if (sg.hidden)
+    cont.appendChild(h('div', { class: 'note' }, [sg.hidden + ' pair' + (sg.hidden > 1 ? 's' : '') + ' marked “not the same”. ',
+      h('a', { href: '#', onclick: function (e) { e.preventDefault(); var m = notSame(); delete m[S.fam]; store('notSame', JSON.stringify(m)); renderView(); } },
+        'Suggest them again')]));
+  return true;
+}
+// For the details' Merge into… picker: the other networks, likeliest first.
 function mergeCandidates(n) {
-  var code = function (x) { var o = x.ids || {}; return o.cc || o.nac || o.ran || o.rpt1 || o.downlink || ''; };
-  var dist = function (a, b) {
-    var best = Infinity;
-    (a.freqs || []).forEach(function (f) { (b.freqs || []).forEach(function (g) { best = Math.min(best, Math.abs(f - g)); }); });
-    return best;
-  };
-  var shared = function (o) {
-    var c = 0;
-    IX.tgs.forEach(function (t) { if (t.networks.indexOf(n.key) >= 0 && t.networks.indexOf(o.key) >= 0) ++c; });
-    IX.radios.forEach(function (r) { if (r.networks.indexOf(n.key) >= 0 && r.networks.indexOf(o.key) >= 0) ++c; });
-    return c;
-  };
-  var me = code(n);
+  var ev = sameEvidence();
   return IX.nets.filter(function (o) { return o.key !== n.key; }).map(function (o) {
-    return { n: o, same: !!me && code(o) === me, d: dist(n, o), s: shared(o) };
-  }).sort(function (a, b) { return (b.same - a.same) || (a.d - b.d) || (b.s - a.s) || (b.n.calls - a.n.calls); });
+    var j = sameJudge(n, o, ev[pairKey(n.key, o.key)]), cn = netCode(n), co = netCode(o);
+    return { n: o, j: j, same: !!(cn && co && cn.k === co.k && cn.v === co.v), d: freqGap(n, o), s: ((ev[pairKey(n.key, o.key)] || {}).tgs || 0) + ((ev[pairKey(n.key, o.key)] || {}).radios || 0) };
+  }).sort(function (a, b) { return ((b.j ? b.j.tier : 0) - (a.j ? a.j.tier : 0)) || (b.same - a.same) || (a.d - b.d) || (b.s - a.s) || (b.n.calls - a.n.calls); });
 }
 function khz(hz) { return hz < 1e6 ? String(+(hz / 1000).toFixed(2)) + ' kHz' : mhz(hz) + ' MHz'; }
 // The network details' merge section: what it is made of (with Unmerge) and
@@ -757,6 +895,8 @@ function mergeSection(d, n) {
   var selEl = h('select', { class: 'msel', 'aria-label': 'Network to merge this one into', 'data-net': n.key },
     [h('option', { value: '' }, 'Merge into…')].concat(cands.map(function (c) {
       var why = [];
+      if (c.j) why.push(TIER[c.j.tier]);
+      if (c.j && c.j.twins) why.push(c.j.twins + ' on both');
       if (c.same) why.push('same code');
       if (isFinite(c.d)) why.push(c.d ? khz(c.d) + ' away' : 'same channel');
       if (c.s) why.push(c.s + ' shared');
@@ -1852,6 +1992,7 @@ function viewLinks() {
   var y = cont.scrollTop;
   cont.textContent = '';
   // 1. Communities
+  var hadSame = sameSection(cont);
   var comms = communities(tgs, radios);
   cont.appendChild(h('div', { class: 'section', text: 'Talk communities — radios tied together through shared talkgroups / private calls (' + comms.length + ')' }));
   if (!comms.length) cont.appendChild(h('div', { class: 'note', text: 'No linked radios yet.' }));
@@ -1897,6 +2038,10 @@ function viewLinks() {
       hb.appendChild(h('div', { class: 'comm' }, [h('h5', null, rlink(r.id)), h('div', { class: 'meta', text: ts.length + ' talkgroups · ' + r.calls + ' calls' }), te]));
     });
     cont.appendChild(hb);
+  }
+  if (!hadSame && IX.nets.length > 1) {
+    cont.appendChild(h('div', { class: 'section', text: 'Probably the same network — merge suggestions (0)' }));
+    cont.appendChild(h('div', { class: 'note', text: 'None: no two networks look like one channel heard at different frequency offsets.' }));
   }
   cont.appendChild(h('div', { style: 'height:.8rem' }));
   cont.scrollTop = y;

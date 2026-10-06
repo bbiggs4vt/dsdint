@@ -174,6 +174,10 @@ talkgroup links, so the talkgroups shape the picture.
 
 The analysis view — evidence of how radios, talkgroups and systems relate:
 
+- **Probably the same network** — merge suggestions: networks that look like
+  one channel heard at different frequency offsets, each with its reasons,
+  **Merge** and **Not the same** ([Merging networks](#merging-networks)).
+  Shown first when there are any.
 - **Talk communities** — groups of radios tied together through talkgroups
   they share or private calls between them, largest first. A community is
   often one agency, fleet or work group.
@@ -238,6 +242,36 @@ one:
   that one.
 - Or pick two or more networks in the open **Filters**' Networks row and
   press **Merge picked (N)**: they are merged into the busiest of them.
+- Or take a suggestion from **Links → Probably the same network** (below).
+
+#### Merge suggestions
+
+The **Links** view lists pairs of networks that are probably one, with the
+evidence and a rating — **very likely**, **likely** or **possible**:
+
+| Evidence | Meaning |
+|---|---|
+| **N calls heard on both** | The same call (same source, target and kind, within 4 s) was heard on both networks by different streams — one transmission, two frequency readings. The strongest sign: *very likely*. |
+| **same color code (1)** (or NAC, RAN, …) | Both carry the same short code. |
+| **2.5 kHz apart** | Their channels are this close — less than a channel apart (real channels are 6.25 or 12.5 kHz apart). |
+| **one took over when the other stopped** | They were never heard in the same period: what a retune or a changed offset looks like. |
+| **talkgroups / radios shared** | Supporting evidence only: on amateur DMR, radio ids are worldwide and TG 9 is local on every repeater. |
+
+A pair is never suggested when the evidence says they are different channels:
+both have a system id; their codes differ; **one stream heard both at the same
+moment**; **different calls on the same slot at the same moment** (two
+transmissions at once — unless the same calls were also heard on both, which
+is shown as *but: different calls at the same moment N×*); or their channels
+are more than 6.25 kHz apart (or unknown) with no call heard on both.
+
+**Merge** merges the less busy one into the busier. **Not the same** stops
+suggesting that pair in this browser (**Suggest them again** brings them back).
+The suggestions only advise: nothing is merged until you press Merge. The
+**Merge into…** list in a network's details is ordered by the same evidence
+(its rating first).
+
+![Figure 6c](img/links-same.png)
+*Figure 6c: Merge suggestions: a pair heard together (very likely), a hand-off 2.5 kHz apart (likely) and a pair 5 kHz apart (possible). A pair with different calls at the same moment is not suggested.*
 
 A merged network keeps the name of the one merged into, lists every channel,
 and adds up the counts; the Networks view marks it **+N merged**, and every
