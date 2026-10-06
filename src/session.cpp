@@ -2,6 +2,7 @@
 #include "json_util.hpp"
 #include "protocol_capabilities.hpp"
 #include "status_page.hpp"
+#include "net_manual.hpp"
 #include "net_page.hpp"
 #include "pager_events.hpp"
 
@@ -574,6 +575,20 @@ void Session::serve_http() {
         res->set("Cross-Origin-Opener-Policy", "same-origin");
         res->set("Cross-Origin-Embedder-Policy", "credentialless");
         res->body() = render_net_page_html();
+    } else if (target == "/net/manual.pdf") {
+        // The explorer's user manual (Help), built into the server.
+        const std::string_view pdf = net_manual_pdf();
+        if (pdf.empty()) {
+            res->result(http::status::not_found);
+            res->set(http::field::content_type, "text/plain; charset=utf-8");
+            res->body() = "This server was built without the manual (docs/NET_EXPLORER.pdf).\n";
+        } else {
+            res->result(http::status::ok);
+            res->set(http::field::content_type, "application/pdf");
+            res->set(http::field::content_disposition, "inline; filename=\"dsd-server-network-explorer-manual.pdf\"");
+            res->set(http::field::cache_control, "no-cache");
+            res->body().assign(pdf.data(), pdf.size());
+        }
     } else if (target == "/net/asr_worker.js") {
         // The explorer's speech-to-text worker (net_page.hpp).
         res->result(http::status::ok);

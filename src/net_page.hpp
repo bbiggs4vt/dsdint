@@ -49,16 +49,23 @@ inline std::string render_net_page_html() {
   h1 { font-size: 1.4rem; margin: 0; font-weight: 500; color: var(--heading); text-shadow: 0 -1px 0 rgba(0,0,0,.4); }
   h1 .accent { color: var(--info); }
   .sub { color: var(--muted); font-size: .82rem; margin-top: .2rem; }
-  /* The status line never wraps: a longer status must not move the page (a
-     click in progress would land on another row). */
-  div.sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* The status text has a fixed width: a longer status must not re-wrap the
+     header and move the page (a click in progress would land on another row). */
+  #live { display: inline-block; width: 11em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+          vertical-align: bottom; }
   .hdr-actions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  /* The title takes the room the actions leave (its status line wraps)
+     rather than pushing the actions onto a row of their own. */
+  .ttl { flex: 1 1 18rem; min-width: 0; }
   input[type=search] { background: #1f2327; color: var(--heading); border: 1px solid var(--comp-bd);
                        border-radius: 4px; padding: .35rem .6rem; font: inherit; width: 16rem; max-width: 100%; }
   .btn { appearance: none; cursor: pointer; color: var(--heading);
          background-image: linear-gradient(rgba(255,255,255,.12), rgba(255,255,255,0)), linear-gradient(#7a8288, #7a8288);
          border: 1px solid var(--comp-bd); border-radius: 4px; padding: .3rem .8rem; font: inherit; font-size: .8rem;
          text-shadow: 0 -1px 0 rgba(0,0,0,.3); }
+  a.btn { display: inline-block; text-decoration: none; }
+  #help { font-weight: 700; }
+  #help .hl { display: none; font-weight: 400; }
   .btn:hover { background-image: linear-gradient(rgba(255,255,255,.18), rgba(255,255,255,.03)), linear-gradient(#7a8288, #7a8288); }
   .btn.recon { background-image: linear-gradient(rgba(255,255,255,.12), rgba(255,255,255,0)), linear-gradient(#d9534f, #c9302c); }
   .dropdown { position: relative; display: inline-block; }
@@ -340,8 +347,9 @@ inline std::string render_net_page_html() {
   }
   /* Compact header (narrow windows; touch screens up to tablet size; short
      touch screens such as a phone held sideways): the actions fold into a menu. */
-  @media (max-width: 760px), (max-width: 1050px) and (pointer: coarse), (max-height: 500px) and (pointer: coarse) {
+  @media (max-width: 940px), (max-width: 1050px) and (pointer: coarse), (max-height: 500px) and (pointer: coarse) {
     .hdr { gap: .6rem; padding-top: .6rem; padding-bottom: .6rem; flex-wrap: nowrap; }
+    .ttl { flex: none; }
     h1 { font-size: 1.15rem; white-space: nowrap; }
     .sub .desc { display: none; }
     .hdr-actions { flex: 1 1 auto; justify-content: flex-end; flex-wrap: nowrap; position: relative; min-width: 0; }
@@ -353,6 +361,7 @@ inline std::string render_net_page_html() {
                  top: calc(100% + 6px); z-index: 25; min-width: 15rem; padding: .6rem; background: var(--panel);
                  border: 1px solid var(--comp-bd); border-radius: 6px; box-shadow: 0 8px 22px rgba(0,0,0,.5); }
     .acts.open .btn { text-align: left; }
+    .acts.open #help .hl { display: inline; }
     .acts .dropdown { display: block; }
     .acts .dropdown .btn { width: 100%; }
     .acts .menu { position: static; min-width: 0; margin-top: .3rem; box-shadow: none; }
@@ -448,7 +457,7 @@ inline std::string render_net_page_html() {
 </head>
 <body>
 <header><div class="wrap hdr">
-  <div>
+  <div class="ttl">
     <h1><span class="accent">dsd-server</span> network explorer</h1>
     <div class="sub"><span id="live">connecting&hellip;</span><span class="desc"> &middot; calls, talkgroups &amp; radios, associated per protocol</span>
       &middot; <a href="/">status page</a></div>
@@ -475,6 +484,7 @@ inline std::string render_net_page_html() {
     <input type="file" id="importfile" accept=".json,.gz,.zip,application/json,application/zip" multiple hidden>
     <button id="open" class="btn" type="button" title="View saved explorer exports -- several are merged into one view (or drop them on the page)">Open&hellip;</button>
     <input type="file" id="openfile" accept=".json,.gz,.zip,application/json,application/zip" multiple hidden>
+    <a id="help" class="btn" href="/net/manual.pdf" target="_blank" rel="noopener" title="Help: the explorer's user manual (PDF, opens in a new tab)" aria-label="Help: user manual">?<span class="hl"> Help</span></a>
     </div>
   </div>
 </div></header>

@@ -72,7 +72,19 @@ set(PAGER_RUNTIME_SOURCES
   src/pager_process.cpp
   src/pager_events.cpp
 )
-set(RUNTIME_CHAIN_SOURCES ${TETRA_RUNTIME_SOURCES} ${PAGER_RUNTIME_SOURCES})
+# The explorer's user manual, built into every server (Help -> /net/manual.pdf;
+# src/net_manual.cpp). Rebuilt when the PDF changes; without it (a source tree
+# with no docs/) Help says so instead.
+set(NET_MANUAL_PDF "${CMAKE_CURRENT_SOURCE_DIR}/docs/NET_EXPLORER.pdf")
+if(EXISTS "${NET_MANUAL_PDF}")
+  set_source_files_properties(src/net_manual.cpp PROPERTIES
+    OBJECT_DEPENDS "${NET_MANUAL_PDF}"
+    COMPILE_DEFINITIONS "DSD_NET_MANUAL_PDF=\"${NET_MANUAL_PDF}\"")
+else()
+  message(STATUS "docs/NET_EXPLORER.pdf not found: the explorer's Help will have no manual")
+endif()
+
+set(RUNTIME_CHAIN_SOURCES ${TETRA_RUNTIME_SOURCES} ${PAGER_RUNTIME_SOURCES} src/net_manual.cpp)
 
 # --- Optional TETRA voice codec (opt-in; off by default) ---------------------
 # TETRA voice is ACELP (ETSI EN 300 395-2). The reference codec is patent-

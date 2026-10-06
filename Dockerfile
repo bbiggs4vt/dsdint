@@ -135,6 +135,8 @@ COPY tests /opt/dsd-server/tests
 COPY tools /opt/dsd-server/tools
 # Real off-air paging captures (X-Midas BLUE) used by test_session_pager.
 COPY samples /opt/dsd-server/samples
+# The explorer's user manual, built into the server (its Help button).
+COPY docs/NET_EXPLORER.pdf /opt/dsd-server/docs/NET_EXPLORER.pdf
 # Optional TETRA voice codec. TETRA speech is ACELP (ETSI EN 300 395-2); the
 # reference codec is patent-encumbered and, as carried by tetra-kit, GPLv3, so
 # it is NOT vendored in the repo and OFF by default (image stays events-only).

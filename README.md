@@ -504,6 +504,7 @@ session exactly as before; anything else is answered over HTTP:
 | `/iq_log/on`, `/iq_log/off` | flip the global IQ-capture switch (the page's **Log IQ** checkbox); returns `{"iq_log_enabled":…}` |
 | `/net` | the network explorer page (see [Network explorer](#network-explorer)) |
 | `/net.json`, `/net/clear` | the explorer's association model as JSON; forget it (and its imports; `?audio=1` also deletes the call audio files) |
+| `/net/manual.pdf` | the explorer's user manual (`docs/NET_EXPLORER.pdf`, built into the server; the page's **?** Help button) |
 | `/net/networks/merge`, `/net/networks/unmerge` | show two networks as one (`?fam=dmr&from=KEY&to=KEY`), or undo it (`?fam=dmr&key=KEY`) -- shared by every viewer, kept in `DSD_NET_MERGES_FILE` (default `net_merges.json` in the recordings folder) and in exports |
 | `/net/export.json`, `/net/export.graphml` | export what the explorer shows: native (re-openable) / GraphML |
 | `POST /net/import`, `/net/imports/remove`, `/net/imports/clear`, `POST /net/merge` | add exports to the live view, remove them; merge exports without the live data |
@@ -566,8 +567,10 @@ curl http://localhost:22600/status.json
 > calls and associations are worked out for each protocol. A printable copy
 > to hand out is [docs/NET_EXPLORER.pdf](docs/NET_EXPLORER.pdf) (rebuild it
 > after editing the manual with `tools/build_manual_pdf.py`; it needs Python's
-> `markdown` package and Chrome or Chromium). This section is the
-> server-side reference.
+> `markdown` package and Chrome or Chromium). The PDF is also built into the
+> server -- the explorer's **?** button opens it (`/net/manual.pdf`) -- so
+> rebuild the server after regenerating it. This section is the server-side
+> reference.
 
 `/net` on the same port is a second page that turns the decoded event stream
 into **calls, talkgroups, radios and networks, and the associations between

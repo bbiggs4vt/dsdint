@@ -1096,6 +1096,7 @@ over HTTP and the connection closed:
 | `GET /iq_log/on` | turns the global IQ-capture switch on (every active/new session captures); returns `{"iq_log_enabled":true}` |
 | `GET /iq_log/off` | turns it off (finalizes every session's capture); returns `{"iq_log_enabled":false}` |
 | `GET /net` | `text/html` network explorer (calls / talkgroups / radios / networks and their associations; polls `/net.json`); sent with `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: credentialless` so it can be cross-origin isolated (multi-threaded speech-to-text) |
+| `GET /net/manual.pdf` | `application/pdf` (inline) — the explorer's user manual, built into the server from `docs/NET_EXPLORER.pdf`; `404` if the build had none |
 | `GET /net.json` | `application/json` association model (see below) |
 | `GET /net/clear` | forgets everything the explorer learned, and its imports (`?audio=1` also deletes the call audio files); returns `{"ok":true,"audio_files":N,"audio_bytes":B}` |
 | `GET /net/networks/merge?fam=&from=&to=` | network merge: show network `from` (and any merged into it) as part of `to`, for every viewer; returns `{"ok":true\|false,"merges":{…}}` (`ok` false = nothing changed) |
