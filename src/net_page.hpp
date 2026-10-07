@@ -1002,9 +1002,14 @@ function colorFor(key) {
   if (!S.ncol[ck]) { var i = S.nidx[S.fam] || 0; S.ncol[ck] = PAL[i % PAL.length]; S.nidx[S.fam] = i + 1; }
   return S.ncol[ck];
 }
+// A network to list: identified (any code / system), or unidentified but with
+// traffic (a call was heard on it). A bare "Unidentified · <freq>" with nothing
+// decoded yet is hidden -- a receiver is tuned there but there is nothing to
+// show, and it would come and go as streams start and stop.
+function netShown(n) { return !unidentifiedNet(n) || n.calls > 0; }
 function index() {
   var F = S.d.families[S.fam];
-  var X = { F: F, nets: F.networks.slice(), netByKey: {}, tgs: F.talkgroups, tgById: {}, radios: F.radios,
+  var X = { F: F, nets: F.networks.filter(netShown), netByKey: {}, tgs: F.talkgroups, tgById: {}, radios: F.radios,
             rById: {}, calls: F.calls, netTg: {}, netRad: {} };
   X.nets.sort(function (a, b) { return a.first - b.first; });
   X.nets.forEach(function (n) { X.netByKey[n.key] = n; });
@@ -2997,7 +3002,13 @@ function render() {
   if (window.scrollY !== y) window.scrollTo(window.scrollX, y);
 }
 function renderAll() {
-  var fams = Object.keys(S.d.families).sort(function (a, b) { return famTotals(b) - famTotals(a); });
+  // A protocol tab shows when it has something to show -- a listed network
+  // (identified, or with traffic) -- or a decode stream connected to it now
+  // (receiving, nothing identified yet). A protocol with only bare
+  // "Unidentified · <freq>" buckets and no live stream is dropped with them.
+  var fams = Object.keys(S.d.families).filter(function (f) {
+    return streamsOf(f).length || S.d.families[f].networks.some(netShown);
+  }).sort(function (a, b) { return famTotals(b) - famTotals(a); });
   $('empty').hidden = fams.length > 0;
   $('main').hidden = !fams.length;
   var ft = $('famtabs');

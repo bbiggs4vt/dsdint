@@ -567,7 +567,7 @@ half a megabyte per minute on a busy multi-channel server.
 | Symptom | Likely cause / what to do |
 |---|---|
 | A session runs but nothing appears | The explorer only shows streams that decode real traffic. Check the status page: is the protocol right, is anything being decoded? |
-| `Unidentified · …` network | No identity decoded yet (often at the start of a session, or on a quiet channel). It updates when one is heard. |
+| `Unidentified · …` network | No identity decoded yet (often at the start of a session, or on a quiet channel). It is not listed until a call is heard on it or an identity is decoded, then it appears (and updates as more is heard). |
 | One system appears as several `Color Code n · stream N` networks | The client didn't send the frequency, so short codes can't be trusted to join streams. Send `center_freq` in `start`. Meanwhile **Links → Seen on more than one network** shows the shared radios and talkgroups. |
 | Many very short calls with no source | Usually decoder lines the explorer misread as calls. Make a **recording** ([section 13](#13-recording-a-session-for-troubleshooting)) and send it — that is how the Capacity Plus channel-status issue was found and fixed. |
 | The list moves too fast to read | The header's **Pause** freezes the page; or narrow the list with the search box or the **Filters**. |
@@ -641,7 +641,11 @@ in three strengths:
   client. A short code on one channel is in practice one repeater or
   conventional channel, so every stream on that frequency with that code
   shares one network (`Color Code 1 · 434.4250 MHz`). A stream on a known
-  channel with nothing decoded yet is `Unidentified · 434.4250 MHz`.
+  channel with nothing decoded yet is `Unidentified · 434.4250 MHz`. Such a
+  bare `Unidentified · …` network (a receiver is tuned there but nothing has
+  been decoded) is **not listed** -- not in the network list, the counts,
+  filters or merge suggestions -- until a call is heard on it or an identity
+  is decoded; its protocol tab still shows while a stream is receiving on it.
 
 Refinements:
 
