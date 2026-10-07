@@ -166,7 +166,10 @@ talkgroup links, so the talkgroups shape the picture.
   1000). The note on the right says how many are shown.
 - **Private-call links** and **Radio labels** — show or hide them.
 - Drag a node to move it; drag the background to pan; scroll, pinch or use
-  **− / +** to zoom; **Fit** brings everything back into view.
+  **− / +** to zoom; **Fit** brings everything back into view. Until you zoom
+  or pan yourself, the view keeps the whole graph in sight as it grows (it
+  eases out to fit when a node would leave the frame); once you have zoomed
+  or panned it stays where you put it, and **Fit** turns following back on.
 - Click a node to select it: its neighbours stay lit, everything else fades,
   and the details panel shows it.
 

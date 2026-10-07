@@ -537,7 +537,7 @@ inline std::string render_net_page_html() {
             <label><input type="checkbox" id="g-priv" checked> Private-call links</label>
             <label><input type="checkbox" id="g-labels" checked> Radio labels</label>
             <span class="gzoom"><button class="btn" id="g-zout" type="button" title="Zoom out" aria-label="Zoom out">&minus;</button><button class="btn" id="g-zin" type="button" title="Zoom in" aria-label="Zoom in">+</button></span>
-            <button class="btn" id="g-fit" type="button">Fit</button>
+            <button class="btn" id="g-fit" type="button" title="Show the whole graph -- and keep it in view as it grows, until you zoom or pan">Fit</button>
             <span id="g-note" style="color:var(--muted)"></span>
           </div>
           <div id="gwrap"><svg id="gsvg"></svg></div>
@@ -2231,7 +2231,7 @@ function detailBody(d) {
 // ---------- graph (self-contained force layout on SVG) ----------
 var SVGNS = 'http://www.w3.org/2000/svg';
 function sv(tag, a) { var e = document.createElementNS(SVGNS, tag); for (var k in a) e.setAttribute(k, a[k]); return e; }
-var GR = { nodes: [], links: [], by: {}, adj: {}, sig: '', t: { k: 1, x: 0, y: 0 }, alpha: 0, raf: 0, fitted: false,
+var GR = { nodes: [], links: [], by: {}, adj: {}, sig: '', t: { k: 1, x: 0, y: 0 }, alpha: 0, raf: 0, fitted: false, userView: false,
            root: null, lg: null, ng: null, drag: null, pan: null, pts: {}, pinch: null };
 function gSig() {
   return [S.d.version, S.fam, netKeys().sort().map(function (k) { return S.nets[k] + ':' + k; }).join(','),
@@ -2287,7 +2287,7 @@ function buildGraph() {
   // the node/link set itself changed, so a busy call doesn't keep it jiggling.
   var structure = nodes.map(function (x) { return x.id; }).sort().join(',') + '|' +
                   links.map(function (l) { return l.a + '>' + l.b; }).sort().join(',');
-  if (famChanged) GR.fitted = false;
+  if (famChanged) { GR.fitted = false; GR.userView = false; }
   if (structure !== GR.structure || famChanged) {
     GR.structure = structure;
     GR.alpha = Math.max(GR.alpha, famChanged || !GR.fitted ? 1 : 0.35);
@@ -2396,25 +2396,59 @@ function run() {
   if (GR.raf) return;
   (function frame() {
     if (S.view !== 'graph' || GR.alpha < 0.012) {
+      // Settled -- but finish gliding the view to fit, if it is still on its way.
+      if (S.view === 'graph' && GR.fitted && autoFit()) { paint(); GR.raf = requestAnimationFrame(frame); return; }
       GR.raf = 0;
       if (S.view === 'graph' && !GR.fitted && GR.nodes.length) { fit(); GR.fitted = true; }
       return;
     }
     for (var k = 0; k < 2; k++) step();
     if (!GR.fitted && GR.alpha < 0.2 && GR.nodes.length) { fit(); GR.fitted = true; }
+    else if (GR.fitted) autoFit();
     paint();
     GR.raf = requestAnimationFrame(frame);
   })();
 }
-function fit() {
+// The view that shows every node: { k, x, y } (null with no nodes).
+function fitView() {
   var svg = $('gsvg'), w = svg.clientWidth || 800, hh = svg.clientHeight || 600;
-  if (!GR.nodes.length) return;
+  if (!GR.nodes.length) return null;
   var x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
   GR.nodes.forEach(function (n) { x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x); y1 = Math.max(y1, n.y); });
   // Cap the zoom so a small graph isn't blown up until its labels collide.
   var k = Math.min(1.35, Math.max(0.15, Math.min(w / (x1 - x0 + 160), hh / (y1 - y0 + 100))));
-  GR.t = { k: k, x: -(x0 + x1) / 2 * k, y: -(y0 + y1) / 2 * k };
+  return { k: k, x: -(x0 + x1) / 2 * k, y: -(y0 + y1) / 2 * k };
+}
+// Fit (the Fit button): show every node -- and keep doing so (autoFit) until
+// the user zooms or pans.
+function fit() {
+  var v = fitView();
+  GR.userView = false;
+  if (!v) return;
+  GR.t = v;
   paint();
+}
+// Until the user zooms or pans on their own (GR.userView), the view follows
+// the graph as it grows: when a node would be drawn outside the frame, the
+// view glides (a step per frame) towards the one that fits everything.
+function autoFit() {
+  if (GR.userView || GR.drag || GR.pinch || !GR.nodes.length) return false;
+  var svg = $('gsvg'), w = svg.clientWidth, hh = svg.clientHeight;
+  if (!w || !hh) return false;
+  var t = GR.t, out = false, m = 12;
+  for (var i = 0; i < GR.nodes.length && !out; i++) {
+    var n = GR.nodes[i], sx = w / 2 + t.x + n.x * t.k, sy = hh / 2 + t.y + n.y * t.k;
+    out = sx < m || sy < m || sx > w - m || sy > hh - m;
+  }
+  if (!out && !GR.easing) return false;
+  var v = fitView();
+  if (!v) return false;
+  var f = 0.2;
+  t.k += (v.k - t.k) * f; t.x += (v.x - t.x) * f; t.y += (v.y - t.y) * f;
+  // Keep easing until the view has arrived (not just until nodes are back in).
+  GR.easing = Math.abs(v.k - t.k) / v.k > 0.01 || Math.abs(v.x - t.x) > 2 || Math.abs(v.y - t.y) > 2;
+  if (!GR.easing) { GR.t = v; }
+  return true;
 }
 function toGraph(cx, cy) {
   var svg = $('gsvg'), r = svg.getBoundingClientRect();
@@ -2442,6 +2476,7 @@ function zoomAt(cx, cy, k1) {
       // Second finger: pinch-zoom (and pan with the midpoint) instead of a drag.
       var g = two();
       GR.pinch = { d0: g.d, m0: g.m, k0: GR.t.k, x0: GR.t.x, y0: GR.t.y };
+      GR.userView = true; GR.easing = false;
       GR.drag = null; GR.pan = null;
       svg.classList.remove('panning');
       return;
@@ -2468,7 +2503,7 @@ function zoomAt(cx, cy, k1) {
       GR.alpha = Math.max(GR.alpha, 0.25); run(); paint();
     } else if (GR.pan) {
       var dx = e.clientX - GR.pan.x, dy = e.clientY - GR.pan.y;
-      if (Math.abs(dx) + Math.abs(dy) > 3) GR.pan.moved = true;
+      if (Math.abs(dx) + Math.abs(dy) > 3) { GR.pan.moved = true; GR.userView = true; GR.easing = false; }
       GR.t.x = GR.pan.tx + dx; GR.t.y = GR.pan.ty + dy; paint();
     }
   });
@@ -2499,14 +2534,15 @@ function zoomAt(cx, cy, k1) {
   svg.addEventListener('wheel', function (e) {
     e.preventDefault();
     var c = centred(e.clientX, e.clientY);
+    GR.userView = true; GR.easing = false;
     zoomAt(c.x, c.y, GR.t.k * Math.exp(-e.deltaY * 0.0015));
   }, { passive: false });
-  $('g-zin').addEventListener('click', function () { zoomAt(0, 0, GR.t.k * 1.4); });
-  $('g-zout').addEventListener('click', function () { zoomAt(0, 0, GR.t.k / 1.4); });
+  $('g-zin').addEventListener('click', function () { GR.userView = true; GR.easing = false; zoomAt(0, 0, GR.t.k * 1.4); });
+  $('g-zout').addEventListener('click', function () { GR.userView = true; GR.easing = false; zoomAt(0, 0, GR.t.k / 1.4); });
   ['g-cap', 'g-priv'].forEach(function (id) { $(id).addEventListener('change', function () { GR.sig = ''; buildGraph(); }); });
   $('g-labels').addEventListener('change', function () { drawGraph(); });
   $('g-fit').addEventListener('click', fit);
-  window.addEventListener('resize', function () { if (S.view === 'graph') paint(); });
+  window.addEventListener('resize', function () { if (S.view === 'graph') { if (autoFit()) run(); paint(); } });
 })();
 function legend() {
   var L = $('g-legend');
@@ -2823,7 +2859,7 @@ function openData(d, name, report) {
   S.file = { name: name, exported: d.exported || d.now, source: d.name || d.source || '' };
   S.d = { version: -Date.now(), now: d.now || d.exported, families: d.families, rec: {}, merges: d.merges || {} };
   applyMerges(S.d);
-  S.fam = null; S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; S.q = ''; $('q').value = ''; GR.sig = ''; GR.fitted = false;
+  S.fam = null; S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; S.q = ''; $('q').value = ''; GR.sig = ''; GR.fitted = false; GR.userView = false;
   document.body.classList.add('filemode');
   var fb = $('filebar'), srcs = d.sources || [];
   fb.textContent = '';
@@ -2942,7 +2978,7 @@ function openFiles(fl) {
 function backToLive() {
   if (PLAYER.a && PLAYER.name && S.file) { PLAYER.a.pause(); PLAYER.name = null; }
   clearFileAudio();
-  S.file = null; S.d = null; IX = null; S.fam = load('fam'); S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; GR.sig = ''; GR.fitted = false;
+  S.file = null; S.d = null; IX = null; S.fam = load('fam'); S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; GR.sig = ''; GR.fitted = false; GR.userView = false;
   document.body.classList.remove('filemode');
   $('filebar').hidden = true;
   $('live').textContent = 'connecting\u2026';
