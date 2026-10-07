@@ -408,6 +408,33 @@ int main() {
               "cap+: the slot's real call (23021 -> TG 12, voice) is one call, not cut by the roster");
     }
 
+    // ---- P25 neighbour broadcast: ids on the line after the heading (real lines, 380.475 MHz) ----
+    {
+        AssocModel m;
+        m.begin_stream(1, "p25p1", 0, "", 380475000);
+        std::int64_t t = 1000;
+        for (int cycle = 0; cycle < 3; ++cycle, t += 1000) {
+            line(m, 1, "15:01:53 Sync: +P25p1 WACN: 580A0; SYS: 006; NAC/CC: 00D; RFSS: 008; Site: 008;  TSBK", t);
+            line(m, 1, " RFSS Status Broadcast - Implicit", t + 1);
+            line(m, 1, "  LRA [08] SYSID [006] RFSS ID [008] SITE ID [008] CHAN [0026] SSC [70]", t + 2);
+            line(m, 1, "15:01:53 Sync: +P25p1 WACN: 580A0; SYS: 006; NAC/CC: 00D; RFSS: 008; Site: 008;  TSBK", t + 100);
+            line(m, 1, " Adjacent Status Broadcast - Abbreviated", t + 101);
+            line(m, 1, "  LRA [07] RFSS[007] SITE [007] SYSID [015] CHAN-T [0197] SSC [70]", t + 102);
+            line(m, 1, " Up to Date (Correct) Valid RFSS Connection Active", t + 103);
+            line(m, 1, "  Frequency [385.087500] MHz", t + 104);
+            line(m, 1, "2026/10/07 15:01:53 P25 TGT: 00000101; SRC: 06746109; NAC: 00D; ", t + 200 + cycle);
+        }
+        J j = snap(m, t);
+        const J& N = j["families"]["p25"]["networks"];
+        check(N.size() == 1 && N.at(0)["key"].s == "wacn:580A0/sys:006",
+              "p25 adjacent: the neighbour's SYSID (on the line after the heading) doesn't become this stream's network");
+        check(contains(N.at(0)["sites"], "RFSS 7 \xC2\xB7 Site 7"), "p25 adjacent: the neighbour is recorded as a site of the network");
+        const J& C = j["families"]["p25"]["calls"];
+        bool all = C.size() > 0;
+        for (std::size_t i = 0; i < C.size(); ++i) all = all && C.at(i)["net"].s == "wacn:580A0/sys:006";
+        check(all, "p25 adjacent: calls stay on the stream's own network");
+    }
+
     // ---- DMR hang time: the call ends when the talker unkeys (real lines, 460.575 MHz) ----
     {
         auto talk = [](AssocModel& m, std::int64_t& t, int bursts) {

@@ -1080,6 +1080,7 @@ private:
         std::map<std::string, std::string> ids;        // identity tokens seen
         std::string net, site;
         bool strong = false;
+        bool adjacent = false;                          // the lines being read describe a neighbour site
         bool live = false;                              // has decoded real traffic yet
         bool running = false;                           // pipeline up (begin_stream .. end_stream)
         std::int64_t freq = 0;                          // channel frequency, Hz (0 = unknown)
@@ -1210,6 +1211,12 @@ private:
     // Returns true when the stream's identity changed.
     bool absorb_identity(Ctx& c, const DsdEvent& ev, const std::map<std::string, std::string>& x,
                          const std::string& up, Family* F) {
+        // dsd-fme prints a neighbour broadcast as a heading line, then the
+        // neighbour's ids on the next line(s): "Adjacent Status Broadcast -
+        // Abbreviated" / "LRA [07] RFSS[007] SITE [007] SYSID [015] CHAN-T
+        // [0197] SSC [70]". Those ids are the neighbour's until the next
+        // message starts (a sync, or another broadcast's heading).
+        if (ev.kind == "sync" || has(up, "BROADCAST")) c.adjacent = has(up, "ADJ") || has(up, "NEIGHB");
         std::map<std::string, std::string> got;
         const std::string& fam = c.family;
         if (!ev.color_code.empty() && (fam == "dmr" || fam == "dpmr" || fam == "tetra"))
@@ -1228,7 +1235,7 @@ private:
         // Adjacent/neighbor-site broadcasts describe OTHER sites (possibly of
         // another system): record the site on this stream's network, but
         // absorb nothing -- it must not move this stream's identity or site.
-        if (has(up, "ADJ") || has(up, "NEIGHB")) {
+        if (c.adjacent || has(up, "ADJ") || has(up, "NEIGHB")) {
             std::string s = site_label(fam, got);
             if (!s.empty() && !c.net.empty() && F) {
                 auto nit = F->networks.find(c.net);
