@@ -673,10 +673,6 @@ compressed when the client accepts it).
   oldest call *without* audio is dropped first. Each extra 1000 calls costs
   roughly 1 MB of JSON per explorer refresh (about 100 KB compressed), so
   lower it on a slow link or a busy multi-protocol server.
-- **Calls / s:** the stat card shows calls per second over the last minute
-  (hover / tap for the 10-minute average and the total since start). It is
-  counted from every call, not just those still listed; with a network or
-  search filter it is worked out from the listed calls.
 - Radios, talkgroups and networks are capped too (3000 / 1500 / 200 per
   protocol, least recently heard dropped first).
 

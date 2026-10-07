@@ -720,9 +720,6 @@ int main() {
             line(m, 1, " SLOT 1 TGT=" + std::to_string(1000 + i) + " SRC=7 Group Call ", 1000 + i * 5000LL);
         J j = snap(m, 1000 + 450 * 5000LL);
         check(j["families"]["dmr"]["calls"].size() == 400 && j["max_calls"].n == 400, "bounded: calls list capped at max_calls");
-        const J& R = j["rates"]["dmr"];
-        check(R["total"].n == 450 && R["per_s_1m"].n > 0.17 && R["per_s_1m"].n < 0.21 && R["per_s_10m"].n == 0.2,
-              "rates: every call counted (not just those still listed); 1- and 10-minute averages of one call per 5 s");
         check((*find(j["families"]["dmr"]["radios"], "id", "7"))["tgs"].size() == AssocModel::kMaxEdgesPerNode,
               "bounded: per-radio talkgroup edges capped");
         m.clear();

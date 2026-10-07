@@ -93,7 +93,6 @@ public:
     static constexpr std::size_t kMaxEdgesPerNode = 300;
     static constexpr std::size_t kMaxAliases = 5;
     static constexpr std::size_t kMaxFreqs = 64;       // channels listed per network
-    static constexpr std::int64_t kRateWindowS = 600;  // calls/s averages: 1 and 10 minutes
     static constexpr std::int64_t kPrerollMs = 1000;   // audio held before its call is decoded
     static constexpr std::size_t kPrerollSamples = 8000;
     // A call's recording starts only with audible audio (peak at least this,
@@ -837,7 +836,7 @@ private:
                ",\"since\":" + std::to_string(since_) + ",\"rec\":" + rec_json_locked() +
                ",\"audio\":" + audio_json_locked() + ",\"max_calls\":" + std::to_string(max_calls_) +
                ",\"map\":" + map_json() + ",\"dev\":" + (dev_tools() ? "true" : "false") +
-               ",\"rates\":" + rates_json_locked(now) + ",\"streams\":" + streams_json_locked() + ",\"imports\":" + im +
+               ",\"streams\":" + streams_json_locked() + ",\"imports\":" + im +
                ",\"merges\":" + merges_json(view_merges_locked()) +
                ",\"families\":";
     }
@@ -863,10 +862,6 @@ private:
         }();
         return j;
     }
-    // Calls per second per protocol: averages over the last 1 and 10 minutes
-    // (over the time since the server started or was cleared, if shorter),
-    // and the number counted since then. Counted from every call, however
-    // many the list still holds.
     // The decode streams running now -- connected, whether or not anything is
     // being decoded: [{"s","fam","label","freq","since","heard","live"}].
     // fam is the protocol ("auto" until detected); heard the last decoded
@@ -885,27 +880,6 @@ private:
             first = false;
         }
         return o + "]";
-    }
-    std::string rates_json_locked(std::int64_t now) const {
-        std::string o = "{";
-        const std::int64_t sec = now / 1000, up = std::max<std::int64_t>(1, (now - since_) / 1000);
-        bool first = true;
-        for (const auto& fk : fam_) {
-            const Family& F = fk.second;
-            std::uint64_t n1 = 0, n10 = 0;
-            for (const auto& b : F.rate) {
-                if (b.first > sec - 60) n1 += b.second;
-                if (b.first > sec - kRateWindowS) n10 += b.second;
-            }
-            char b[160];
-            std::snprintf(b, sizeof b, "{\"per_s_1m\":%.2f,\"per_s_10m\":%.2f,\"total\":%llu}",
-                          static_cast<double>(n1) / static_cast<double>(std::min<std::int64_t>(60, up)),
-                          static_cast<double>(n10) / static_cast<double>(std::min<std::int64_t>(kRateWindowS, up)),
-                          static_cast<unsigned long long>(F.counted));
-            o += (first ? "" : ",") + assocjson::q(fk.first) + ":" + b;
-            first = false;
-        }
-        return o + "}";
     }
     std::string audio_json_locked() const {
         const auto a = audio_.status();
@@ -1099,8 +1073,6 @@ private:
         std::map<std::string, Talkgroup> tgs;
         std::map<std::string, Radio> radios;
         std::deque<Call> calls;                        // oldest at front
-        std::deque<std::pair<std::int64_t, std::uint32_t>> rate;   // calls counted per second (10 min)
-        std::uint64_t counted = 0;                     // calls counted since since_
     };
     struct Ctx {                                       // one per session stream
         std::string family;
@@ -1559,11 +1531,6 @@ private:
     // Both ends of the call are known: record the association once per call.
     void count_call(Family& F, Call& k, std::int64_t now) {
         k.counted = true;
-        ++F.counted;
-        const std::int64_t sec = now / 1000;
-        if (F.rate.empty() || F.rate.back().first != sec) F.rate.push_back({sec, 0});
-        ++F.rate.back().second;
-        while (!F.rate.empty() && F.rate.front().first <= sec - kRateWindowS) F.rate.pop_front();
         // (No source: a call whose talker wasn't decoded -- the target only.)
         Radio* r = nullptr;
         if (!k.src.empty()) {

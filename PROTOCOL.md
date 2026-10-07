@@ -1198,7 +1198,7 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
  "rec": {"on": false, "truncated": false, "file": "net_20261001_214359.jsonl.gz",
          "path": "/captures/net_20261001_214359.jsonl.gz", "bytes": 86317, "file_bytes": 9466},
  "audio": {"on": true, "dir": "/captures/net_audio", "bytes": 52428800, "cap_bytes": 1073741824, "files": 412, "recording": 1},
- "max_calls": 5000, "rates": {"p25": {"per_s_1m": 13.27, "per_s_10m": 12.81, "total": 48210}},
+ "max_calls": 5000,
  "imports": [{"id": 1, "label": "south.json", "exported": 1789998000000,
               "sources": [{"instance": "a71e…", "name": "rx-south", "since": 1789990000000, "through": 1789998000000}],
               "networks": 2, "talkgroups": 14, "radios": 40, "calls": 120}],
@@ -1247,10 +1247,7 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
   shows its developer tools (Record) to everyone; otherwise only to a browser
   that opened `/net?dev=1`. (The recording endpoints work either way.)
 - `max_calls` is how many calls are kept per protocol (`DSD_NET_MAX_CALLS`,
-  default 5000; when full, calls without audio roll off first). `rates` gives
-  per protocol `per_s_1m` / `per_s_10m` (calls per second over the last 1 / 10
-  minutes, or since start / Clear if shorter) and `total` (calls counted since
-  then), from every call -- not only those still listed. Sent gzip-encoded
+  default 5000; when full, calls without audio roll off first). Sent gzip-encoded
   when the request has `Accept-Encoding: gzip`.
 - `audio` is the per-call audio status: `on`, the directory, bytes used of
   `cap_bytes`, the number of files, and how many calls are recording now.

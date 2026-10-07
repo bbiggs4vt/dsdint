@@ -404,7 +404,7 @@ inline std::string render_net_page_html() {
   @media (max-width: 900px) { th, td { padding-left: .5rem; padding-right: .5rem; } td .netc { max-width: 9.5rem; } }
   /* Compact stat cards, tabs and network chips: tablets and smaller. */
   @media (max-width: 1050px) {
-    .cards { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .5rem; }
+    .cards { display: grid; grid-template-columns: repeat(var(--ncards, 7), minmax(0, 1fr)); gap: .5rem; }
     .card { min-width: 0; padding: .45rem .7rem; }
     .card .l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   }
@@ -412,7 +412,7 @@ inline std::string render_net_page_html() {
     .tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
     .tabs::-webkit-scrollbar { display: none; }
     .tab { flex: none; padding: .4rem .7rem; }
-    .cards { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .4rem; margin-bottom: .7rem; }
+    .cards { grid-template-columns: repeat(var(--ncards, 7), minmax(0, 1fr)); gap: .4rem; margin-bottom: .7rem; }
     .card { padding: .3rem .5rem; }
     .card .n { font-size: 1.15rem; }
     .card .l { font-size: .58rem; letter-spacing: .03em; }
@@ -2697,22 +2697,6 @@ function renderView() {
   else if (S.view === 'graph') { legend(); buildGraph(); highlight(); run(); }
   else if (S.view === 'map') viewMap();
 }
-// Calls per second: the server's count for the whole protocol (every call,
-// however many are still listed) -- or, with a network / search filter or in
-// a file view, worked out from the listed calls of the last minute.
-function callRate(calls) {
-  var R = S.d.rates && S.d.rates[S.fam];
-  if (R && !anyFilter() && !S.q && !S.file)
-    return { text: R.per_s_1m.toFixed(1),
-             tip: 'Calls per second over the last minute: ' + R.per_s_1m.toFixed(2) + ' (last 10 minutes: ' +
-                  R.per_s_10m.toFixed(2) + '). ' + R.total + ' calls counted since the server started or was cleared.' };
-  var t = now(), n = 0, oldest = t;
-  calls.forEach(function (c) { if (c.start > t - 60000) ++n; if (c.start < oldest) oldest = c.start; });
-  var span = Math.max(1, Math.min(60, (t - oldest) / 1000));
-  return { text: (n / span).toFixed(1),
-           tip: 'Calls per second over the last minute, from the calls listed' + (anyFilter() ? ' with the filters' : '') +
-                (S.q ? ' matching the search' : '') + ': ' + n + ' calls.' };
-}
 // The Filters section. Collapsed (the default): one row -- the toggle, a
 // chip for each filter in force (click to drop it) and Clear all. Open: a
 // row per kind -- every network; the talkgroups and radios in the filter,
@@ -2899,23 +2883,22 @@ function renderAll() {
   IX.nets.forEach(function (n) { if (netOk(n.key)) n.sites.forEach(function (s) { sites[n.key + s] = 1; }); });
   var cards = $('cards');
   cards.textContent = '';
-  var rate = callRate(calls);
   var kept = 'The newest calls are listed (up to ' + (S.d.max_calls || 5000) + ' per protocol; calls with audio are kept longest).';
   // Live: a Streams card (this protocol's connected decode streams; green
-  // when one decodes now) and the call rate beside the call count. A file
-  // view has no connections: its Calls / s card stays.
+  // when one decodes now). A file view has no connections: no Streams card.
   var st = streamsOf(S.fam), stDec = st.some(decodingNow);
-  var cardCalls = S.file ? ['Calls (recent)', calls.length, kept] : ['Calls (recent) \u00B7 ' + rate.text + '/s', calls.length, kept + ' ' + rate.tip];
-  var card6 = S.file ? ['Calls / s', rate.text, rate.tip] :
+  var cardStreams = S.file ? null :
     ['Streams', st.length, st.length ? st.length + ' decode stream' + (st.length > 1 ? 's' : '') + ' connected for this protocol:\n' + st.map(streamText).join('\n')
                                       : 'No decode stream connected for this protocol right now (its data is from earlier, or imported).'];
   [['Networks', IX.nets.filter(function (n) { return netOk(n.key); }).length], ['Sites', Object.keys(sites).length], ['Talkgroups', tgs.length],
-   ['Radios', radios.length], cardCalls, card6,
+   ['Radios', radios.length], ['Calls (recent)', calls.length, kept], cardStreams,
    ['Live calls', lv, !anyFilter() && !S.q ? 'Calls heard in the last ' + LIVE_MS / 1000 + ' s.' :
      'Calls heard in the last ' + LIVE_MS / 1000 + ' s' + (anyFilter() ? ' with the filters' : '') +
-     (S.q ? ' matching the search' : '') + ' (the protocol tab counts all of them).']].forEach(function (c, i) {
-    cards.appendChild(h('div', { class: 'card' + ((i === 6 && lv) || (i === 5 && !S.file && stDec) ? ' live' : ''), title: c[2] || null, 'data-tip': c[2] || null },
-      [h('div', { class: 'n' }, [i === 5 && !S.file && st.length ? h('span', { class: 'cdot' + (stDec ? ' on' : '') }) : null, String(c[1])]),
+     (S.q ? ' matching the search' : '') + ' (the protocol tab counts all of them).']].filter(Boolean).forEach(function (c, i, all) {
+    if (!i) cards.style.setProperty('--ncards', all.length);   // one row on tablets (a file view has no Streams card)
+    var isLive = c[0] === 'Live calls', isSt = c === cardStreams;
+    cards.appendChild(h('div', { class: 'card' + ((isLive && lv) || (isSt && stDec) ? ' live' : ''), title: c[2] || null, 'data-tip': c[2] || null },
+      [h('div', { class: 'n' }, [isSt && st.length ? h('span', { class: 'cdot' + (stDec ? ' on' : '') }) : null, String(c[1])]),
        h('div', { class: 'l', text: c[0] })]));
   });
   renderFilters();
