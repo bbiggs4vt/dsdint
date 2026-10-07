@@ -993,6 +993,12 @@ function mergePickBusy() {
   if (ae && ae.classList && ae.classList.contains('msel') && row.contains(ae) && ae.getAttribute('data-net') === sel.id) return true;
   try { return row.matches(':hover'); } catch (e) { return false; }
 }
+// A decryption key is being typed in the details panel: don't rebuild it (the
+// box would vanish mid-type) and don't let a server-update reload fire.
+function keyEditing() {
+  var ae = document.activeElement;
+  return !!(ae && ae.classList && ae.classList.contains('ki') && $('detail').contains(ae));
+}
 
 // ---------- indexing ----------
 function colorFor(key) {
@@ -1291,7 +1297,7 @@ function setKey(net, kid, alg, value, done) {
                            body: JSON.stringify({ fam: S.fam, net: net, kid: kid, alg: alg, key: value }) })
     .then(function (r) { return r.json().then(function (j) { return r.ok && j.ok; }, function () { return false; }); })
     .then(function (ok) {
-      if (ok) { markKeyed(net, kid, true); toast('Key loaded for ' + keyText(alg, kid) + '.'); renderDetail(true); }
+      if (ok) { S.keyEdit = null; markKeyed(net, kid, true); toast('Key loaded for ' + keyText(alg, kid) + '.'); renderDetail(true); }
       else toast('That key wasn’t accepted (expected hex digits, up to 64).');
       if (done) done(ok);
     }).catch(function () { toast('Could not reach the server to set the key.'); });
@@ -1300,7 +1306,7 @@ function removeKey(net, kid) {
   fetch('/net/keys/remove?fam=' + encodeURIComponent(S.fam) + '&net=' + encodeURIComponent(net) + '&kid=' + encodeURIComponent(kid),
         { cache: 'no-store' })
     .then(function (r) { return r.json(); }).then(function (j) {
-      if (j.ok) { markKeyed(net, kid, false); toast('Key removed.'); renderDetail(true); }
+      if (j.ok) { if (S.keyEdit && S.keyEdit.kid === kid) S.keyEdit = null; markKeyed(net, kid, false); toast('Key removed.'); renderDetail(true); }
     }).catch(function () { toast('Could not reach the server to remove the key.'); });
 }
 // "Encryption keys seen": each key id the entity's encrypted calls named, how
@@ -1321,25 +1327,36 @@ function keysSection(d, m, what, opts) {
       h('span', { class: 'c', text: m[k] + ' call' + (m[k] > 1 ? 's' : '') })])]);
     if (editNet) {
       var act = h('div', { class: 'keyact' });
-      var showForm = function () {
+      // The open form and what has been typed survive a panel rebuild
+      // (S.keyEdit), the way the Merge picker does (S.mpick) -- a poll must
+      // not make the entry box vanish mid-type.
+      var showForm = function (restore) {
         act.textContent = '';
+        if (!restore || !S.keyEdit || S.keyEdit.net !== editNet || S.keyEdit.kid !== kid)
+          S.keyEdit = { net: editNet, kid: kid, val: '' };
         var want = keyLen(alg);
-        var inp = h('input', { class: 'ki', type: 'text', spellcheck: 'false', autocomplete: 'off',
+        var inp = h('input', { class: 'ki', type: 'text', spellcheck: 'false', autocomplete: 'off', value: S.keyEdit.val,
                                placeholder: want ? want + ' hex digits' : 'key (hex)', 'aria-label': 'Key for ' + keyText(alg, kid) });
+        inp.addEventListener('input', function () { if (S.keyEdit) S.keyEdit.val = inp.value; });
         var save = function () { if (inp.value.trim()) setKey(editNet, kid, alg, inp.value.trim()); };
-        inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') save(); if (e.key === 'Escape') showButtons(); });
+        var cancel = function () { S.keyEdit = null; showButtons(); };
+        inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancel(); });
         act.appendChild(inp);
         act.appendChild(h('button', { class: 'btn sm', type: 'button', onclick: save }, 'Save'));
-        act.appendChild(h('button', { class: 'btn sm', type: 'button', onclick: showButtons }, 'Cancel'));
+        act.appendChild(h('button', { class: 'btn sm', type: 'button', onclick: cancel }, 'Cancel'));
         act.appendChild(h('span', { class: 'kh', text: 'Hex, up to 64 digits' + (want ? ' (' + algName(alg) + ' uses ' + want + ')' : '') + '. Stored on the server; never shown again.' }));
-        inp.focus();
+        if (!restore) {                                 // opening it: focus; restoring after a rebuild: don't steal focus
+          inp.focus();
+          var n = inp.value.length; try { inp.setSelectionRange(n, n); } catch (e) {}
+        }
       };
       var showButtons = function () {
         act.textContent = '';
-        act.appendChild(h('button', { class: 'btn sm', type: 'button', onclick: showForm }, loaded ? 'Replace key' : 'Add key…'));
+        act.appendChild(h('button', { class: 'btn sm', type: 'button', onclick: function () { showForm(false); } }, loaded ? 'Replace key' : 'Add key…'));
         if (loaded) act.appendChild(h('a', { class: 'keyrm', onclick: function () { removeKey(editNet, kid); } }, 'Remove'));
       };
-      showButtons();
+      if (S.keyEdit && S.keyEdit.net === editNet && S.keyEdit.kid === kid) showForm(true);
+      else showButtons();
       row.appendChild(act);
     }
     ul.appendChild(row);
@@ -2323,8 +2340,9 @@ function recent(filter) {
 // The details are rebuilt on every update: keep where the panel was scrolled
 // to while the same item stays selected (a new selection starts at the top).
 function renderDetail(force) {
-  if (!force && mergePickBusy()) return;
+  if (!force && (mergePickBusy() || keyEditing())) return;
   var d = $('detail'), sel = S.sel, who = sel ? sel.type + ':' + sel.id : '';
+  if (who !== renderDetail.who) S.keyEdit = null;      // left this entity: drop any half-typed key
   var y = who === renderDetail.who ? d.scrollTop : 0, wy = window.scrollY;
   renderDetail.who = who;
   // (the panel keeps its height while it is rebuilt: emptied, it could
@@ -3413,7 +3431,7 @@ function holdReason() {
 var UI_BUILD = '%%UI_BUILD%%';
 var UINEW = { ui: '', told: false };
 function uiBusy() {
-  if (holdReason() || mergePickBusy()) return true;
+  if (holdReason() || mergePickBusy() || keyEditing()) return true;
   if (PLAYER.a && !PLAYER.a.paused) return true;
   if (ASR.job) return true;
   var ae = document.activeElement;
