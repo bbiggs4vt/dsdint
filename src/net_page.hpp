@@ -213,6 +213,20 @@ inline std::string render_net_page_html() {
   tbody tr.hassub td { padding-bottom: .2rem; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   td.mono, .mono { font-family: Menlo, Monaco, Consolas, 'Courier New', monospace; font-size: .82rem; }
+  /* Encryption keyring (details panel). */
+  .keylst { list-style: none; margin: .2rem 0 0; padding: 0; }
+  .keylst li { padding: .35rem 0; border-top: 1px solid var(--table-bd); }
+  .keylst li:first-child { border-top: 0; }
+  .keyhdr { display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; }
+  .keyhdr .c { margin-left: auto; color: var(--muted); font-size: .8rem; white-space: nowrap; }
+  .keyok { color: #58c389; font-size: .78rem; font-weight: 600; white-space: nowrap; }
+  .keyact { margin-top: .3rem; display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
+  .keyact .ki { flex: 1 1 11rem; min-width: 8rem; font-family: Menlo, Monaco, Consolas, monospace; font-size: .8rem;
+                padding: .25rem .4rem; background: var(--input-bg, #11161b); color: var(--text);
+                border: 1px solid var(--table-bd); border-radius: 3px; }
+  .keyact .kh { color: var(--muted); font-size: .74rem; flex-basis: 100%; }
+  a.keyrm { color: var(--muted); font-size: .78rem; cursor: pointer; }
+  a.keyrm:hover { color: var(--text); }
   td.wrap { white-space: pre-wrap; word-break: break-word; }
   /* Calls: a call with many badges (VOICE GROUP EMERGENCY ENCRYPTED) wraps
      them instead of widening the column for every row, and the Content column
@@ -1234,16 +1248,95 @@ function algName(alg, fam) {
 }
 function keyText(alg, kid, fam) { return algName(alg, fam) + ' \u00B7 key 0x' + kid; }
 // A "Keys seen" section in a network / talkgroup / radio's details.
-function keysSection(d, m, what) {
+// How many hex digits a key for this algorithm is expected to have (a hint
+// for the input; the server validates). 0 = unknown, any even hex up to 64.
+function keyLen(alg) {
+  var p = ENCALG[S.fam] || {};
+  if (p === ENCALG.p25) return alg === '84' ? 64 : alg === '85' || alg === '89' ? 32 : alg === 'AA' || alg === '81' ? 16 : 0;
+  if (p === ENCALG.dmr) return alg === '25' ? 64 : alg === '24' ? 32 : alg === '21' ? 10 : alg === '22' ? 16 : 0;
+  return 0;
+}
+// Is a decryption key loaded (on the server) for this key id on any of these
+// networks? S.d.keyed is {fam:{net:[kid,…]}} -- ids only, never values.
+function keyedHas(nets, kid) {
+  var K = S.d && S.d.keyed && S.d.keyed[S.fam];
+  if (!K) return false;
+  var id = (kid || '').toUpperCase();
+  for (var i = 0; i < (nets || []).length; i++) { var a = K[nets[i]]; if (a && a.indexOf(id) >= 0) return true; }
+  return false;
+}
+function markKeyed(net, kid, on) {                       // reflect a set/remove at once (poll confirms)
+  if (!S.d) return;
+  S.d.keyed = S.d.keyed || {};
+  var F = S.d.keyed[S.fam] = S.d.keyed[S.fam] || {}, a = F[net] = F[net] || [], id = (kid || '').toUpperCase(), i = a.indexOf(id);
+  if (on && i < 0) a.push(id); else if (!on && i >= 0) a.splice(i, 1);
+}
+function setKey(net, kid, alg, value, done) {
+  fetch('/net/keys/set', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+                           body: JSON.stringify({ fam: S.fam, net: net, kid: kid, alg: alg, key: value }) })
+    .then(function (r) { return r.json().then(function (j) { return r.ok && j.ok; }, function () { return false; }); })
+    .then(function (ok) {
+      if (ok) { markKeyed(net, kid, true); toast('Key loaded for ' + keyText(alg, kid) + '.'); renderDetail(true); }
+      else toast('That key wasn’t accepted (expected hex digits, up to 64).');
+      if (done) done(ok);
+    }).catch(function () { toast('Could not reach the server to set the key.'); });
+}
+function removeKey(net, kid) {
+  fetch('/net/keys/remove?fam=' + encodeURIComponent(S.fam) + '&net=' + encodeURIComponent(net) + '&kid=' + encodeURIComponent(kid),
+        { cache: 'no-store' })
+    .then(function (r) { return r.json(); }).then(function (j) {
+      if (j.ok) { markKeyed(net, kid, false); toast('Key removed.'); renderDetail(true); }
+    }).catch(function () { toast('Could not reach the server to remove the key.'); });
+}
+// "Encryption keys seen": each key id the entity's encrypted calls named, how
+// many calls, and whether a decryption key is loaded. On a network's panel
+// (live view) a key can be added / removed and the key list downloaded.
+function keysSection(d, m, what, opts) {
+  opts = opts || {};
   var ks = keys(m || {});
   if (!ks.length) return;
+  var nets = opts.nets || [], editNet = opts.net && !S.file ? opts.net : null;
   d.appendChild(h('h4', { text: 'Encryption keys seen' }));
-  d.appendChild(lst(ks.sort(function (a, b) { return m[b] - m[a]; }).map(function (k) {
-    var i = k.indexOf(':'), alg = k.slice(0, i), kid = k.slice(i + 1);
-    return { el: h('span', { class: 'mono', text: keyText(alg, kid) }), n: m[k], lbl: m[k] + ' call' + (m[k] > 1 ? 's' : '') };
-  })));
-  d.appendChild(h('div', { class: 'hint', style: 'margin-top:.3rem;font-size:.8rem',
-    text: 'The key id each encrypted call ' + what + ' announced. A key belongs to the talkgroup or channel, not the radio: every radio talking on a talkgroup uses its key.' }));
+  var ul = h('ul', { class: 'lst keylst' });
+  ks.sort(function (a, b) { return m[b] - m[a]; }).forEach(function (k) {
+    var i = k.indexOf(':'), alg = k.slice(0, i), kid = k.slice(i + 1), loaded = keyedHas(nets, kid);
+    var row = h('li', null, [h('div', { class: 'keyhdr' }, [
+      h('span', { class: 'mono', text: keyText(alg, kid) }),
+      loaded ? h('span', { class: 'keyok', text: '✓ key loaded' }) : null,
+      h('span', { class: 'c', text: m[k] + ' call' + (m[k] > 1 ? 's' : '') })])]);
+    if (editNet) {
+      var act = h('div', { class: 'keyact' });
+      var showForm = function () {
+        act.textContent = '';
+        var want = keyLen(alg);
+        var inp = h('input', { class: 'ki', type: 'text', spellcheck: 'false', autocomplete: 'off',
+                               placeholder: want ? want + ' hex digits' : 'key (hex)', 'aria-label': 'Key for ' + keyText(alg, kid) });
+        var save = function () { if (inp.value.trim()) setKey(editNet, kid, alg, inp.value.trim()); };
+        inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') save(); if (e.key === 'Escape') showButtons(); });
+        act.appendChild(inp);
+        act.appendChild(h('button', { class: 'btn sm', type: 'button', onclick: save }, 'Save'));
+        act.appendChild(h('button', { class: 'btn sm', type: 'button', onclick: showButtons }, 'Cancel'));
+        act.appendChild(h('span', { class: 'kh', text: 'Hex, up to 64 digits' + (want ? ' (' + algName(alg) + ' uses ' + want + ')' : '') + '. Stored on the server; never shown again.' }));
+        inp.focus();
+      };
+      var showButtons = function () {
+        act.textContent = '';
+        act.appendChild(h('button', { class: 'btn sm', type: 'button', onclick: showForm }, loaded ? 'Replace key' : 'Add key…'));
+        if (loaded) act.appendChild(h('a', { class: 'keyrm', onclick: function () { removeKey(editNet, kid); } }, 'Remove'));
+      };
+      showButtons();
+      row.appendChild(act);
+    }
+    ul.appendChild(row);
+  });
+  d.appendChild(ul);
+  if (editNet && nets.some(function (n) { return (S.d.keyed && S.d.keyed[S.fam] && S.d.keyed[S.fam][n] || []).length; }))
+    d.appendChild(h('a', { class: 'btn sm', style: 'margin-top:.4rem', href: '/net/keys/list?fam=' + encodeURIComponent(S.fam) +
+                           '&net=' + encodeURIComponent(editNet), download: 'dsd_keys_' + S.fam + '.csv',
+                          title: 'Download this network’s keys as a dsd-fme key list (feed your decoder with -K)' }, '⤓ Download key list'));
+  d.appendChild(h('div', { class: 'hint', style: 'margin-top:.4rem;font-size:.8rem',
+    text: 'The key id each encrypted call ' + what + ' announced. A key belongs to the talkgroup or channel, not the radio: every radio talking on a talkgroup uses its key.' +
+          (editNet ? ' Keys you add are kept on the server and used by your own decoder via the downloaded key list — the explorer does not decrypt. Only enter keys for systems you are authorized to monitor.' : '') }));
 }
 function typeBadges(c) {
   var rx = 'Heard by ' + c.streams + ' receivers (one call, deduplicated)';
@@ -2250,7 +2343,7 @@ function detailBody(d) {
     d.appendChild(filterBtns('tgf', t.id, 'talkgroup', 'Hide this talkgroup\u2019s calls (and radios heard only on it)'));
     d.appendChild(kv([['Calls', t.calls], ['Radios', keys(t.radios).length], ['Emergency', t.emerg],
                       ['Encrypted', t.enc], ['First', ago(t.first)], ['Last', ago(t.last)]]));
-    keysSection(d, t.keys, 'on it');
+    keysSection(d, t.keys, 'on it', { nets: t.networks });
     d.appendChild(h('h4', { text: 'Radios on this talkgroup' }));
     d.appendChild(lst(keys(t.radios).sort(function (a, b) { return t.radios[b] - t.radios[a]; })
       .map(function (r) { return { el: rlink(r), n: t.radios[r] }; })));
@@ -2275,7 +2368,7 @@ function detailBody(d) {
     d.appendChild(kv([['Calls', r.calls], ['Talkgroups', keys(r.tgs).length], ['Private peers', keys(r.peers).length],
                       ['Networks', r.networks.length], ['First', ago(r.first)], ['Last', ago(r.last)]]));
     if (r.pos) positionsSection(d, r);
-    keysSection(d, r.keys, 'from it');
+    keysSection(d, r.keys, 'from it', { nets: r.networks });
     d.appendChild(h('h4', { text: 'Talkgroups used' }));
     d.appendChild(lst(keys(r.tgs).sort(function (a, b) { return r.tgs[b] - r.tgs[a]; })
       .map(function (t) { return { el: tlink(t), n: r.tgs[t] }; })));
@@ -2312,7 +2405,7 @@ function detailBody(d) {
     d.appendChild(h('h4', { text: 'Channels' }));
     d.appendChild(h('div', { class: 'mono', text: (n.freqs || []).map(function (f) { return mhz(f) + ' MHz'; }).join(', ') ||
       'Unknown (the client sent no center_freq).' }));
-    keysSection(d, n.keys, 'on it');
+    keysSection(d, n.keys, 'on it', { nets: (n.parts || [n]).map(function (p) { return p.key; }), net: n.key });
     mergeSection(d, n);
     if (n.confidence !== 'strong')
       d.appendChild(h('div', { class: 'hint', style: 'margin-top:.6rem;font-size:.8rem',

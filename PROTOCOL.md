@@ -1101,6 +1101,9 @@ over HTTP and the connection closed:
 | `GET /net/clear` | forgets everything the explorer learned, and its imports (`?audio=1` also deletes the call audio files); returns `{"ok":true,"audio_files":N,"audio_bytes":B}` |
 | `GET /net/networks/merge?fam=&from=&to=` | network merge: show network `from` (and any merged into it) as part of `to`, for every viewer; returns `{"ok":true\|false,"merges":{…}}` (`ok` false = nothing changed) |
 | `GET /net/networks/unmerge?fam=&key=` | undo: a merged network becomes its own again, or a network others were merged into lets them all go; same response |
+| `POST /net/keys/set` | body `{"fam","net","kid","alg","key"}` — store a decryption key for a network's key id (`key` hex, up to 64 digits); returns `{"ok":true\|false}` (`400` if the id or value is malformed). The value is kept on the server and never returned in `/net.json` or an export |
+| `GET /net/keys/remove?fam=&net=&kid=` | remove that key; returns `{"ok":true\|false}` |
+| `GET /net/keys/list?fam=&net=` | `text/csv` attachment — the network's keys as a **dsd-fme hex key list** (`-K`): a header row then `keyid,key[,key…]` (a key over 64 bits split into 64-bit columns). This is the one response that carries key **values**, for feeding the operator's own decoder |
 | `GET /net/export.json` | `application/json` attachment `net_export_<UTC>.json` — the explorer export (below) |
 | `GET /net/export.graphml` | `application/graphml+xml` attachment — the association graph for graph tools |
 | `GET /net/log/on` | starts recording every input of the explorer's model to `net_<UTC>.jsonl.gz` (`?clear=1` clears the model first so the recording replays exactly); returns the recording status |
@@ -1243,6 +1246,16 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
   viewer, kept through Clear and restarts (`DSD_NET_MERGES_FILE`, default
   `net_merges.json` in the recordings folder), and an import adds its
   export's rules (this server's own win).
+- `keyed` lists, per protocol and network, which encryption **key ids** have a
+  decryption key stored on the server
+  (`{"p25": {"nac:201@408200000": ["666A"]}}`) — **ids only, never the key
+  values**. It lets the explorer show "key loaded" next to a key id it saw
+  (`families` ... `keys`). Keys are entered in the network's details and kept
+  across restarts (`DSD_NET_KEYS_FILE`, default `net_keys.json` in the
+  recordings folder, written readable only by the server's user). The explorer
+  does not decrypt: the stored keys are downloaded as a dsd-fme key list
+  (`/net/keys/list`) and applied by the operator's own decoder. Key values are
+  never put in `/net.json` or an export.
 - `clients` is how many clients are connected (any session, decoding or not);
   `streams` lists the decode streams running now, whether or not anything is
   decoded: `[{"s":12,"fam":"dmr","label":"dmr","freq":460175000,"since":…,

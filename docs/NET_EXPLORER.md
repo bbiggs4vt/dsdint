@@ -347,6 +347,20 @@ tablet or phone the details are a drawer: **Close** or Esc.
   used it. Keys belong to a talkgroup or channel rather than a radio: every
   radio on a talkgroup uses its key. (P25, DMR and NXDN, from dsd-fme; a call
   flagged encrypted without its key id decoded counts as encrypted only.)
+  - **Loading a key.** On a **network's** details (live view), each key id has
+    **Add key…** — type the key (hex, up to 64 digits) and **Save**. It then
+    shows **✓ key loaded**, with **Replace key** / **Remove**. A key is stored
+    per network and key id; talkgroup and radio panels show **✓ key loaded**
+    for reference but are managed on the network.
+  - **Using it.** The explorer **does not decrypt** — it stores the keys and
+    hands them to your decoder. **⬇ Download key list** gives the network's
+    keys as a dsd-fme hex key list (`keyid,key`); point your decode client at
+    it with `-K`. Keys are kept on the server across restarts
+    (`DSD_NET_KEYS_FILE`, default `net_keys.json` in the recordings folder,
+    written readable only by the server's user). A key value is never shown
+    again, never sent in `/net.json`, and never put in an export — only the
+    key-list download returns it.
+  - Only enter keys for systems you are **authorized to monitor**.
 
 ## 9. Searching, filtering and sorting
 

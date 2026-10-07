@@ -45,6 +45,12 @@ std::string net_merges_file() {
     const char* f = std::getenv("DSD_NET_MERGES_FILE");
     return (f && f[0]) ? std::string(f) : (std::filesystem::path(net_log_dir()) / "net_merges.json").string();
 }
+// Where the explorer's encryption keyring is kept: DSD_NET_KEYS_FILE, or
+// net_keys.json in the recordings folder. Written owner-only (it holds keys).
+std::string net_keys_file() {
+    const char* f = std::getenv("DSD_NET_KEYS_FILE");
+    return (f && f[0]) ? std::string(f) : (std::filesystem::path(net_log_dir()) / "net_keys.json").string();
+}
 std::uint64_t net_log_max_bytes() {
     const char* m = std::getenv("DSD_NET_LOG_MAX_MB");
     unsigned long mb = (m && m[0]) ? std::strtoul(m, nullptr, 10) : 1024;
@@ -620,6 +626,20 @@ void Session::serve_http() {
         } else {
             res->body() = "{}";
         }
+    } else if (post && target == "/net/keys/set") {
+        // Add/replace a decryption key for (fam, net, kid). The value is
+        // stored but never echoed back; /net.json only shows the id is set.
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "application/json");
+        bool ok = false;
+        if (stats_) {
+            const auto obj = json::parse_flat_object(http_req_.body());
+            ok = stats_->assoc().set_key(json::get_string(obj, "fam"), json::get_string(obj, "net"),
+                                         json::get_string(obj, "kid"), json::get_string(obj, "alg"),
+                                         json::get_string(obj, "key"));
+        }
+        if (!ok) res->result(http::status::bad_request);
+        res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
     } else if (post && target == "/net/merge") {
         const std::string out = net_merge_response(http_req_.body());
         res->result(out.compare(0, 9, "{\"error\":") == 0 ? http::status::bad_request : http::status::ok);
@@ -768,6 +788,23 @@ void Session::serve_http() {
         res->result(http::status::ok);
         res->set(http::field::content_type, "application/json");
         res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + ",\"merges\":" + merges + "}";
+    } else if (target == "/net/keys/remove") {
+        bool ok = stats_ && stats_->assoc().remove_key(query_param(query, "fam"), query_param(query, "net"),
+                                                       query_param(query, "kid"));
+        res->result(ok ? http::status::ok : http::status::bad_request);
+        res->set(http::field::content_type, "application/json");
+        res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
+    } else if (target == "/net/keys/list") {
+        // Download the dsd-fme hex key list (-K) for one network. This is the
+        // one place a key VALUE leaves the server (for the operator's decoder).
+        const std::string fam = query_param(query, "fam"), net = query_param(query, "net");
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "text/csv; charset=utf-8");
+        std::string fn = "dsd_keys_" + fam + ".csv";
+        for (char& c : fn) if (!std::isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '_') c = '_';
+        res->set(http::field::content_disposition, "attachment; filename=\"" + fn + "\"");
+        res->set(http::field::cache_control, "no-store");
+        res->body() = stats_ ? stats_->assoc().keys_csv(fam, net) : std::string("KEY ID,KEY\n");
     } else if (target == "/net/imports/remove" || target == "/net/imports/clear") {
         // Remove one import (?id=N) or all of them; the live data stays.
         bool ok = true;
@@ -1820,6 +1857,11 @@ Server::Server(net::io_context& ioc, const tcp::endpoint& endpoint)
     // The explorer's network merges, kept across restarts.
     if (stats_->assoc().use_merges_file(net_merges_file()))
         std::cerr << "net merges: loaded " << merges_count(stats_->assoc().merges()) << " from " << net_merges_file() << "\n";
+
+    // The explorer's encryption keyring (values on disk, owner-only), kept
+    // across restarts. Entered in the UI, fed to the operator's own decoder.
+    if (stats_->assoc().use_keys_file(net_keys_file()))
+        std::cerr << "net keys: loaded " << stats_->assoc().keys_count() << " from " << net_keys_file() << "\n";
 
     // Record each call's decoded voice from startup: DSD_NET_AUDIO=1 (=0 never),
     // or, with it unset, as the explorer's Audio switch was last left.

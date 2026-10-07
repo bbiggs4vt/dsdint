@@ -38,6 +38,7 @@
 #include "assoc_audio.hpp"
 #include "assoc_log.hpp"
 #include "assoc_merge.hpp"
+#include "assoc_keys.hpp"
 #include "dsd_backend_types.hpp"
 
 #include <algorithm>
@@ -792,6 +793,50 @@ public:
         return view_merges_locked();
     }
 
+    // ---- encryption keyring (assoc_keys.hpp) ----------------------------
+    // A per-network decryption keyring the operator feeds to their own
+    // decoder (see keys_csv). The values are stored and saved but never put
+    // in /net.json or an export: /net.json carries only which key ids are set
+    // ("keyed"), and only a deliberate key-list download returns values.
+    bool use_keys_file(const std::string& path) {
+        std::lock_guard<std::mutex> lk(mu_);
+        keys_file_ = path;
+        std::ifstream f(path, std::ios::binary);
+        if (!f) return false;
+        std::stringstream ss;
+        ss << f.rdbuf();
+        mjson::V root;
+        if (!mjson::parse(ss.str(), root) || root.t != mjson::V::Obj) return false;
+        keys_ = keyring_parse(root);
+        return true;
+    }
+    bool set_key(const std::string& fam, const std::string& net, const std::string& kid,
+                 const std::string& alg, const std::string& value) {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (!keyring_set(keys_, fam, net, kid, alg, value, now_ms())) return false;
+        ++version_;
+        save_keys_locked();
+        return true;
+    }
+    bool remove_key(const std::string& fam, const std::string& net, const std::string& kid) {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (!keyring_remove(keys_, fam, net, kid)) return false;
+        ++version_;
+        save_keys_locked();
+        return true;
+    }
+    // The dsd-fme hex key list (-K) for one network. Returns at least a header.
+    std::string keys_csv(const std::string& fam, const std::string& net) const {
+        std::lock_guard<std::mutex> lk(mu_);
+        return keyring_csv(keys_, fam, net);
+    }
+    std::size_t keys_count() const {
+        std::lock_guard<std::mutex> lk(mu_);
+        std::size_t n = 0;
+        for (const auto& fk : keys_) for (const auto& nk : fk.second) n += nk.second.size();
+        return n;
+    }
+
     // This server run's identity in exports (see assoc_merge.hpp). The
     // instance is random per process; the name is DSD_SERVER_NAME or the
     // host name. Tests and replays set them explicitly.
@@ -838,6 +883,7 @@ private:
                ",\"map\":" + map_json() + ",\"dev\":" + (dev_tools() ? "true" : "false") +
                ",\"streams\":" + streams_json_locked() + ",\"imports\":" + im +
                ",\"merges\":" + merges_json(view_merges_locked()) +
+               ",\"keyed\":" + keyring_loaded_json(keys_) +
                ",\"families\":";
     }
     // The explorer's map: a tile server of your own (DSD_NET_MAP_TILES, a URL
@@ -966,6 +1012,24 @@ private:
             if (!f) return;
         }
         std::filesystem::rename(tmp, merges_file_, ec);
+    }
+    // The keyring holds decryption key values, so write it readable only by
+    // the server's own user (0600), never world-readable like other state.
+    void save_keys_locked() const {
+        if (keys_file_.empty()) return;
+        const std::string tmp = keys_file_ + ".tmp";
+        std::error_code ec;
+        const auto dir = std::filesystem::path(keys_file_).parent_path();
+        if (!dir.empty()) std::filesystem::create_directories(dir, ec);
+        {
+            std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+            if (!f) return;
+            f << "{\"keys\":" << keyring_json(keys_) << "}\n";
+            if (!f) return;
+        }
+        std::filesystem::permissions(tmp, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+                                     std::filesystem::perm_options::replace, ec);
+        std::filesystem::rename(tmp, keys_file_, ec);
     }
 
     // Live data with the imports merged in.
@@ -1869,6 +1933,8 @@ private:
     std::uint64_t next_import_ = 0;
     NetMerges merges_;                                 // network merges (shared; kept through Clear)
     std::string merges_file_;                          // where they are kept ("" = memory only)
+    KeyRing keys_;                                     // per-network decryption keyring (values never leave in /net.json/exports)
+    std::string keys_file_;                            // where it is kept ("" = memory only)
     bool per_receiver_ = default_per_receiver();
     std::size_t max_calls_ = max_calls_setting();
     CallAudioStore audio_;

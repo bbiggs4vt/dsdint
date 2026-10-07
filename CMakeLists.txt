@@ -234,6 +234,15 @@ target_include_directories(test_assoc_merge PRIVATE src)
 target_link_libraries(test_assoc_merge PRIVATE Threads::Threads ZLIB::ZLIB)
 target_compile_options(test_assoc_merge PRIVATE -Wall -Wextra)
 add_test(NAME assoc_merge_test COMMAND test_assoc_merge)
+
+add_executable(test_assoc_keys EXCLUDE_FROM_ALL
+  src/dsd_process.cpp
+  tests/test_assoc_keys.cpp
+)
+target_include_directories(test_assoc_keys PRIVATE src)
+target_link_libraries(test_assoc_keys PRIVATE Threads::Threads ZLIB::ZLIB)
+target_compile_options(test_assoc_keys PRIVATE -Wall -Wextra)
+add_test(NAME assoc_keys_test COMMAND test_assoc_keys)
 set_tests_properties(assoc_merge_test PROPERTIES TIMEOUT 30)
 
 # Per-call audio for the network explorer (assoc_audio.hpp, AssocModel::audio).
