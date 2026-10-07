@@ -3131,6 +3131,50 @@ function holdReason() {
   }
   return null;
 }
+// ---- a new UI on the server ----
+// The server stamps the page with its UI build and sends the build it serves
+// now with every poll (/net.json "ui"). When they differ the server was
+// updated: the page reloads itself -- keeping the protocol, filters, search
+// and selection (sessionStorage) -- once the user isn't in the middle of
+// something (playing audio, transcribing, clicking, typing).
+var UI_BUILD = '%%UI_BUILD%%';
+var UINEW = { ui: '', told: false };
+function uiBusy() {
+  if (holdReason() || mergePickBusy()) return true;
+  if (PLAYER.a && !PLAYER.a.paused) return true;
+  if (ASR.job) return true;
+  var ae = document.activeElement;
+  if (ae && (ae.tagName === 'SELECT' || ae.tagName === 'TEXTAREA' ||
+             (ae.tagName === 'INPUT' && /^(text|search)$/.test(ae.type) && ae.value))) return true;
+  return !!(FUI && (FUI.tgAdd.inp.value || FUI.rAdd.inp.value));
+}
+function uiCheck(ui) {
+  if (!ui || UI_BUILD.charAt(0) === '%' || ui === UI_BUILD) return;
+  var done = null;
+  try { done = sessionStorage.getItem('netx.reloadedFor'); } catch (e) {}
+  if (done === ui) {                     // reloaded for it once already and still old: a cache in the way
+    if (!UINEW.told) { UINEW.told = true; toast('The explorer was updated on the server \u2014 refresh the page (Ctrl+F5) to load it.'); }
+    return;
+  }
+  if (uiBusy()) {
+    if (!UINEW.told) { UINEW.told = true; toast('The explorer was updated on the server \u2014 it will reload when you\u2019re done.'); }
+    return;
+  }
+  try {
+    sessionStorage.setItem('netx.reloadedFor', ui);
+    sessionStorage.setItem('netx.reload', JSON.stringify({ fam: S.fam, nets: S.nets, tgf: S.tgf, rf: S.rf, sel: S.sel, q: S.q }));
+  } catch (e) {}
+  location.reload();
+}
+// After such a reload: back to where the user was.
+function uiRestore() {
+  var r = null;
+  try { r = JSON.parse(sessionStorage.getItem('netx.reload') || 'null'); sessionStorage.removeItem('netx.reload'); } catch (e) {}
+  if (!r) return;
+  if (r.fam) S.fam = r.fam;
+  S.nets = r.nets || {}; S.tgf = r.tgf || {}; S.rf = r.rf || {}; S.sel = r.sel || null;
+  S.q = r.q || ''; $('q').value = S.q;
+}
 function poll() {
   if (S.paused || S.file || document.hidden) { setTimeout(poll, POLL); return; }
   var held = S.d && holdReason();
@@ -3142,6 +3186,7 @@ function poll() {
   }
   $('live').title = '';
   fetch('/net.json', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
+    uiCheck(d.ui);
     if (holdReason()) return;                          // started while this was on its way: it waits for the next one
     S.skew = d.now - Date.now();
     updateRec(d.rec);
@@ -3223,6 +3268,7 @@ $('npplay').addEventListener('click', function () { if (PLAYER.call) playAudio(P
 $('npx').addEventListener('click', closeNp);
 asrCfg().catch(function () {});
 S.fam = load('fam');
+uiRestore();
 setView(load('view') || 'calls');
 poll();
 })();

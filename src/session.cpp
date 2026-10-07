@@ -221,6 +221,36 @@ void remember_net_setting(const char* key, bool on) {
     std::filesystem::rename(tmp, path, ec);
 }
 
+// The pages' UI build: a fingerprint of each page's code (the status page's
+// rendered with no data), stamped into the page ("%%UI_BUILD%%") and sent
+// with every poll (/net.json and /status.json "ui"). A page loaded from older
+// code sees the difference and reloads itself -- after a server update the
+// open pages pick up the new UI without the user refreshing. Restarting the
+// same code changes nothing.
+void replace_all(std::string& s, const std::string& from, const std::string& to) {
+    for (std::size_t p = s.find(from); p != std::string::npos; p = s.find(from, p + to.size())) s.replace(p, from.size(), to);
+}
+struct UiPage { std::string html, id; };
+const UiPage& net_ui_page() {
+    static const UiPage p = [] {
+        UiPage u;
+        u.html = render_net_page_html();
+        u.id = fnv_hex(u.html).substr(0, 12);
+        replace_all(u.html, "%%UI_BUILD%%", u.id);
+        return u;
+    }();
+    return p;
+}
+const std::string& status_ui_id() {
+    static const std::string id = fnv_hex(render_status_html(ServerStats::Snapshot{})).substr(0, 12);
+    return id;
+}
+// {"ui":"<id>", ...rest of the object}
+std::string with_ui(const std::string& json, const std::string& id) {
+    if (json.size() < 2 || json[0] != '{') return json;
+    return "{\"ui\":\"" + id + "\"" + (json[1] == '}' ? "" : ",") + json.substr(1);
+}
+
 // gzip `in` into `out` (fast compression level: the explorer's poll).
 bool gzip_string(const std::string& in, std::string& out) {
     z_stream z{};
@@ -602,11 +632,13 @@ void Session::serve_http() {
     } else if (target == "/" || target == "/status" || target == "/status.html") {
         res->result(http::status::ok);
         res->set(http::field::content_type, "text/html; charset=utf-8");
+        res->set(http::field::cache_control, "no-cache");     // always this server's own page
         res->body() = stats_ ? render_status_html(stats_->snapshot()) : std::string("no stats\n");
+        replace_all(res->body(), "%%UI_BUILD%%", status_ui_id());
     } else if (target == "/status.json") {
         res->result(http::status::ok);
         res->set(http::field::content_type, "application/json");
-        res->body() = stats_ ? render_status_json(stats_->snapshot()) : std::string("{}");
+        res->body() = with_ui(stats_ ? render_status_json(stats_->snapshot()) : std::string("{}"), status_ui_id());
     } else if (target == "/log.json") {
         res->result(http::status::ok);
         res->set(http::field::content_type, "application/json");
@@ -626,7 +658,8 @@ void Session::serve_http() {
         // localhost), so speech-to-text can use several CPU threads.
         res->set("Cross-Origin-Opener-Policy", "same-origin");
         res->set("Cross-Origin-Embedder-Policy", "credentialless");
-        res->body() = render_net_page_html();
+        res->set(http::field::cache_control, "no-cache");     // always this server's own page
+        res->body() = net_ui_page().html;
     } else if (target == "/net/manual.pdf") {
         // The explorer's user manual (Help), built into the server.
         const std::string_view pdf = net_manual_pdf();
@@ -657,7 +690,7 @@ void Session::serve_http() {
     } else if (target == "/net.json") {
         res->result(http::status::ok);
         res->set(http::field::content_type, "application/json");
-        res->body() = stats_ ? stats_->assoc().to_json() : std::string("{\"families\":{}}");
+        res->body() = with_ui(stats_ ? stats_->assoc().to_json() : std::string("{\"families\":{}}"), net_ui_page().id);
         // The explorer polls this every 1.5 s and, with thousands of calls
         // listed, it runs to megabytes: send it compressed (~10x smaller)
         // when the client accepts gzip (every browser does).

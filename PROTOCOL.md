@@ -1234,6 +1234,9 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
   viewer, kept through Clear and restarts (`DSD_NET_MERGES_FILE`, default
   `net_merges.json` in the recordings folder), and an import adds its
   export's rules (this server's own win).
+- `ui` is a fingerprint of the explorer page the server serves (also in
+  `/status.json`, for the status page): a page whose own build differs reloads
+  itself, so open pages pick up a server update.
 - `dev` is `true` when the server runs with `DSD_NET_DEV=1`: the explorer then
   shows its developer tools (Record) to everyone; otherwise only to a browser
   that opened `/net?dev=1`. (The recording endpoints work either way.)

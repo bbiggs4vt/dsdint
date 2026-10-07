@@ -86,6 +86,13 @@ From top to bottom:
 
 On a narrow window the header's buttons fold into a **☰ Menu**.
 
+When the server is updated to a new version of the explorer, open pages
+reload themselves (no need to refresh): the protocol, filters, search and
+selection are kept. The reload waits while you are busy — audio playing,
+speech-to-text running, a click, a text selection or typing — and a note
+says it will happen when you're done. Restarting the server with the same
+version doesn't reload anything.
+
 ![Figure 1](img/overview.png)
 *Figure 1: The explorer on a PC: header, protocol tabs, stat cards, the filters (collapsed), the Calls view and, on the right, the details of the radio clicked (12001), with ✕ to deselect it.*
 

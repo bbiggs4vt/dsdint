@@ -504,6 +504,7 @@ session exactly as before; anything else is answered over HTTP:
 | `/iq_log/on`, `/iq_log/off` | flip the global IQ-capture switch (the page's **Log IQ** checkbox); returns `{"iq_log_enabled":…}` |
 | `/net` | the network explorer page (see [Network explorer](#network-explorer)) |
 | `/net.json`, `/net/clear` | the explorer's association model as JSON; forget it (and its imports; `?audio=1` also deletes the call audio files) |
+| (both pages) | `/status.json` and `/net.json` carry `"ui"`, the build of the page the server serves; an open page built from other code reloads itself (keeping its tab / filters / selection), so a server update needs no browser refresh. The pages are sent `Cache-Control: no-cache`. |
 | `/net/manual.pdf` | the explorer's user manual (`docs/NET_EXPLORER.pdf`, built into the server; the page's **?** Help button) |
 | `/net/networks/merge`, `/net/networks/unmerge` | show two networks as one (`?fam=dmr&from=KEY&to=KEY`), or undo it (`?fam=dmr&key=KEY`) -- shared by every viewer, kept in `DSD_NET_MERGES_FILE` (default `net_merges.json` in the recordings folder) and in exports |
 | `/net/export.json`, `/net/export.graphml` | export what the explorer shows: native (re-openable) / GraphML |

@@ -639,10 +639,20 @@ function showTab(id){
     fetch('/log/clear',{cache:'no-store'}).then(function(r){return r.json();})
       .then(renderLog).catch(function(){});
   });
-  showTab('tab-sessions');})();
+  var t0=null;try{t0=sessionStorage.getItem('status.tab');sessionStorage.removeItem('status.tab');}catch(e){}
+  showTab(t0&&document.getElementById(t0)?t0:'tab-sessions');})();
+// A new UI on the server (its "ui" differs from this page's build): reload,
+// back on the same tab -- unless the log is paused for inspection.
+var UI_BUILD='%%UI_BUILD%%';
+function uiCheck(ui){
+  if(!ui||UI_BUILD.charAt(0)==='%'||ui===UI_BUILD||logPaused)return;
+  try{if(sessionStorage.getItem('status.reloadedFor')===ui)return;
+      sessionStorage.setItem('status.reloadedFor',ui);sessionStorage.setItem('status.tab',activeTab);}catch(e){}
+  location.reload();
+}
 function tick(){
   fetch('/status.json',{cache:'no-store'}).then(function(r){return r.json();})
-    .then(render).catch(function(){})
+    .then(function(d){uiCheck(d.ui);render(d);}).catch(function(){})
     .then(function(){if(activeTab==='tab-log')return fetchLog();})
     .then(function(){setTimeout(tick,POLL);});
 }
