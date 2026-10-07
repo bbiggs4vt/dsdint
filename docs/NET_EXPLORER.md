@@ -525,7 +525,14 @@ half a megabyte per minute on a busy multi-channel server.
 - **Radios / talkgroups / networks**: up to 3000 / 1500 / 200 per protocol;
   the least recently heard go first.
 - When a session ends, a network that never carried a call (and radios known
-  only through it) is dropped, unless another running session is still on it.
+  only through it) is dropped if it never identified itself — `Unidentified`,
+  or a code tied to that one stream (`Color Code 4 · stream 3`) — or if a
+  fuller identity covers it (a P25 NAC, or a SYS without its WACN, once the
+  system's network is known), unless another running session is still on it.
+  A network that identified itself — a system id, or a code on a known
+  channel — stays, calls or not: a quiet control channel doesn't disappear
+  when its client reconnects. When a session retunes, the old channel's
+  call-less networks go.
 
 ## 16. Troubleshooting
 

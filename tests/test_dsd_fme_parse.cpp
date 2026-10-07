@@ -175,6 +175,11 @@ int main() {
     {
         DsdEvent e = classify_dsd_fme_line(" P25 LCW  Group Call; Emergency");
         check(e.emergency == "1", "P25 LCW: emergency flag");
+        DsdEvent sy = classify_dsd_fme_line("15:01:40 Sync: +P25p1 WACN: 580A0; SYS: 006; NAC/CC: 00D; RFSS: 008; Site: 008;  TSBK");
+        check(sy.extra.find("system_id=006") != std::string::npos && sy.extra.find("wacn=580A0") != std::string::npos,
+              "P25 sync line: SYS and WACN (the decoder's system identity)");
+        check(classify_dsd_fme_line(" Site Information - Sys Code: 8 - Site Code 2").extra.find("system_id") == std::string::npos,
+              "NXDN \"Sys Code:\" is not a P25 SYS");
         DsdEvent g = classify_dsd_fme_line(" LCW Encrypted Circuit Priority 4 Group Voice Channel User - Group 1 Source 6746067");
         check(g.talkgroup == "1" && g.source_id == "6746067" && g.kind == "voice",
               "P25 LCW Group Voice Channel User: talkgroup from \"Group N\", source");

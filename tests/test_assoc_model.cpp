@@ -574,7 +574,9 @@ int main() {
         check(snap(m, 1200)["families"].has("dmr"), "clear: real traffic does");
     }
 
-    // ---- when a stream ends, networks that never carried a call are dropped ----
+    // ---- when a stream ends, networks that never carried a call and only
+    //      meant something for that stream (unidentified, stream-scoped) are
+    //      dropped; identified ones (system id, code on a known channel) stay ----
     {
         AssocModel m;
         m.begin_stream(1, "dmr", 0);
@@ -609,8 +611,8 @@ int main() {
               "prune: the call-less CC 4 bucket is dropped, CC 7 (with a call) kept");
     }
     {
-        // A shared, call-less network survives while another stream is on it,
-        // and goes when the last one ends.
+        // A quiet control channel (a system id, no calls) whose client
+        // reconnects: its network -- and protocol -- stay when the streams end.
         AssocModel m;
         m.begin_stream(1, "p25p1", 0);
         m.begin_stream(2, "p25p1", 0);
@@ -622,7 +624,47 @@ int main() {
         m.end_stream(1);
         check(snap(m, 1000)["families"]["p25"]["networks"].size() == 1, "prune: kept while another stream is still on it");
         m.end_stream(2);
-        check(snap(m, 1100)["families"].size() == 0, "prune: dropped when the last stream on it ends");
+        m.remove_session(1);
+        m.remove_session(2);
+        check(snap(m, 1100)["families"]["p25"]["networks"].size() == 1,
+              "prune: a call-less network with a system id stays after every stream on it ends");
+    }
+    {
+        // Partial identities a short session had (a NAC, a SYS without the
+        // WACN) are dropped when the full system network covers them.
+        AssocModel m;
+        m.begin_stream(1, "p25p1", 0, "", 380475000);                       // the full identity
+        line(m, 1, "15:01:40 Sync: +P25p1 WACN: 580A0; SYS: 006; NAC/CC: 00D; RFSS: 008; Site: 008;  TSBK", 1000);
+        line(m, 1, "15:01:40 Sync: +P25p1 WACN: 580A0; SYS: 006; NAC/CC: 00D; RFSS: 008; Site: 008;  TSBK", 1010);
+        m.begin_stream(2, "p25p1", 0, "", 380475000);                       // a NAC only, then gone
+        line(m, 2, "15:01:42 Sync: +P25p1 NAC/CC: 00D;  TSBK", 1100);
+        line(m, 2, "15:01:42 Sync: +P25p1 NAC/CC: 00D;  TSBK", 1110);
+        m.remove_session(2);
+        m.begin_stream(3, "p25p1", 0, "", 380487500);                       // SYS without WACN, then gone
+        line(m, 3, "15:01:42 Sync: +P25p1 NAC/CC: 00D;  TSBK", 1200);
+        line(m, 3, "15:01:42 Sync: +P25p1 NAC/CC: 00D;  TSBK", 1210);
+        line(m, 3, " RFSS Status Broadcast - Implicit", 1220);
+        line(m, 3, "  LRA [08] SYSID [006] RFSS ID [008] SITE ID [008] CHAN [0026] SSC [70]", 1230);
+        m.remove_session(3);
+        m.remove_session(1);
+        J j = snap(m, 1300);
+        const J& N = j["families"]["p25"]["networks"];
+        check(N.size() == 1 && N.at(0)["key"].s == "wacn:580A0/sys:006",
+              "prune: a NAC-only / SYS-only leftover is dropped -- the full system network covers it -- and that one stays");
+    }
+    {
+        // A code on a known channel stays too; an unidentified channel bucket goes.
+        AssocModel m;
+        m.begin_stream(1, "dmr", 0, "", 460175000);
+        for (int k = 0; k < 3; ++k) line(m, 1, "19:54:55 Sync: +DMR  slot1  [SLOT1] | Color Code=05 | VC6 ", 1000 + k);
+        m.begin_stream(2, "dmr", 0, "", 453075000);
+        line(m, 2, "19:54:55 Sync: +DMR  slot1  [SLOT1] | VC6 ", 1000);
+        check(snap(m, 1100)["families"]["dmr"]["networks"].size() == 2, "prune: channel CC 5 and an unidentified channel, mid-stream");
+        m.remove_session(1);
+        m.remove_session(2);
+        J j = snap(m, 1200);
+        check(j["families"]["dmr"]["networks"].size() == 1 && j["families"]["dmr"]["networks"].at(0)["key"].s == "cc:5@460175000",
+              "prune: a code on a known channel stays; the unidentified channel goes");
     }
     {
         // Radios known only through a dropped network go with it; a radio

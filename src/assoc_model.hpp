@@ -162,7 +162,10 @@ public:
             rec_.write("{\"op\":\"tune\",\"t\":" + std::to_string(now) + ",\"s\":" + std::to_string(sid) +
                        ",\"freq\":" + std::to_string(freq_hz) + "}", now);
         close_session_calls_locked(sid);
-        prune_session_locked(sid);
+        // The stream carries on at a corrected frequency: what the old one
+        // decoded without a call is most likely the mistuned channel -- drop
+        // it even if it identified itself.
+        prune_session_locked(sid, true);
         Ctx& c = sess_[sid];
         const std::string f = c.family, l = c.label;
         const bool running = c.running;
@@ -1749,11 +1752,40 @@ private:
         }
     }
     // A stream ended: drop each network it fed that never carried a call --
-    // no call counted on it, no call record referring to it -- unless another
-    // stream is still on it (that stream's own end decides). Radios and
-    // talkgroups known only through a dropped network go with it, and a
-    // protocol left empty disappears. Networks with calls are kept.
-    void prune_session_locked(std::uint64_t sid) {
+    // no call counted on it, no call record referring to it -- and that only
+    // ever meant something while the stream lasted: an "Unidentified" bucket
+    // (noise, a wrong protocol's syncs) or a short code scoped to the stream
+    // ("Color Code 4 · stream 3"). Unless another stream is still on it (that
+    // stream's own end decides). A network that identified itself for good --
+    // a system id (a control channel's WACN/SYS), or a code on a known channel
+    // -- is real knowledge and stays, calls or not: a quiet control channel
+    // whose client reconnects every few seconds must not make its protocol
+    // vanish and reappear. Radios and talkgroups known only through a dropped
+    // network go with it, and a protocol left empty disappears.
+    // `retune`: the stream moved channel (retune_stream) -- identified
+    // call-less networks of the old channel go too.
+    //
+    // A partial identity the stream had before it heard the rest -- P25 "SYS
+    // 006" before the WACN, or a NAC before the system id -- is covered by
+    // the network that has it all (every network id of it there, the same):
+    // nothing is lost dropping it. (A short code is only covered by a system
+    // carrying it on P25, where the NAC resolves to its system.)
+    static bool covered_locked(const Family& F, const std::string& fam, const std::string& key, const Network& n) {
+        std::vector<std::pair<std::string, std::string>> mine;
+        for (const auto& id : n.ids) if (is_anchor(fam, id.first)) mine.push_back(id);
+        if (mine.empty() || (n.confidence != "strong" && fam != "p25")) return false;
+        for (const auto& o : F.networks) {
+            if (o.first == key || o.second.confidence != "strong") continue;
+            bool all = true;
+            for (const auto& id : mine) {
+                auto it = o.second.ids.find(id.first);
+                if (it == o.second.ids.end() || it->second != id.second) { all = false; break; }
+            }
+            if (all) return true;
+        }
+        return false;
+    }
+    void prune_session_locked(std::uint64_t sid, bool retune = false) {
         auto sit = sess_.find(sid);
         if (sit == sess_.end()) return;
         const std::string fam = sit->second.family;
@@ -1764,6 +1796,9 @@ private:
         for (const auto& kv : F.networks) {
             const Network& n = kv.second;
             if (n.calls || !n.sessions.count(sid)) continue;
+            if (!retune && (n.confidence == "strong" || (n.confidence == "channel" && !n.ids.empty())) &&
+                !covered_locked(F, fam, kv.first, n))
+                continue;                        // identified: kept
             bool in_use = false;
             for (const auto& sk : sess_)
                 if (sk.first != sid && sk.second.running && sk.second.family == fam && sk.second.net == kv.first) {

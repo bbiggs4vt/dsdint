@@ -693,7 +693,9 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     // without it -- e.g. "Valid RFSS Connection" grabbed the 'C' of
     // "Connection", a valid hex digit).
     static const std::regex rfss_re(R"(\bRFSS\s*(?::\s*|\[\s*)([0-9A-Fa-f]+))", std::regex::icase);
-    static const std::regex sysid_re(R"(\bSYS\s*ID\s*(?::\s*|\[\s*)([0-9A-Fa-f]+))", std::regex::icase);
+    // (also the sync line's "WACN: 580A0; SYS: 006;" -- a colon right after
+    // SYS; NXDN's "Sys Code:" doesn't match)
+    static const std::regex sysid_re(R"(\bSYS\s*(?:ID\s*)?(?::\s*|\[\s*)([0-9A-Fa-f]+))", std::regex::icase);
     static const std::regex wacn_re(R"(\bWACN\s*(?::\s*|\[\s*)([0-9A-Fa-f]+))", std::regex::icase);
 
     // D-STAR / YSF (callsign-based amateur protocols). dsd-fme reprints

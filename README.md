@@ -654,9 +654,15 @@ as `Color Code=00` before a burst's code is decoded).
 A stream only shows up once it decodes real traffic (a sync, call, voice or
 data burst): a session on an empty channel, on noise, or set to the wrong
 protocol leaves no trace -- no protocol tab and no "Unidentified" network.
-When a session ends (stop, disconnect, or a new `start`), any network it fed
-that never carried a call is dropped too, along with radios known only through
-it -- unless another running session is still on that network.
+When a session ends (stop, disconnect, or a new `start`), a network it fed
+that never carried a call is dropped too -- along with radios known only
+through it -- if it never identified itself (`Unidentified`, or a code scoped
+to that stream) or a fuller identity covers it (a P25 NAC or a SYS without its
+WACN, once the system's network is known), unless another running session is
+still on it. A network that identified itself (a system id, or a code on a
+known channel) is kept, calls or not, so a quiet control channel whose client
+reconnects doesn't vanish; a retune drops the old channel's call-less
+networks.
 
 Everything is in memory, bounded, and resets on restart or with the page's
 **Clear** button. `GET /net.json` serves the same model for tooling (gzip-
