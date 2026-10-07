@@ -114,6 +114,8 @@ inline std::string render_net_page_html() {
   .cdot.on { background: var(--success, #62c462); border-color: var(--success, #62c462); box-shadow: 0 0 5px rgba(98,196,98,.6); }
   .famtabs .conn { margin-left: auto; align-self: center; color: var(--muted); font-size: .8rem; padding: 0 .3rem; white-space: nowrap; }
   .famtabs .conn.on { color: var(--text); }
+  .famtabs .imps { margin-left: auto; align-self: center; font-size: .8rem; padding: 0 .3rem; white-space: nowrap; color: #e3c66f; }
+  .famtabs .imps + .conn { margin-left: .9rem; }
   .cards { display: flex; flex-wrap: wrap; gap: .8rem; margin-bottom: 1rem; }
   .card { background-image: linear-gradient(#3e444a, #3a3f44 60%, #363b40); border: 1px solid var(--comp-bd);
           border-radius: 4px; box-shadow: inset 0 1px 0 rgba(255,255,255,.06); padding: .65rem 1rem; min-width: 8.5rem; }
@@ -2863,8 +2865,8 @@ function renderAll() {
   $('main').hidden = !fams.length;
   var ft = $('famtabs');
   ft.textContent = '';
-  var conn = connSummary();
-  if (!fams.length) { IX = null; if (conn) ft.appendChild(conn); return; }
+  var conn = connSummary(), imps = impChip();
+  if (!fams.length) { IX = null; if (imps) ft.appendChild(imps); if (conn) ft.appendChild(conn); return; }
   if (fams.indexOf(S.fam) < 0) { S.fam = fams[0]; S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; }
   fams.forEach(function (f) {
     var F = S.d.families[f], lv = F.calls.filter(live).length, st = streamsOf(f), dec = st.some(decodingNow);
@@ -2876,6 +2878,7 @@ function renderAll() {
       [st.length ? h('span', { class: 'cdot' + (dec ? ' on' : '') }) : null,
        FAMN[f] || f.toUpperCase(), ' ', h('span', { class: 'count', text: F.radios.length + ' radios' + (lv ? ' · ' + lv + ' live' : '') })]));
   });
+  if (imps) ft.appendChild(imps);
   if (conn) ft.appendChild(conn);
   index();
   netKeys().forEach(function (k) { if (!IX.netByKey[k]) delete S.nets[k]; });
@@ -3118,6 +3121,23 @@ function importFiles(fl) {
     S.impsig = null;
   });
 }
+// The bar can be hidden (its ✕): remembered for this set of imports, so a new
+// or removed import brings it back. While hidden, a small "N imports" beside
+// the protocol tabs says they are still included, and brings the bar back.
+function impIds(list) { return (list || []).map(function (x) { return x.id; }).join(','); }
+function impHidden() { var l = S.d && S.d.imports; return !!(l && l.length) && load('imphide') === impIds(l); }
+function showImports(hide) {
+  store('imphide', hide ? impIds(S.d && S.d.imports) : '');
+  S.impsig = null;
+  updateImports(S.d && S.d.imports);
+  if (IX) render();
+}
+function impChip() {
+  if (S.file || !impHidden()) return null;
+  var n = S.d.imports.length, tip = 'Data from ' + n + ' imported export' + (n > 1 ? 's is' : ' is') + ' included — show the imports bar';
+  return h('a', { class: 'imps', href: '#', title: tip, 'data-tip': tip,
+                  onclick: function (e) { e.preventDefault(); showImports(false); } }, n + ' import' + (n > 1 ? 's' : ''));
+}
 function updateImports(list) {
   list = list || [];
   var sig = JSON.stringify(list.map(function (x) { return [x.id, x.calls]; }));
@@ -3125,7 +3145,7 @@ function updateImports(list) {
   S.impsig = sig;
   var bar = $('impbar');
   bar.textContent = '';
-  bar.hidden = !list.length;
+  bar.hidden = !list.length || load('imphide') === impIds(list);
   if (!list.length) return;
   bar.appendChild(h('span', null, ['Including ', h('b', { text: list.length + ' import' + (list.length > 1 ? 's' : '') }), ':']));
   list.forEach(function (x) {
@@ -3140,6 +3160,9 @@ function updateImports(list) {
   bar.appendChild(h('a', { href: '#', onclick: function (e) {
     e.preventDefault(); fetch('/net/imports/clear', { cache: 'no-store' }).then(function () { S.impsig = null; });
   } }, 'Remove all'));
+  bar.appendChild(h('span', { class: 'x', title: 'Hide this bar (the imports stay included; "' + list.length + ' import' +
+                              (list.length > 1 ? 's' : '') + '" beside the protocol tabs brings it back)',
+                              onclick: function () { showImports(true); } }, '✕'));
 }
 $('import').addEventListener('click', function () { $('importfile').value = ''; $('importfile').click(); });
 $('importfile').addEventListener('change', function () { importFiles(this.files); });

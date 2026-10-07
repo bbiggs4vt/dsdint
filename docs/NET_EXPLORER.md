@@ -466,8 +466,11 @@ goes into the audio zip's `calls.csv`.
   report of what happened to each file and a **Save merged** link.
 - **Import…** adds exports to the **live** view — e.g. other receivers'
   exports — shown together with the live data. A bar lists the imports, each
-  removable (**✕**, or **Remove all**). New traffic keeps arriving on top;
-  **Export** then saves the combined view.
+  removable (**✕**, or **Remove all**). The **✕** at the bar's right end only
+  hides the bar: the imports stay included, and a small **N imports** beside
+  the protocol tabs brings it back. This browser remembers it until the
+  imports change (a new import shows the bar again). New traffic keeps
+  arriving on top; **Export** then saves the combined view.
 
 When files are combined, talkgroups and radios join by id within a protocol;
 networks join by their system id, or by code and channel. A call two
