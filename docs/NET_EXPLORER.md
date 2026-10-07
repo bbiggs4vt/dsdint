@@ -191,7 +191,9 @@ The analysis view — evidence of how radios, talkgroups and systems relate:
 - **Probably the same network** — merge suggestions: networks that look like
   one channel heard at different frequency offsets, each with its reasons,
   **Merge** and **Not the same** ([Merging networks](#merging-networks)).
-  Shown first when there are any.
+  Shown first when there are any. A network with no decoded identity
+  (**Unidentified · …** — only a frequency, nothing else) is never suggested:
+  it has nothing to match on and comes and goes with its stream.
 - **Talk communities** — groups of radios tied together through talkgroups
   they share or private calls between them, largest first. A community is
   often one agency, fleet or work group.

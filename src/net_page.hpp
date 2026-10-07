@@ -822,6 +822,10 @@ function sameEvidence() {
   SAME = { sig: sig, ev: ev };
   return ev;
 }
+// A network with no decoded identity -- only a frequency ("ch@<freq>") or not
+// even that ("unknown:<stream>"); shown as "Unidentified · …". These come and
+// go with their stream and carry nothing to merge on.
+function unidentifiedNet(n) { return !n || !n.key || n.key.indexOf('ch@') === 0 || n.key.indexOf('unknown:') === 0; }
 var CODE_NAME = { cc: 'color code', nac: 'NAC', ran: 'RAN', rpt1: 'repeater', downlink: 'downlink' };
 function netCode(x) {
   var o = x.ids || {};
@@ -840,6 +844,12 @@ function freqGap(a, b) {
 // Otherwise { tier: 3 very likely | 2 likely | 1 possible, why: [...], against: [...] }.
 function sameJudge(a, b, e) {
   e = e || { twins: 0, clash: 0, sameStream: 0, tgs: 0, radios: 0 };
+  // An unidentified network is never a merge candidate: nothing has been
+  // decoded about it (only its frequency, "ch@<freq>" / "Unidentified · MHz",
+  // or not even that, "unknown:…"), so there is no identity for it to be "the
+  // same" as -- and it is transient, gone the moment its stream decodes an id
+  // or drops. Suggesting it made cards flicker in and out as streams churned.
+  if (unidentifiedNet(a) || unidentifiedNet(b)) return null;
   var ca = netCode(a), cb = netCode(b), gap = freqGap(a, b);
   var sameCode = ca && cb && ca.k === cb.k && ca.v === cb.v;
   if (a.confidence === 'strong' && b.confidence === 'strong') return null;
