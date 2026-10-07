@@ -143,6 +143,15 @@ inline std::string render_net_page_html() {
   .tm-ov .tm-pt { pointer-events: auto; cursor: pointer; stroke: #12171b; stroke-width: 1.5; }
   .tm-ov .tm-line { fill: none; stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; opacity: .85; }
   .tm-ov .tm-line.sel { stroke-width: 4; opacity: 1; }
+  /* A path's wide invisible twin takes the clicks / hovers; its first fix
+     gets a small ring (the latest is the labelled dot). Hovering a radio's
+     path or dot -- or selecting it -- fades everyone else's. */
+  .tm-ov .tm-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
+  .tm-ov .tm-start { fill: #12171b; stroke-width: 2; }
+  .tm-ov .tm-line, .tm-ov .tm-pt, .tm-ov .tm-start, .tm-ov text { transition: opacity .12s; }
+  .tm-ov.hl .tm-line:not(.on), .tm-ov.hl .tm-start:not(.on) { opacity: .15; }
+  .tm-ov.hl .tm-pt:not(.on), .tm-ov.hl text:not(.on) { opacity: .3; }
+  .tm-ov.hl .tm-line.on { stroke-width: 4.5; opacity: 1; }
   .tm-ov text { font: 600 11px 'Helvetica Neue', Arial, sans-serif; fill: #fff; paint-order: stroke; stroke: #12171b; stroke-width: 3px; }
   .tm-zoom { position: absolute; left: 8px; top: 8px; display: flex; flex-direction: column; gap: 4px; z-index: 2; }
   .tm-zoom .btn { padding: .1rem .5rem; font-size: .95rem; line-height: 1.2; }
@@ -1356,7 +1365,8 @@ function wy(lat, z) {
 function TileMap(opts) {
   var m = this;
   m.opts = opts || {};
-  m.z = 2; m.cx = 512; m.cy = 512;           // the world, centred (until fit()) m.key = null; m.layers = { lines: [], pts: [] }; m.imgs = {}; m.ok = 0; m.bad = 0; m.ts = null;
+  m.z = 2; m.cx = 512; m.cy = 512;           // the world, centred (until fit())
+  m.key = null; m.layers = { lines: [], pts: [] }; m.imgs = {}; m.ok = 0; m.bad = 0; m.ts = null; m.hover = null;
   m.tiles = h('div', { class: 'tm-tiles' });
   m.svg = sv('svg', { class: 'tm-ov' });
   m.att = h('div', { class: 'tm-att' });
@@ -1368,7 +1378,7 @@ function TileMap(opts) {
                                     zb('\u2922', 'Fit', function () { m.fit(); m.draw(); })]), m.att, m.msg]);
   var drag = null;
   m.el.addEventListener('pointerdown', function (e) {
-    if (e.button !== 0 || e.target.closest('.tm-zoom') || e.target.closest('.tm-pt')) return;
+    if (e.button !== 0 || e.target.closest('.tm-zoom') || e.target.closest('.tm-pt') || e.target.closest('.tm-hit')) return;
     drag = { x: e.clientX, y: e.clientY, cx: m.cx, cy: m.cy };
     m.el.setPointerCapture(e.pointerId); m.el.classList.add('drag');
   });
@@ -1460,21 +1470,53 @@ TileMap.prototype.draw = function () {
   svg.textContent = '';
   svg.setAttribute('width', w); svg.setAttribute('height', hh);
   var P = function (ll) { return [wx(ll[1], z) - x0, wy(ll[0], z) - y0]; };
+  // Everything of one radio (layer item .g) is a group: hovering any of it
+  // highlights the group (m.hover, or else the selected one, m.focus).
+  var grp = function (el, g) {
+    if (g == null) return el;
+    el.setAttribute('data-g', g);
+    el.addEventListener('mouseenter', function () { m.hover = g; m.hl(); });
+    el.addEventListener('mouseleave', function () { if (m.hover === g) { m.hover = null; m.hl(); } });
+    return el;
+  };
+  var tip = function (el, t) { if (t) { var e = document.createElementNS(SVGNS, 'title'); e.textContent = t; el.appendChild(e); } };
   m.layers.lines.forEach(function (l) {
     if (l.pts.length < 2) return;
-    svg.appendChild(sv('polyline', { class: 'tm-line' + (l.sel ? ' sel' : ''), stroke: l.color || '#5bc0de',
-      points: l.pts.map(function (p) { var q = P(p); return q[0].toFixed(1) + ',' + q[1].toFixed(1); }).join(' ') }));
+    var pts = l.pts.map(function (p) { var q = P(p); return q[0].toFixed(1) + ',' + q[1].toFixed(1); }).join(' ');
+    grp(svg.appendChild(sv('polyline', { class: 'tm-line' + (l.sel ? ' sel' : ''), stroke: l.color || '#5bc0de', points: pts })), l.g);
+    var q0 = P(l.pts[0]);
+    grp(svg.appendChild(sv('circle', { class: 'tm-start', cx: q0[0].toFixed(1), cy: q0[1].toFixed(1), r: 3.5, stroke: l.color || '#5bc0de' })), l.g);
+    if (l.onclick) {
+      var hit = grp(sv('polyline', { class: 'tm-hit', points: pts }), l.g);
+      tip(hit, l.title);
+      hit.addEventListener('click', l.onclick);
+      svg.appendChild(hit);
+    }
   });
   m.layers.pts.forEach(function (p) {
     var q = P(p.ll);
     if (q[0] < -50 || q[1] < -50 || q[0] > w + 50 || q[1] > hh + 50) return;
-    var c = sv('circle', { class: 'tm-pt', cx: q[0].toFixed(1), cy: q[1].toFixed(1), r: p.r || 5, fill: p.color || '#5bc0de' });
-    if (p.title) { var t = document.createElementNS(SVGNS, 'title'); t.textContent = p.title; c.appendChild(t); }
+    var c = grp(sv('circle', { class: 'tm-pt', cx: q[0].toFixed(1), cy: q[1].toFixed(1), r: p.r || 5, fill: p.color || '#5bc0de' }), p.g);
+    tip(c, p.title);
     if (p.onclick) c.addEventListener('click', p.onclick);
     svg.appendChild(c);
-    if (p.label) { var tx = sv('text', { x: (q[0] + (p.r || 5) + 3).toFixed(1), y: (q[1] + 4).toFixed(1) }); tx.textContent = p.label; svg.appendChild(tx); }
+    if (p.label) {
+      var tx = sv('text', { x: (q[0] + (p.r || 5) + 3).toFixed(1), y: (q[1] + 4).toFixed(1) });
+      tx.textContent = p.label;
+      if (p.g != null) tx.setAttribute('data-g', p.g);
+      svg.appendChild(tx);
+    }
   });
+  m.hl();
   m.status();
+};
+// Highlight one radio's path, dot and label (the hovered one, else the
+// layers' focus -- the selected radio), fading the rest.
+TileMap.prototype.hl = function () {
+  var g = this.hover != null ? this.hover : this.layers.focus, svg = this.svg;
+  svg.classList.toggle('hl', g != null);
+  var els = svg.querySelectorAll('[data-g]');
+  for (var i = 0; i < els.length; i++) els[i].classList.toggle('on', g != null && els[i].getAttribute('data-g') === String(g));
 };
 TileMap.prototype.status = function () {
   var ts = this.ts || tileset();
@@ -1501,14 +1543,17 @@ function viewMap() {
   var selId = S.sel && S.sel.type === 'radio' ? S.sel.id : null, lines = [], pts = [];
   rs.forEach(function (r) {
     var tr = trackOf(r), col = nodeColor({ ref: r }), me = r.id === selId;
-    if ($('m-paths').checked || me) lines.push({ pts: tr.map(function (f) { return ll(f[1]); }), color: col, sel: me });
-    if (me) tr.slice(0, -1).forEach(function (f) { pts.push({ ll: ll(f[1]), r: 3, color: col, title: 'Radio ' + r.id + ' ' + hms(f[0]) + '  ' + f[1] }); });
     var last = tr[tr.length - 1], al = r.aliases.length ? ' ' + r.aliases[r.aliases.length - 1] : '';
-    pts.push({ ll: ll(last[1]), r: me ? 7 : 5.5, color: col, label: r.id + al,
+    var pick = function () { select('radio', r.id); };
+    if ($('m-paths').checked || me)
+      lines.push({ pts: tr.map(function (f) { return ll(f[1]); }), color: col, sel: me, g: r.id, onclick: pick,
+                   title: 'Radio ' + r.id + al + ' \u2014 path of ' + tr.length + ' positions, ' + hms(tr[0][0]) + ' \u2192 ' + hms(last[0]) + ' (click to select)' });
+    if (me) tr.slice(0, -1).forEach(function (f) { pts.push({ ll: ll(f[1]), r: 3, color: col, g: r.id, title: 'Radio ' + r.id + ' ' + hms(f[0]) + '  ' + f[1] }); });
+    pts.push({ ll: ll(last[1]), r: me ? 7 : 5.5, color: col, label: r.id + al, g: r.id,
                title: 'Radio ' + r.id + al + ' \u2014 ' + tr.length + ' position' + (tr.length > 1 ? 's' : '') + ', latest ' + hms(last[0]) + ' (' + ago(last[0]) + ')',
-               onclick: function () { select('radio', r.id); } });
+               onclick: pick });
   });
-  MV.set({ lines: lines, pts: pts }, S.fam + '|' + (S.file || 'live'));
+  MV.set({ lines: lines, pts: pts, focus: selId }, S.fam + '|' + (S.file || 'live'));
   $('m-note').textContent = rs.length ? rs.length + ' radio' + (rs.length > 1 ? 's' : '') + ' with positions' +
     (anyFilter() || S.q ? ' (with the filters)' : '') + ' \u00B7 drag to pan, scroll to zoom, click a radio' : 'No position reports among the listed radios yet.';
 }

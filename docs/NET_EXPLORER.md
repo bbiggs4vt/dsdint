@@ -209,9 +209,13 @@ The analysis view — evidence of how radios, talkgroups and systems relate:
 Radios that sent **position reports** (DMR LRRP / GPS, P25 Motorola GPS):
 each one's latest position as a labelled dot in its network's colour, and
 — with **Paths** ticked — the path through its positions, in time order and
-straight from fix to fix (no road snapping). Click a dot to select the
-radio: its path stands out, with every fix. Drag to pan, scroll or **+ / −**
-to zoom, **Fit** to see them all. It follows the filters and the search.
+straight from fix to fix (no road snapping). A path starts at a small ring
+(its first fix) and ends at the radio's labelled dot (its latest). Point at
+a path or a dot to pick out that radio — its path, ring and dot stay bright,
+everything else fades — and click either to select the radio: its path stands
+out, with every fix, and the others stay faded until you deselect it. Drag
+to pan, scroll or **+ / −** to zoom, **Fit** to see them all. It follows the
+filters and the search.
 
 The map is drawn by the page from **map tiles** — no key or account. **Map**
 picks the tiles: **OpenStreetMap**, **CARTO Dark**, **Esri imagery**
