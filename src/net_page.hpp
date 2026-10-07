@@ -1387,6 +1387,10 @@ function TileMap(opts) {
     m.cx = drag.cx - (e.clientX - drag.x); m.cy = drag.cy - (e.clientY - drag.y); m.draw();
   });
   var end = function () { drag = null; m.el.classList.remove('drag'); };
+  // Where the pointer is (for the hover highlight: a redraw replaces the
+  // element under it without a mouseleave, so draw() looks again).
+  m.el.addEventListener('pointermove', function (e) { m.px = e.clientX; m.py = e.clientY; });
+  m.el.addEventListener('pointerleave', function () { m.px = null; if (m.hover != null) { m.hover = null; m.hl(); } });
   m.el.addEventListener('pointerup', end); m.el.addEventListener('pointercancel', end);
   m.el.addEventListener('wheel', function (e) {
     e.preventDefault();
@@ -1507,6 +1511,11 @@ TileMap.prototype.draw = function () {
       svg.appendChild(tx);
     }
   });
+  // The hover highlight follows what is under the pointer now (the old
+  // elements are gone -- e.g. a click that selected the radio redrew it).
+  var under = m.px != null && document.elementFromPoint(m.px, m.py);
+  var ug = under && under.closest ? under.closest('[data-g]') : null;
+  m.hover = ug && svg.contains(ug) ? ug.getAttribute('data-g') : null;
   m.hl();
   m.status();
 };
