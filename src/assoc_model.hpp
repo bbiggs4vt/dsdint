@@ -147,6 +147,7 @@ public:
         c.family = family.empty() ? assoc_family(label) : family;
         c.freq = freq_hz;
         c.running = true;
+        c.started_ms = now;
         ++version_;
     }
 
@@ -296,6 +297,9 @@ public:
         auto sit = sess_.find(sid);
         if (sit == sess_.end()) return;          // no begin_stream (e.g. pager) -> ignore
         Ctx& c = sit->second;
+        // (The explorer's stream list: decoding vs quiet. Only decoded output
+        // counts -- a sync, call, voice... -- not startup banners and the like.)
+        if (ev.kind != "unknown" && ev.crc_error != "1") c.heard_ms = now;
         if (c.family.empty()) return;
         if (c.family == "auto") {
             if (ev.kind == "unknown") return;    // banner lines say "DMR" etc.; wait for real traffic
@@ -830,7 +834,7 @@ private:
                ",\"since\":" + std::to_string(since_) + ",\"rec\":" + rec_json_locked() +
                ",\"audio\":" + audio_json_locked() + ",\"max_calls\":" + std::to_string(max_calls_) +
                ",\"map\":" + map_json() + ",\"dev\":" + (dev_tools() ? "true" : "false") +
-               ",\"rates\":" + rates_json_locked(now) + ",\"imports\":" + im +
+               ",\"rates\":" + rates_json_locked(now) + ",\"streams\":" + streams_json_locked() + ",\"imports\":" + im +
                ",\"merges\":" + merges_json(view_merges_locked()) +
                ",\"families\":";
     }
@@ -860,6 +864,25 @@ private:
     // (over the time since the server started or was cleared, if shorter),
     // and the number counted since then. Counted from every call, however
     // many the list still holds.
+    // The decode streams running now -- connected, whether or not anything is
+    // being decoded: [{"s","fam","label","freq","since","heard","live"}].
+    // fam is the protocol ("auto" until detected); heard the last decoded
+    // output -- sync, call, voice... (0 = none yet); live whether it has
+    // decoded real traffic.
+    std::string streams_json_locked() const {
+        std::string o = "[";
+        bool first = true;
+        for (const auto& kv : sess_) {
+            const Ctx& c = kv.second;
+            if (!c.running) continue;
+            o += (first ? "" : ",") + std::string("{\"s\":") + std::to_string(kv.first) + ",\"fam\":" + assocjson::q(c.family) +
+                 ",\"label\":" + assocjson::q(c.label) + ",\"freq\":" + std::to_string(c.freq) +
+                 ",\"since\":" + std::to_string(c.started_ms) + ",\"heard\":" + std::to_string(c.heard_ms) +
+                 ",\"live\":" + (c.live ? "true" : "false") + "}";
+            first = false;
+        }
+        return o + "]";
+    }
     std::string rates_json_locked(std::int64_t now) const {
         std::string o = "{";
         const std::int64_t sec = now / 1000, up = std::max<std::int64_t>(1, (now - since_) / 1000);
@@ -1008,12 +1031,14 @@ private:
             Ctx& c = kv.second;
             const std::string f = c.family, l = c.label;
             const bool running = c.running;
-            const std::int64_t freq = c.freq;
+            const std::int64_t freq = c.freq, started = c.started_ms, heard = c.heard_ms;
             c = Ctx{};
             c.family = f;
             c.label = l;
             c.running = running;
             c.freq = freq;
+            c.started_ms = started;
+            c.heard_ms = heard;
         }
         next_call_ = 0;
         ++version_;
@@ -1084,6 +1109,8 @@ private:
         bool live = false;                              // has decoded real traffic yet
         bool running = false;                           // pipeline up (begin_stream .. end_stream)
         std::int64_t freq = 0;                          // channel frequency, Hz (0 = unknown)
+        std::int64_t started_ms = 0;                    // its pipeline started (begin_stream)
+        std::int64_t heard_ms = 0;                      // last decoded output: sync, call, voice... (0 = not yet)
         std::map<std::string, std::uint64_t> active;   // "slot|tgt" -> call id
         std::map<std::string, std::uint64_t> last_slot_call; // slot -> latest call id
         // Weak-anchor values seen but not yet believed: key -> (value, times in a row).

@@ -107,6 +107,13 @@ inline std::string render_net_page_html() {
   .tab .count { color: var(--muted); font-weight: 400; }
   .tab.active .count { color: var(--info); }
   .famtabs .tab { font-size: .9rem; letter-spacing: .03em; }
+  /* Connections: a dot on a protocol tab with a stream connected (green:
+     decoding now; hollow: connected, quiet), and the summary at the row's end. */
+  .cdot { display: inline-block; width: .55em; height: .55em; border-radius: 50%; margin-right: .4em; vertical-align: .08em;
+          border: 1.5px solid var(--muted); }
+  .cdot.on { background: var(--success, #62c462); border-color: var(--success, #62c462); box-shadow: 0 0 5px rgba(98,196,98,.6); }
+  .famtabs .conn { margin-left: auto; align-self: center; color: var(--muted); font-size: .8rem; padding: 0 .3rem; white-space: nowrap; }
+  .famtabs .conn.on { color: var(--text); }
   .cards { display: flex; flex-wrap: wrap; gap: .8rem; margin-bottom: 1rem; }
   .card { background-image: linear-gradient(#3e444a, #3a3f44 60%, #363b40); border: 1px solid var(--comp-bd);
           border-radius: 4px; box-shadow: inset 0 1px 0 rgba(255,255,255,.06); padding: .65rem 1rem; min-width: 8.5rem; }
@@ -2822,21 +2829,58 @@ function renderFilters() {
   }
 }
 function famTotals(f) { var F = S.d.families[f]; return F.calls.length + F.talkgroups.length + F.radios.length; }
+// ---- connections ----
+// /net.json "streams": the decode streams running now, connected whether or
+// not anything is decoded ({s, fam, label, freq, since, heard, live}), and
+// "clients": every connected client. A stream "decodes now" when the
+// decoder printed anything in the last 10 s.
+var HEARD_MS = 10000;
+function streamsOf(f) { return S.file || !S.d ? [] : (S.d.streams || []).filter(function (x) { return f == null || x.fam === f; }); }
+function decodingNow(x) { return x.heard && now() - x.heard < HEARD_MS; }
+function streamText(x) {
+  return (FAMN[x.fam] || (x.fam === 'auto' ? 'Detecting protocol' : (x.label || '?').toUpperCase())) +
+    (x.freq ? ' ' + mhz(x.freq) + ' MHz' : ' (no frequency)') + ' \u2014 ' +
+    (decodingNow(x) ? 'decoding' : x.heard ? 'quiet since ' + ago(x.heard) : 'nothing decoded yet') +
+    ' \u00B7 connected ' + ago(x.since).replace(' ago', '');
+}
+// The row-end summary: "● 4 clients · 6 streams" (green while any stream
+// decodes), or "No clients connected". Nothing in a file view.
+function connSummary() {
+  if (S.file || !S.d || S.d.clients == null) return null;
+  var st = streamsOf(null), dec = st.some(decodingNow), n = S.d.clients;
+  var tip = n ? n + ' client' + (n > 1 ? 's' : '') + ' connected' + (st.length ? '; decode streams:\n' + st.map(streamText).join('\n') : ', no decode stream running') :
+                'No client is connected to this server.';
+  return h('span', { class: 'conn' + (n ? ' on' : ''), title: tip, 'data-tip': tip },
+    [h('span', { class: 'cdot' + (dec ? ' on' : '') }),
+     n ? n + ' client' + (n > 1 ? 's' : '') + (st.length ? ' \u00B7 ' + st.length + ' stream' + (st.length > 1 ? 's' : '') : '') : 'No clients connected']);
+}
+// A protocol whose streams are connected gets its tab even before any traffic.
+function addStreamFams(d) {
+  (d.streams || []).forEach(function (x) {
+    if (!x.fam || x.fam === 'auto' || d.families[x.fam]) return;
+    d.families[x.fam] = { networks: [], talkgroups: [], radios: [], calls: [] };
+  });
+}
 function render() {
   var fams = Object.keys(S.d.families).sort(function (a, b) { return famTotals(b) - famTotals(a); });
   $('empty').hidden = fams.length > 0;
   $('main').hidden = !fams.length;
   var ft = $('famtabs');
   ft.textContent = '';
-  if (!fams.length) { IX = null; return; }
+  var conn = connSummary();
+  if (!fams.length) { IX = null; if (conn) ft.appendChild(conn); return; }
   if (fams.indexOf(S.fam) < 0) { S.fam = fams[0]; S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; }
   fams.forEach(function (f) {
-    var F = S.d.families[f], lv = F.calls.filter(live).length;
+    var F = S.d.families[f], lv = F.calls.filter(live).length, st = streamsOf(f), dec = st.some(decodingNow);
     ft.appendChild(h('button', { class: 'tab' + (f === S.fam ? ' active' : ''), type: 'button',
-      title: F.radios.length + ' radios' + (lv ? ', ' + lv + ' live calls' : '') + ' on all of its networks',
+      title: F.radios.length + ' radios' + (lv ? ', ' + lv + ' live calls' : '') + ' on all of its networks' +
+             (st.length ? '\n' + st.length + ' stream' + (st.length > 1 ? 's' : '') + ' connected' + (dec ? ' (decoding)' : ' (quiet)') + ':\n' +
+                          st.map(streamText).join('\n') : ''),
       onclick: function () { S.fam = f; store('fam', f); S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; GR.sig = ''; render(); } },
-      [FAMN[f] || f.toUpperCase(), ' ', h('span', { class: 'count', text: F.radios.length + ' radios' + (lv ? ' · ' + lv + ' live' : '') })]));
+      [st.length ? h('span', { class: 'cdot' + (dec ? ' on' : '') }) : null,
+       FAMN[f] || f.toUpperCase(), ' ', h('span', { class: 'count', text: F.radios.length + ' radios' + (lv ? ' · ' + lv + ' live' : '') })]));
   });
+  if (conn) ft.appendChild(conn);
   index();
   netKeys().forEach(function (k) { if (!IX.netByKey[k]) delete S.nets[k]; });
   var calls = fCalls(null, true), tgs = fTgs(), radios = fRadios(), lv = calls.filter(live).length, sites = {};
@@ -2845,13 +2889,22 @@ function render() {
   cards.textContent = '';
   var rate = callRate(calls);
   var kept = 'The newest calls are listed (up to ' + (S.d.max_calls || 5000) + ' per protocol; calls with audio are kept longest).';
+  // Live: a Streams card (this protocol's connected decode streams; green
+  // when one decodes now) and the call rate beside the call count. A file
+  // view has no connections: its Calls / s card stays.
+  var st = streamsOf(S.fam), stDec = st.some(decodingNow);
+  var cardCalls = S.file ? ['Calls (recent)', calls.length, kept] : ['Calls (recent) \u00B7 ' + rate.text + '/s', calls.length, kept + ' ' + rate.tip];
+  var card6 = S.file ? ['Calls / s', rate.text, rate.tip] :
+    ['Streams', st.length, st.length ? st.length + ' decode stream' + (st.length > 1 ? 's' : '') + ' connected for this protocol:\n' + st.map(streamText).join('\n')
+                                      : 'No decode stream connected for this protocol right now (its data is from earlier, or imported).'];
   [['Networks', IX.nets.filter(function (n) { return netOk(n.key); }).length], ['Sites', Object.keys(sites).length], ['Talkgroups', tgs.length],
-   ['Radios', radios.length], ['Calls (recent)', calls.length, kept], ['Calls / s', rate.text, rate.tip],
+   ['Radios', radios.length], cardCalls, card6,
    ['Live calls', lv, !anyFilter() && !S.q ? 'Calls heard in the last ' + LIVE_MS / 1000 + ' s.' :
      'Calls heard in the last ' + LIVE_MS / 1000 + ' s' + (anyFilter() ? ' with the filters' : '') +
      (S.q ? ' matching the search' : '') + ' (the protocol tab counts all of them).']].forEach(function (c, i) {
-    cards.appendChild(h('div', { class: 'card' + (i === 6 && lv ? ' live' : ''), title: c[2] || null, 'data-tip': c[2] || null },
-      [h('div', { class: 'n', text: String(c[1]) }), h('div', { class: 'l', text: c[0] })]));
+    cards.appendChild(h('div', { class: 'card' + ((i === 6 && lv) || (i === 5 && !S.file && stDec) ? ' live' : ''), title: c[2] || null, 'data-tip': c[2] || null },
+      [h('div', { class: 'n' }, [i === 5 && !S.file && st.length ? h('span', { class: 'cdot' + (stDec ? ' on' : '') }) : null, String(c[1])]),
+       h('div', { class: 'l', text: c[0] })]));
   });
   renderFilters();
   $('c-calls').textContent = S.audOnly && (!S.file || !fAll(FILEAUDIO)) ? fCalls().length : calls.length;   // the list's own rows
@@ -3246,7 +3299,10 @@ function poll() {
     updateRec(d.rec);
     updateAudio(d.audio);
     updateImports(d.imports);
-    var changed = !S.d || d.version !== S.d.version;
+    var changed = !S.d || d.version !== S.d.version || (d.clients !== S.d.clients) ||
+                  JSON.stringify((d.streams || []).map(function (x) { return [x.s, x.fam, decodingNow(x)]; })) !==
+                  JSON.stringify((S.d.streams || []).map(function (x) { return [x.s, x.fam, decodingNow(x)]; }));
+    addStreamFams(d);
     applyMerges(d);
     S.d = d;
     updateDev();

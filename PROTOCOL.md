@@ -1234,6 +1234,12 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
   viewer, kept through Clear and restarts (`DSD_NET_MERGES_FILE`, default
   `net_merges.json` in the recordings folder), and an import adds its
   export's rules (this server's own win).
+- `clients` is how many clients are connected (any session, decoding or not);
+  `streams` lists the decode streams running now, whether or not anything is
+  decoded: `[{"s":12,"fam":"dmr","label":"dmr","freq":460175000,"since":…,
+  "heard":…,"live":true}]` -- `fam` the protocol (`auto` until detected),
+  `since` when its pipeline started, `heard` its last decoded output (a sync,
+  call, voice…; 0 = none yet), `live` whether it has decoded real traffic.
 - `ui` is a fingerprint of the explorer page the server serves (also in
   `/status.json`, for the status page): a page whose own build differs reloads
   itself, so open pages pick up a server update.

@@ -296,6 +296,12 @@ public:
         std::vector<ProtocolUsage> protocols;
     };
 
+    // Clients connected right now (the explorer's connection summary).
+    std::size_t connected() const {
+        std::lock_guard<std::mutex> lk(mu_);
+        return sessions_.size();
+    }
+
     Snapshot snapshot() const {
         std::lock_guard<std::mutex> lk(mu_);
         Snapshot s;

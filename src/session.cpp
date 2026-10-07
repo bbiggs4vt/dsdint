@@ -691,6 +691,8 @@ void Session::serve_http() {
         res->result(http::status::ok);
         res->set(http::field::content_type, "application/json");
         res->body() = with_ui(stats_ ? stats_->assoc().to_json() : std::string("{\"families\":{}}"), net_ui_page().id);
+        // Clients connected (any session, decoding or not): the explorer's connection summary.
+        if (stats_) res->body().insert(1, "\"clients\":" + std::to_string(stats_->connected()) + ",");
         // The explorer polls this every 1.5 s and, with thousands of calls
         // listed, it runs to megabytes: send it compressed (~10x smaller)
         // when the client accepts gzip (every browser does).
