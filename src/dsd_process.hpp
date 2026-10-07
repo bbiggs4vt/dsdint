@@ -78,6 +78,18 @@ struct DmrSlotCarry {
 // text and stays silent otherwise. Free function; unit-tested directly.
 std::string decode_dmr_pdu_text(const std::string& hex_upper);
 
+// Motorola ARS (Automatic Registration Service): what a radio sends the
+// system's data gateway to register, and the gateway's answer. dsd-fme names
+// the service ("MNIS ARS") but prints the payload as if it were text ("UTF8
+// Text: _-- -21518"). From the -Z hex dump (MNIS header, then the ARS PDU:
+// 2-byte length, header byte -- its low nibble the PDU type -- an optional
+// extension byte, then for a registration the device id as a length-prefixed
+// ASCII string, user id and password likewise):
+//   ... 00 0A F0 20 05 "21518" 00 00   -> "ARS registration · radio 21518"
+//   ... 00 02 BF 08                    -> "ARS registration ACK"
+// Returns "" when the bytes don't hold an ARS PDU. Unit-tested.
+std::string decode_moto_ars(const std::string& hex_upper);
+
 // Reassembles dsd-fme's "-Z" hex dump of a DMR data PDU and, when it decodes to
 // printable text, yields one `message` event. Under -Z dsd-fme prints a header
 // line "Slot N - Multi Block PDU Message" (or "... Control Message") followed
@@ -91,10 +103,18 @@ struct DmrPduTextCarry {
     bool capturing = false;
     int slot = 0;
     std::string hex;
+    bool ars = false;          // the data header said "MNIS ARS": the next dump is an ARS PDU
+
+    // dsd-fme's "UTF8 Text:" rendering of an ARS PDU (between its "MNIS ARS"
+    // header and its hex dump) is binary printed as characters: not a message.
+    bool binary_text(const std::string& line) const {
+        return ars && !capturing && line.find("Text:") != std::string::npos;
+    }
 
     // Feed one cleaned line, in stdout order. Returns a `message` event when
     // this line ends a text-carrying dump, else nullopt. Call flush() at EOS.
     std::optional<DsdEvent> feed(const std::string& line) {
+        if (line.find("MNIS ARS") != std::string::npos) ars = true;
         int hdr_slot = 0;
         if (is_header(line, hdr_slot)) {
             std::optional<DsdEvent> done = finish(); // flush a prior dump, if any
@@ -116,8 +136,11 @@ private:
         if (!capturing) return std::nullopt;
         capturing = false;
         std::string h = hex; hex.clear();
+        const bool was_ars = ars;
+        ars = false;
         if (h.empty()) return std::nullopt;
-        std::string text = decode_dmr_pdu_text(h);
+        std::string text = was_ars ? decode_moto_ars(h) : std::string();
+        if (text.empty()) text = decode_dmr_pdu_text(h);
         if (text.empty()) return std::nullopt;        // non-text PDU: stay quiet
         DsdEvent ev;
         ev.kind = "message";

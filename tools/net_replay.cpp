@@ -32,18 +32,27 @@ using namespace dsdsrv;
 namespace {
 
 // --reparse: classify the event's raw line again. Only dsd-fme streams (TETRA
-// and pager lines come from other parsers), and not reassembled data messages
-// (built from several lines). The slot is carried from the last burst per
-// stream, as the server does (DmrSlotCarry); a CRC flag is kept.
-void reparse_event(DsdEvent& e, const std::string& label, std::uint64_t sid) {
+// and pager lines come from other parsers). The slot is carried from the last
+// burst per stream, as the server does (DmrSlotCarry); a CRC flag is kept.
+// Data messages reassembled from a hex dump (DmrPduTextCarry) are rebuilt
+// from the recorded lines, as the server does -- the recorded ones dropped.
+bool reparse_event(DsdEvent& e, const std::string& label, std::uint64_t sid, std::vector<DsdEvent>& before) {
     static std::map<std::uint64_t, DmrSlotCarry> carry;
+    static std::map<std::uint64_t, DmrPduTextCarry> pdu;
     const std::string fam = assoc_family(label);
-    if (e.raw_line.empty() || fam.empty() || fam == "tetra" || e.kind == "message") return;
+    if (e.raw_line.empty() || fam.empty() || fam == "tetra") return true;
+    if (e.kind == "message" && e.raw_line.rfind("DMR short-data PDU", 0) == 0) return false;
+    if (auto m = pdu[sid].feed(e.raw_line)) {
+        carry[sid].apply(*m);
+        before.push_back(*m);
+    }
     DsdEvent n = classify_dsd_fme_line(e.raw_line);
+    if (n.kind == "message" && pdu[sid].binary_text(e.raw_line)) { n.kind = "unknown"; n.message.clear(); }
     carry[sid].apply(n);
     if (n.slot.empty()) n.slot = e.slot;
     if (n.crc_error.empty()) n.crc_error = e.crc_error;
     e = std::move(n);
+    return true;
 }
 
 std::string utc(std::int64_t ms) {

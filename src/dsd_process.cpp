@@ -362,6 +362,12 @@ void DsdProcess::stdout_reader_loop() {
                     }
                 }
                 DsdEvent ev = classify_line(line);
+                // (an ARS PDU printed as text: binary, not a message -- the
+                // decoded ARS message comes from its hex dump)
+                if (cfg_.decode_short_data && ev.kind == "message" && pdu_text_carry_.binary_text(line)) {
+                    ev.kind = "unknown";
+                    ev.message.clear();
+                }
                 slot_carry_.apply(ev);   // stamp the burst's slot onto unmarked lines
                 publish_active_slot(ev);
                 if (dsd_fme_forward_event(ev, cfg_.forward_unknown)) on_event_(ev);
@@ -531,6 +537,50 @@ std::string tidy_callsign(const std::string& in) {
 }
 
 } // namespace
+
+std::string decode_moto_ars(const std::string& hex_upper) {
+    std::vector<unsigned char> b;
+    for (std::size_t i = 0; i + 1 < hex_upper.size(); i += 2) {
+        const int v = std::stoi(hex_upper.substr(i, 2), nullptr, 16);
+        b.push_back(static_cast<unsigned char>(v));
+    }
+    // MNIS header: 1F 10 02 <dir> 33 <seq hi> <seq lo> (0x33 = ARS), then the PDU.
+    if (b.size() < 10 || b[0] != 0x1F || b[4] != 0x33) return std::string();
+    const std::size_t p = 7;
+    const std::size_t len = (static_cast<std::size_t>(b[p]) << 8) | b[p + 1];
+    if (len < 1 || p + 2 + len > b.size()) return std::string();
+    const unsigned char hdr = b[p + 2];
+    const int type = hdr & 0x0F;
+    std::size_t i = p + 3 + ((hdr & 0x80) ? 1 : 0);         // skip the header extension byte
+    const std::size_t end = p + 2 + len;
+    // A length-prefixed ASCII string at i (advances i); false if malformed.
+    auto str = [&](std::string& out) {
+        if (i >= end) return false;
+        const std::size_t n = b[i++];
+        if (i + n > end) return false;
+        out.clear();
+        for (std::size_t k = 0; k < n; ++k) {
+            const unsigned char c = b[i + k];
+            if (c < 0x20 || c > 0x7E) return false;
+            out += static_cast<char>(c);
+        }
+        i += n;
+        return true;
+    };
+    switch (type) {
+        case 0x0: {                                          // device registration (radio -> gateway)
+            std::string dev, user;
+            if (!str(dev) || dev.empty()) return std::string();
+            std::string out = "ARS registration \xC2\xB7 radio " + dev;
+            if (str(user) && !user.empty()) out += " \xC2\xB7 user " + user;
+            return out;
+        }
+        case 0xF: return "ARS registration ACK";             // gateway -> radio
+        case 0x1: return "ARS de-registration";
+        case 0x4: return "ARS query";
+        default:  return "ARS (type " + std::to_string(type) + ")";
+    }
+}
 
 bool dsd_fme_forward_event(const DsdEvent& ev, bool forward_unknown) {
     return forward_unknown || ev.kind != "unknown";

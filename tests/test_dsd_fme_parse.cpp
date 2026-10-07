@@ -687,6 +687,33 @@ int main() {
         check(!ph.flush().has_value(), "nothing captured without a header");
     }
 
+    {
+        // Motorola ARS (real dumps, Capacity Plus 460.575 MHz): a radio's
+        // registration and the gateway's ACK; dsd-fme's "UTF8 Text" of it is binary.
+        check(decode_moto_ars("1F10020133585C000AF02005323135313800000000008F2BADA200000000") ==
+                  "ARS registration \xC2\xB7 radio 21518", "ARS: registration names the radio (device id)");
+        check(decode_moto_ars("1F10020433980F0002BF0800000000000000000000001983DC5D00000000") == "ARS registration ACK",
+              "ARS: the gateway's registration ACK");
+        check(decode_moto_ars("1F10020180DB73100886843FE201673791004415AB984837DCCBC9172300").empty() &&
+                  decode_moto_ars("0A0074006500730074000000").empty(), "ARS: other PDUs are not ARS");
+        DmrPduTextCarry ph;
+        std::vector<std::string> lines = {
+            " DST(MNIS): 00064250; MNIS ARS;   ???: 585C", " UTF8 Text: _-- -21518_____",
+            " Slot 2 - Multi Block PDU Message", "  1F10020133585C000AF02005", "  323135313800000000008F2B",
+            "16:19:01 Sync: +DMR   slot1  [slot2] | Color Code=05 | CSBK"};
+        std::optional<DsdEvent> msg;
+        bool binary = false;
+        for (const auto& l : lines) {
+            if (auto m = ph.feed(l)) msg = m;
+            if (l.find("UTF8") != std::string::npos) binary = ph.binary_text(l);
+        }
+        check(binary, "ARS: dsd-fme's UTF8 rendering of the ARS PDU is flagged as binary");
+        check(msg && msg->message == "ARS registration \xC2\xB7 radio 21518" && msg->slot == "2",
+              "ARS: the hex dump becomes the message \"ARS registration \xC2\xB7 radio 21518\"");
+        DmrPduTextCarry plain;                          // without "MNIS ARS" the ordinary text decode applies
+        check(!plain.binary_text(" UTF8 Text: hello"), "ARS: a normal UTF8 Text line is not flagged");
+    }
+
     if (g_failures == 0) {
         std::printf("\nALL DSD-FME PARSE TESTS PASSED\n");
         return 0;
