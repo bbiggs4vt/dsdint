@@ -2184,10 +2184,15 @@ function recent(filter) {
 function renderDetail(force) {
   if (!force && mergePickBusy()) return;
   var d = $('detail'), sel = S.sel, who = sel ? sel.type + ':' + sel.id : '';
-  var y = who === renderDetail.who ? d.scrollTop : 0;
+  var y = who === renderDetail.who ? d.scrollTop : 0, wy = window.scrollY;
   renderDetail.who = who;
+  // (the panel keeps its height while it is rebuilt: emptied, it could
+  // shorten the page and pull the page's scroll position up)
+  d.style.minHeight = d.offsetHeight + 'px';
   detailBody(d);
+  d.style.minHeight = '';
   d.scrollTop = y;
+  if (window.scrollY !== wy) window.scrollTo(window.scrollX, wy);
 }
 function detailBody(d) {
   d.textContent = '';
@@ -2861,7 +2866,14 @@ function addStreamFams(d) {
     d.families[x.fam] = { networks: [], talkgroups: [], radios: [], calls: [] };
   });
 }
+// Rebuilding parts of the page must never move it: if the page's scroll
+// position changed while they were rebuilt (a part briefly empty), put it back.
 function render() {
+  var y = window.scrollY;
+  renderAll();
+  if (window.scrollY !== y) window.scrollTo(window.scrollX, y);
+}
+function renderAll() {
   var fams = Object.keys(S.d.families).sort(function (a, b) { return famTotals(b) - famTotals(a); });
   $('empty').hidden = fams.length > 0;
   $('main').hidden = !fams.length;
@@ -3269,7 +3281,8 @@ function uiCheck(ui) {
   }
   try {
     sessionStorage.setItem('netx.reloadedFor', ui);
-    sessionStorage.setItem('netx.reload', JSON.stringify({ fam: S.fam, nets: S.nets, tgf: S.tgf, rf: S.rf, sel: S.sel, q: S.q }));
+    sessionStorage.setItem('netx.reload', JSON.stringify({ fam: S.fam, nets: S.nets, tgf: S.tgf, rf: S.rf, sel: S.sel, q: S.q,
+                                                           y: window.scrollY, dy: $('detail').scrollTop }));
   } catch (e) {}
   location.reload();
 }
@@ -3281,6 +3294,7 @@ function uiRestore() {
   if (r.fam) S.fam = r.fam;
   S.nets = r.nets || {}; S.tgf = r.tgf || {}; S.rf = r.rf || {}; S.sel = r.sel || null;
   S.q = r.q || ''; $('q').value = S.q;
+  S.restoreY = { y: r.y || 0, dy: r.dy || 0 };   // applied once the first data is drawn (poll)
 }
 function poll() {
   if (S.paused || S.file || document.hidden) { setTimeout(poll, POLL); return; }
@@ -3314,6 +3328,11 @@ function poll() {
     if (ae && ae.tagName === 'SELECT' && ae.closest('.sortbar')) { if (changed) S.d.version = -1; }
     else if (changed || S.view === 'calls') render();
     else { renderDetail(); }
+    if (S.restoreY) {                                  // after a self-reload: back to where the page was scrolled
+      $('detail').scrollTop = S.restoreY.dy; renderDetail.who = S.sel ? S.sel.type + ':' + S.sel.id : '';
+      window.scrollTo(window.scrollX, S.restoreY.y);
+      S.restoreY = null;
+    }
   }).catch(function () { $('live').textContent = 'disconnected — retrying'; })
     .then(function () { setTimeout(poll, POLL); });
 }
