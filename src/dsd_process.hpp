@@ -103,18 +103,18 @@ struct DmrPduTextCarry {
     bool capturing = false;
     int slot = 0;
     std::string hex;
-    bool ars = false;          // the data header said "MNIS ARS": the next dump is an ARS PDU
+    bool mnis = false;         // an MNIS header line ("DST(MNIS): ...") came: the next dump is MNIS
 
-    // dsd-fme's "UTF8 Text:" rendering of an ARS PDU (between its "MNIS ARS"
-    // header and its hex dump) is binary printed as characters: not a message.
+    // dsd-fme's "UTF8 Text:" rendering of an MNIS PDU (ARS, LOCN: between its
+    // MNIS header and its hex dump) is binary printed as characters: not a message.
     bool binary_text(const std::string& line) const {
-        return ars && !capturing && line.find("Text:") != std::string::npos;
+        return mnis && !capturing && line.find("Text:") != std::string::npos;
     }
 
     // Feed one cleaned line, in stdout order. Returns a `message` event when
     // this line ends a text-carrying dump, else nullopt. Call flush() at EOS.
     std::optional<DsdEvent> feed(const std::string& line) {
-        if (line.find("MNIS ARS") != std::string::npos) ars = true;
+        if (line.find("(MNIS)") != std::string::npos || line.find("MNIS ARS") != std::string::npos) mnis = true;
         int hdr_slot = 0;
         if (is_header(line, hdr_slot)) {
             std::optional<DsdEvent> done = finish(); // flush a prior dump, if any
@@ -136,11 +136,16 @@ private:
         if (!capturing) return std::nullopt;
         capturing = false;
         std::string h = hex; hex.clear();
-        const bool was_ars = ars;
-        ars = false;
+        const bool was_mnis = mnis;
+        mnis = false;
         if (h.empty()) return std::nullopt;
-        std::string text = was_ars ? decode_moto_ars(h) : std::string();
-        if (text.empty()) text = decode_dmr_pdu_text(h);
+        // An MNIS PDU is binary: ARS is decoded, the rest (LRRP, XCMP, and the
+        // services with no published format -- 0x80 and 0x20 are common, radio
+        // -> data gateway) give no message, never a scan for printable bytes
+        // (which turned them into "messages" like " =&0b"); the call's svc
+        // (mnis:80) already says what it was.
+        const bool is_mnis = was_mnis && h.compare(0, 4, "1F10") == 0;
+        std::string text = is_mnis ? decode_moto_ars(h) : decode_dmr_pdu_text(h);
         if (text.empty()) return std::nullopt;        // non-text PDU: stay quiet
         DsdEvent ev;
         ev.kind = "message";

@@ -714,6 +714,30 @@ int main() {
         check(!plain.binary_text(" UTF8 Text: hello"), "ARS: a normal UTF8 Text line is not flagged");
     }
 
+    {
+        // Other MNIS services (real dumps, Capacity Plus 460.175 MHz, radio ->
+        // gateway 64250): 0x20 / 0x80 have no published format; their bytes
+        // used to come out as "messages" (" =&0b", "/A/") from a printable scan.
+        const std::string svc20 = "1F1002012007981008C66622A20129D9AA1BC6CB658C4537A2DDC92B0D2336241363213630805"
+                                  "3C10A2237308063C110203D26306217463C3B561250000000000000000000000FF16D11000000000000";
+        check(decode_dmr_pdu_text(svc20) == " =&0b", "MNIS: (the old printable scan's reading of service 0x20)");
+        check(decode_moto_ars(svc20).empty(), "MNIS: service 0x20 is not ARS");
+        DmrPduTextCarry ph;
+        std::vector<std::string> lines = {
+            " SRC(MNIS): 00022605; ", " DST(MNIS): 00064250; Unknown MNIS Type: 20;  ???: 0798",
+            " Slot 2 - Multi Block PDU Message", "  1F1002012007981008C66622", "  A20129D9AA1BC6CB658C4537",
+            "  A2DDC92B0D23362413632136", "  308053C10A2237308063C110", "  203D26306217463C3B561250",
+            "16:30:37 Sync: +DMR  [slot1]  slot2  | Color Code=05 | CSBK"};
+        std::optional<DsdEvent> msg;
+        for (const auto& l : lines) if (auto m = ph.feed(l)) msg = m;
+        check(!msg, "MNIS: the dump of an unnamed service is no message (its svc mnis:20 says what it was)");
+        DmrPduTextCarry plain;                          // no MNIS header line: a 1F10 dump is scanned as usual
+        std::optional<DsdEvent> m2;
+        for (const auto& l : std::vector<std::string>{" Slot 1 - Multi Block PDU Message", "  0A0074006500730074000000", "x"})
+            if (auto m = plain.feed(l)) m2 = m;
+        check(m2 && m2->message == "test", "MNIS: a dump without an MNIS header still decodes as text");
+    }
+
     if (g_failures == 0) {
         std::printf("\nALL DSD-FME PARSE TESTS PASSED\n");
         return 0;

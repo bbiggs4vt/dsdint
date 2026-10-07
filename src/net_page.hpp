@@ -1322,13 +1322,13 @@ function svcLabel(s) {
   if (!s) return '';
   if (SVC[s]) return SVC[s];
   var m = /^mnis:(\w+)$/.exec(s);
-  return m ? 'Moto data (type 0x' + m[1] + ')' : s.toUpperCase();
+  return m ? 'Moto data (service 0x' + m[1] + ')' : s.toUpperCase();
 }
 function svcTip(s) {
   return s === 'preamble' ? 'Only the announcement of a data transfer was heard here (it may have gone out on another channel)' :
          s === 'ack' ? 'The receiving radio (or gateway) confirming it got a data packet' :
          s === 'ars' ? 'Motorola Automatic Registration Service: a radio registering with (or being polled by) the data gateway' :
-         /^mnis:/.test(s) ? 'A Motorola data packet of a service type dsd-fme doesn\u2019t name' : null;
+         /^mnis:/.test(s) ? 'A Motorola (MNIS) data packet of a service with no published format \u2014 0x80 and 0x20 are common, radio to data gateway; its contents are binary and not decoded' : null;
 }
 // A position report: "lat, lon" linked to a map.
 function posLink(pos) {
