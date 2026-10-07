@@ -669,7 +669,7 @@ function applyMerges(d) {
       var r = root(n.key), g = by[r];
       if (!g) {                                          // a target first, so its label names the group
         g = by[r] = Object.assign({}, n, { key: r, ids: Object.assign({}, n.ids), sites: n.sites.slice(),
-                                           freqs: (n.freqs || []).slice(), parts: [n] });
+                                           freqs: (n.freqs || []).slice(), keys: Object.assign({}, n.keys), parts: [n] });
         out.push(g);
         return;
       }
@@ -680,6 +680,7 @@ function applyMerges(d) {
       (n.freqs || []).forEach(function (x) { if (g.freqs.indexOf(x) < 0) g.freqs.push(x); });
       g.freqs.sort(function (a, b) { return a - b; });
       g.sessions += n.sessions; g.calls += n.calls;
+      keys(n.keys || {}).forEach(function (k) { g.keys[k] = (g.keys[k] || 0) + n.keys[k]; });
       g.first = !g.first ? n.first : !n.first ? g.first : Math.min(g.first, n.first);
       g.last = Math.max(g.last, n.last);
     });
@@ -1062,7 +1063,8 @@ function fCalls(list, allAudio) {
   var aud = S.audOnly && (!S.file || !fAll(FILEAUDIO)) && !allAudio;
   return (list || IX.calls).filter(function (c) {
     return (netAll() || netOk(c.net)) && callTgOk(c) && callROk(c) && (!aud || hasAudio(c)) &&
-      (!S.q || qm(c.src, c.tgt, c.alias, c.text, svcLabel(c.svc), mhz(c.freq), IX.rById[c.src] && IX.rById[c.src].aliases));
+      (!S.q || qm(c.src, c.tgt, c.alias, c.text, svcLabel(c.svc), mhz(c.freq), IX.rById[c.src] && IX.rById[c.src].aliases,
+                   c.kid ? ['0x' + c.kid, algName(c.alg)] : null));
   });
 }
 function fTgs() { return IX.tgs.filter(function (t) { return inNet(t.networks) && tgOk(t.id) && tgROk(t) && (!S.q || qm(t.id)); }); }
@@ -1217,12 +1219,39 @@ function durCell(c) {
                  : dur(c.last - c.start);
 }
 function toCell(c) { return !c.tgt ? '—' : c.priv ? h('span', null, ['⇄ ', rlink(c.tgt)]) : tlink(c.tgt); }
+// Encryption: the algorithm and key id an encrypted call named (hex, as the
+// protocol numbers them; the server counts each "alg:kid" per network,
+// talkgroup and radio). Names per protocol, as dsd-fme reports them.
+var ENCALG = {
+  p25: { '80': 'clear', '81': 'DES-OFB', '82': '2-key 3DES', '83': '3DES', '84': 'AES-256', '85': 'AES-128',
+         '88': 'AES-CBC', '89': 'AES-128-OFB', '9F': 'DES-XL', 'A0': 'DVI-XL', 'A1': 'DVP-XL', 'AA': 'ADP (RC4)' },
+  dmr: { '21': 'RC4 (EP)', '22': 'DES', '24': 'AES-128', '25': 'AES-256' },
+  nxdn: { '01': 'Scrambler', '02': 'DES', '03': 'AES' }
+};
+function algName(alg, fam) {
+  var t = ENCALG[fam || S.fam];
+  return !alg ? 'Unknown algorithm' : (t && t[alg]) || 'ALG 0x' + alg;
+}
+function keyText(alg, kid, fam) { return algName(alg, fam) + ' \u00B7 key 0x' + kid; }
+// A "Keys seen" section in a network / talkgroup / radio's details.
+function keysSection(d, m, what) {
+  var ks = keys(m || {});
+  if (!ks.length) return;
+  d.appendChild(h('h4', { text: 'Encryption keys seen' }));
+  d.appendChild(lst(ks.sort(function (a, b) { return m[b] - m[a]; }).map(function (k) {
+    var i = k.indexOf(':'), alg = k.slice(0, i), kid = k.slice(i + 1);
+    return { el: h('span', { class: 'mono', text: keyText(alg, kid) }), n: m[k], lbl: m[k] + ' call' + (m[k] > 1 ? 's' : '') };
+  })));
+  d.appendChild(h('div', { class: 'hint', style: 'margin-top:.3rem;font-size:.8rem',
+    text: 'The key id each encrypted call ' + what + ' announced. A key belongs to the talkgroup or channel, not the radio: every radio talking on a talkgroup uses its key.' }));
+}
 function typeBadges(c) {
   var rx = 'Heard by ' + c.streams + ' receivers (one call, deduplicated)';
+  var et = c.kid ? 'Encrypted: ' + keyText(c.alg, c.kid) : 'Encrypted (its key id wasn\u2019t decoded)';
   return h('span', null, [
     (c.data && !c.voice) ? badge('b-data', 'DATA') : badge('b-voice', 'VOICE'),
     c.priv ? badge('b-priv', 'PRIVATE') : badge('b-group', 'GROUP'),
-    c.emerg ? badge('b-emerg', 'EMERGENCY') : null, c.enc ? badge('b-enc', 'ENCRYPTED') : null,
+    c.emerg ? badge('b-emerg', 'EMERGENCY') : null, c.enc ? h('span', { class: 'badge b-enc', title: et, 'data-tip': et }, 'ENCRYPTED') : null,
     c.streams > 1 ? h('span', { class: 'badge b-group', title: rx, 'data-tip': rx }, c.streams + ' RX') : null]);
 }
 // ---------- call audio ----------
@@ -1686,6 +1715,8 @@ function textCell(c) {
   var parts = [];
   if (c.text) parts.push(c.text);
   else if (c.svc) parts.push(h('span', { class: 'svc', title: svcTip(c.svc), text: svcLabel(c.svc) }));
+  else if (c.kid) parts.push(h('span', { class: 'svc', title: 'Encrypted with the key this call named (algorithm \u00B7 key id)',
+                                         text: keyText(c.alg, c.kid) }));
   if (c.pos) { if (parts.length) parts.push(' '); parts.push(posLink(c.pos)); }
   return parts.length ? h('span', null, parts) : '';
 }
@@ -2009,7 +2040,7 @@ function viewCalls() {
     { label: 'Type', cls: 'ctype', cell: typeBadges },
     { label: 'Audio', cls: 'nowrap', k: function (c) { return hasAudio(c) ? 1 : 0; }, cell: audioCell,
       hideEmpty: hasAudio },
-    { label: 'Content', cls: 'wrap', cell: textCell, hideEmpty: function (c) { return !!(c.text || c.svc || c.pos); } }
+    { label: 'Content', cls: 'wrap', cell: textCell, hideEmpty: function (c) { return !!(c.text || c.svc || c.pos || c.kid); } }
   ], rows, (S.audOnly ? 'No calls with audio' : 'No calls heard yet') + (anyFilter() || S.q ? ' for this filter.' : '.'),
      null, null, callCard, function (c) { return sttSpan(c); });
 }
@@ -2219,6 +2250,7 @@ function detailBody(d) {
     d.appendChild(filterBtns('tgf', t.id, 'talkgroup', 'Hide this talkgroup\u2019s calls (and radios heard only on it)'));
     d.appendChild(kv([['Calls', t.calls], ['Radios', keys(t.radios).length], ['Emergency', t.emerg],
                       ['Encrypted', t.enc], ['First', ago(t.first)], ['Last', ago(t.last)]]));
+    keysSection(d, t.keys, 'on it');
     d.appendChild(h('h4', { text: 'Radios on this talkgroup' }));
     d.appendChild(lst(keys(t.radios).sort(function (a, b) { return t.radios[b] - t.radios[a]; })
       .map(function (r) { return { el: rlink(r), n: t.radios[r] }; })));
@@ -2243,6 +2275,7 @@ function detailBody(d) {
     d.appendChild(kv([['Calls', r.calls], ['Talkgroups', keys(r.tgs).length], ['Private peers', keys(r.peers).length],
                       ['Networks', r.networks.length], ['First', ago(r.first)], ['Last', ago(r.last)]]));
     if (r.pos) positionsSection(d, r);
+    keysSection(d, r.keys, 'from it');
     d.appendChild(h('h4', { text: 'Talkgroups used' }));
     d.appendChild(lst(keys(r.tgs).sort(function (a, b) { return r.tgs[b] - r.tgs[a]; })
       .map(function (t) { return { el: tlink(t), n: r.tgs[t] }; })));
@@ -2279,6 +2312,7 @@ function detailBody(d) {
     d.appendChild(h('h4', { text: 'Channels' }));
     d.appendChild(h('div', { class: 'mono', text: (n.freqs || []).map(function (f) { return mhz(f) + ' MHz'; }).join(', ') ||
       'Unknown (the client sent no center_freq).' }));
+    keysSection(d, n.keys, 'on it');
     mergeSection(d, n);
     if (n.confidence !== 'strong')
       d.appendChild(h('div', { class: 'hint', style: 'margin-top:.6rem;font-size:.8rem',

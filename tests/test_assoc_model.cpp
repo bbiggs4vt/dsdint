@@ -509,6 +509,48 @@ int main() {
         check(F["calls"].at(0)["enc"].b, "TETRA: encrypted call flagged");
     }
 
+    // ---- encryption: each call's algorithm + key id; keys counted per network,
+    //      talkgroup and radio (once per call; "0x0042" and "42" are one key) ----
+    {
+        AssocModel m;
+        m.begin_stream(1, "p25p1", 0);
+        line(m, 1, "2023/10/02 10:23:18 P25 TGT: 00000100; SRC: 00002048; NAC: 293; ", 1000);
+        line(m, 1, " HDU  ALG ID: 0x84 KEY ID: 0x0042 MI: 0x0123456789ABCDEF ENC", 1100);
+        line(m, 1, " LDU2 ALG ID: 0x84 KEY ID: 0x0042 MI: 0x0123456789ABCDEF ENC", 1300);
+        line(m, 1, "2023/10/02 10:23:28 P25 TGT: 00000100; SRC: 00002049; NAC: 293; ", 11000);
+        line(m, 1, " HDU  ALG ID: 0x84 KEY ID: 0x42 MI: 0x0123456789ABCDEF ENC", 11100);
+        line(m, 1, "2023/10/02 10:23:38 P25 TGT: 00000200; SRC: 00002049; NAC: 293; ", 21000);
+        line(m, 1, " HDU  ALG ID: 0xAA KEY ID: 0x0007 MI: 0x0123456789ABCDEF ENC", 21100);
+        line(m, 1, "2023/10/02 10:23:48 P25 TGT: 00000300; SRC: 00002050; NAC: 293; ", 31000);
+        J j = snap(m, 45000);
+        const J& F = j["families"]["p25"];
+        const J* c1 = nullptr; const J* c3 = nullptr;
+        for (const auto& c : F["calls"].a) { if (c["src"].s == "2048") c1 = &c; if (c["src"].s == "2050") c3 = &c; }
+        check(c1 && (*c1)["enc"].b && (*c1)["alg"].s == "84" && (*c1)["kid"].s == "42",
+              "enc: the call carries its algorithm and key id (normalised: 0x0042 -> 42)");
+        check(c3 && !(*c3)["enc"].b && (*c3)["kid"].s.empty(), "enc: a clear call has no key");
+        const J* t1 = find(F["talkgroups"], "id", "100");
+        const J* t2 = find(F["talkgroups"], "id", "200");
+        check(t1 && (*t1)["keys"]["84:42"].n == 2 && (*t1)["enc"].n == 2,
+              "enc: talkgroup 100 -- two encrypted calls, both on key 84:42 (counted once per call)");
+        check(t2 && (*t2)["keys"]["AA:07"].n == 1, "enc: talkgroup 200 uses ADP key 07");
+        const J* r49 = find(F["radios"], "id", "2049");
+        check(r49 && (*r49)["keys"]["84:42"].n == 1 && (*r49)["keys"]["AA:07"].n == 1, "enc: the radio's keys, per call it made");
+        const J* r50 = find(F["radios"], "id", "2050");
+        check(r50 && (*r50)["keys"].o.empty(), "enc: a radio with only clear calls has no keys");
+        const J& n = F["networks"].at(0);
+        check(n["keys"]["84:42"].n == 2 && n["keys"]["AA:07"].n == 1, "enc: the network's keys");
+        // An export carries them, and importing it gives them back.
+        Dataset d;
+        std::string err;
+        check(dataset_from_export_text(m.to_export_json(45000), "x", d, &err) &&
+                  d.fams["p25"].tgs["100"].keys["84:42"] == 2 && d.fams["p25"].calls.size() == 4,
+              "enc: keys survive export -> import");
+        bool kid_ok = false;
+        for (const auto& c : d.fams["p25"].calls) if (c.src == "2048") kid_ok = c.alg == "84" && c.kid == "42";
+        check(kid_ok, "enc: a call's key survives export -> import");
+    }
+
     // ---- emergency flag is tallied on the talkgroup when the call closes ----
     {
         AssocModel m;

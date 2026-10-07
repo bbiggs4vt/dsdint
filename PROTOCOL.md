@@ -392,7 +392,7 @@ a key for is omitted entirely. The client reads the field for whichever
 protocol it's about to request.
 
 ```json
-{"type":"capabilities","protocols":"dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; pager-auto; pocsag; pocsag512; pocsag1200; pocsag2400; flex; auto","audio":"pcm_s16le_8000_mono","event_kinds":"voice; sync; call; message; burst; page; unknown","extra_keys_dmr":"network_type; network_id; site_id; rest_channel; lcn; svc; gps","extra_keys_p25":"rfss; site_id; system_id; wacn; alg_id; key_id; gps","extra_keys_nxdn":"site_code; system_code; location_id; category","extra_keys_dstar":"rpt1; rpt2; radio_text","extra_keys_ysf":"uplink; downlink; call_mode; data_type; src_rid; dst_rid","extra_keys_edacs":"lcn; afs; lid; system_id","extra_keys_tetra":"mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr","extra_keys_pager":"protocol; baud; message_type; function; flex_type; levels; phase; cycle; frame; addr_type; group; fragment; info_type; payload"}
+{"type":"capabilities","protocols":"dmr; nxdn48; nxdn96; dpmr; dstar; ysf; p25; p25p2; provoice; edacs; edacs_esk; edacs_ea; edacs_ea_esk; x2tdma; tetra; tetrakit; pager-auto; pocsag; pocsag512; pocsag1200; pocsag2400; flex; auto","audio":"pcm_s16le_8000_mono","event_kinds":"voice; sync; call; message; burst; page; unknown","extra_keys_dmr":"network_type; network_id; site_id; rest_channel; lcn; svc; alg_id; key_id; gps","extra_keys_p25":"rfss; site_id; system_id; wacn; alg_id; key_id; gps","extra_keys_nxdn":"site_code; system_code; location_id; category; alg_id; key_id","extra_keys_dstar":"rpt1; rpt2; radio_text","extra_keys_ysf":"uplink; downlink; call_mode; data_type; src_rid; dst_rid","extra_keys_edacs":"lcn; afs; lid; system_id","extra_keys_tetra":"mcc; mnc; la; dlf; ulf; crypt; cid; nid; idx; status; afc; func; service; pdu; usage_marker; dl_usage_marker; encr","extra_keys_pager":"protocol; baud; message_type; function; flex_type; levels; phase; cycle; frame; addr_type; group; fragment; info_type; payload"}
 ```
 
 | field | type | meaning |
@@ -591,8 +591,8 @@ frequencies — rides in `extra` rather than in dedicated fields.)
 | `site_id=<n>` | DMR/P25 | dsd-fme | site id (DMR `Site ID:`, P25 `Site:`/`SITE [ ]`) |
 | `system_id=<hex>` | P25 | dsd-fme | P25 System ID |
 | `wacn=<hex>` | P25 | dsd-fme | Wide Area Communications Network id |
-| `alg_id=<hex>` | P25 | dsd-fme | encryption algorithm id (`80`=clear, `84`=AES256, `AA`=ADP, …) |
-| `key_id=<hex>` | P25 | dsd-fme | encryption key id (`0000`=unencrypted) |
+| `alg_id=<hex>` | P25, DMR, NXDN | dsd-fme | encryption algorithm id, as the protocol numbers it -- P25: `80`=clear, `81`=DES-OFB, `84`=AES-256, `85`=AES-128, `AA`=ADP, …; DMR: `21`=RC4 (EP), `22`=DES, `24`=AES-128, `25`=AES-256; NXDN: the cipher type `1`=scrambler, `2`=DES, `3`=AES |
+| `key_id=<hex>` | P25, DMR, NXDN | dsd-fme | encryption key id, as printed (`0000`=unencrypted; NXDN's decimal key id is given in hex) |
 | `site_code=<n>` | NXDN | both | site code (home or adjacent — see `raw`) |
 | `system_code=<n>` | NXDN | both | trunked system code |
 | `location_id=<hex>` | NXDN | both | site location ID |
@@ -629,8 +629,8 @@ high/low 12 bits of its decoded location ID (the same split dsd-fme
 prints); it does not currently surface `category`.
 
 The DMR trunking / LC fields (`emergency`, `alias`, and the
-`network_type` / `network_id` / `site_id` / `rest_channel` / `lcn` / `svc` / `gps`
-tokens) are **dsd-fme backend only**: they come from DMR CSBK, data, and
+`network_type` / `network_id` / `site_id` / `rest_channel` / `lcn` / `svc` /
+`alg_id` / `key_id` / `gps` tokens) are **dsd-fme backend only**: they come from DMR CSBK, data, and
 talker-alias layers that the DSDcc backend does not decode (DSDcc's DMR
 decoder handles voice, slot type / color code, and source/target from
 the embedded LC, but not the CSBK payload). On the DSDcc backend these
@@ -1208,7 +1208,7 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
                     "ids": {"nac": "293", "rfss": "4", "site_id": "12", "system_id": "3A1", "wacn": "BEE00"},
                     "sites": ["RFSS 4 · Site 12", "RFSS 4 · Site 13"], "freqs": [851012500, 852137500],
                     "sessions": 2, "calls": 22,
-                    "first": 1789999970000, "last": 1789999990000}],
+                    "first": 1789999970000, "last": 1789999990000, "keys": {"84:666A": 5}}],
     "talkgroups": [{"id": "100", "networks": ["wacn:BEE00/sys:3A1"], "radios": {"10001": 2, "12001": 1},
                     "calls": 3, "emerg": 0, "enc": 0, "first": 1789999971000, "last": 1789999989000}],
     "radios":     [{"id": "10001", "aliases": [], "tgs": {"100": 2, "200": 1}, "peers": {},
@@ -1221,6 +1221,15 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
   }}}
 ```
 
+- Encryption: an encrypted call (`"enc": true`) whose key id was decoded
+  also has `"alg"` and `"kid"` -- the algorithm and key id it named, hex as
+  the protocol numbers them (P25 `84` = AES-256, DMR `25` = AES-256, NXDN
+  the cipher type `01`-`03`; see the `alg_id` token), normalised (uppercase,
+  no leading zeros, at least two digits: `0x0042` -> `42`; `alg` is `""` when
+  only the key id was seen). Networks, talkgroups and radios with such calls
+  carry `"keys": {"<alg>:<kid>": calls}` -- each call counted once (two
+  receivers hearing it count it once), at most 32 keys each. Exports carry
+  both the same way.
 - `instance` identifies this server run (random per process), `name` is
   `DSD_SERVER_NAME` or the host name, `since` is when the live data's span
   began (server start or the last Clear). `imports` lists the exports imported

@@ -375,7 +375,7 @@ public:
             if (Call* cur = fresh_call(c, F, slot, now)) {
                 if (priv) set_private(F, *cur, now);
                 if (emerg) cur->emergency = true;
-                if (enc) cur->encrypted = true;
+                if (enc) note_encrypted(F, *cur, extra);
                 note_service(F, *cur, extra, now);
             }
             return;
@@ -456,7 +456,6 @@ public:
         if (data) cur->data = true;
         note_service(F, *cur, extra, now);
         if (emerg) cur->emergency = true;
-        if (enc) cur->encrypted = true;
         if (!ev.alias.empty()) cur->alias = ev.alias;
         if (!ev.message.empty() && cur->text.find(ev.message) == std::string::npos)
             cur->text = cur->text.empty() ? ev.message : cur->text + " | " + ev.message;
@@ -467,6 +466,7 @@ public:
             cur->net = c.net;
             if (!c.site.empty()) cur->site = c.site;
         }
+        if (enc) note_encrypted(F, *cur, extra);
         cur->last_ms = now;
         ++cur->frames;
         c.last_slot_call[slot] = cur->id;
@@ -908,12 +908,14 @@ private:
                 o.key = n.key; o.label = n.label; o.confidence = n.confidence; o.ids = n.ids; o.sites = n.sites;
                 o.freqs = n.freqs;
                 o.sessions = n.sessions.size(); o.calls = n.calls; o.first = n.first_ms; o.last = n.last_ms;
+                o.keys.insert(n.keys.begin(), n.keys.end());
             }
             for (const auto& kv : F.tgs) {
                 const Talkgroup& t = kv.second;
                 DsTalkgroup& o = D.tgs[kv.first];
                 o.id = t.id; o.networks = t.networks; o.radios.insert(t.radios.begin(), t.radios.end());
                 o.calls = t.calls; o.emerg = t.emergencies; o.enc = t.encrypted; o.first = t.first_ms; o.last = t.last_ms;
+                o.keys.insert(t.keys.begin(), t.keys.end());
             }
             for (const auto& kv : F.radios) {
                 const Radio& r = kv.second;
@@ -921,6 +923,7 @@ private:
                 o.id = r.id; o.aliases = r.aliases; o.networks = r.networks;
                 o.tgs.insert(r.tgs.begin(), r.tgs.end()); o.peers.insert(r.peers.begin(), r.peers.end());
                 o.calls = r.calls; o.first = r.first_ms; o.last = r.last_ms;
+                o.keys.insert(r.keys.begin(), r.keys.end());
                 o.pos = r.pos; o.pos_t = r.pos_ms; o.track = r.track;
             }
             D.calls.reserve(F.calls.size());
@@ -935,6 +938,7 @@ private:
                 c.net = k.net; c.site = k.site; c.slot = k.slot; c.src = k.src; c.tgt = k.tgt;
                 c.alias = k.alias; c.text = k.text; c.svc = k.svc; c.pos = k.pos;
                 c.priv = k.priv; c.voice = k.voice; c.data = k.data; c.emerg = k.emergency; c.enc = k.encrypted;
+                c.alg = k.alg; c.kid = k.kid;
                 c.open = k.open && now - k.last_ms <= kContinueMs;
                 // Its length ends when the talker unkeyed, not with the
                 // repeater's hang time after it.
@@ -1027,6 +1031,8 @@ private:
         std::string svc, pos;                           // data service (svc_rank), position report "lat,lon"
         bool priv = false, voice = false, data = false, emergency = false, encrypted = false;
         bool open = true, counted = false;
+        std::string alg, kid;                           // encrypted: algorithm / key id named (hex; "" = not seen)
+        bool key_noted = false;                         // its key counted on its network, talkgroup, radio
         std::string audio;                              // its audio file ("" = none; see audio())
         std::uint64_t audio_sid = 0;                    // the stream + slot the audio comes from
         int audio_slot = -1;
@@ -1047,6 +1053,7 @@ private:
         std::set<std::uint64_t> sessions;
         std::uint64_t calls = 0;
         std::int64_t first_ms = 0, last_ms = 0;
+        std::map<std::string, std::uint32_t> keys;     // encryption keys its calls used: "alg:kid" -> calls
     };
     struct Talkgroup {
         std::string id;
@@ -1055,12 +1062,14 @@ private:
         std::uint64_t calls = 0;
         std::uint32_t emergencies = 0, encrypted = 0;
         std::int64_t first_ms = 0, last_ms = 0;
+        std::map<std::string, std::uint32_t> keys;     // "alg:kid" -> calls
     };
     struct Radio {
         std::string id;
         std::vector<std::string> aliases;
         std::map<std::string, std::uint32_t> tgs;      // talkgroup -> calls
         std::map<std::string, std::uint32_t> peers;    // radio -> private calls (either way)
+        std::map<std::string, std::uint32_t> keys;     // "alg:kid" -> calls it made
         std::set<std::string> networks;
         std::uint64_t calls = 0;
         std::int64_t first_ms = 0, last_ms = 0;
@@ -1453,6 +1462,7 @@ private:
         for (const auto& kv : a.ids) z.ids.insert(kv);
         z.sessions.insert(a.sessions.begin(), a.sessions.end());
         z.calls += a.calls;
+        for (const auto& kv : a.keys) key_add(z.keys, kv.first, kv.second);
         if (a.first_ms && (!z.first_ms || a.first_ms < z.first_ms)) z.first_ms = a.first_ms;
         z.last_ms = std::max(z.last_ms, a.last_ms);
         auto relabel = [&](std::set<std::string>& s) { if (s.erase(from)) s.insert(to); };
@@ -1557,6 +1567,41 @@ private:
         }
         auto nit = F.networks.find(k.net);
         if (nit != F.networks.end()) ++nit->second.calls;
+        note_enc_counts(F, k);
+    }
+
+    // An encrypted call: flag it, and take the algorithm / key id it names
+    // (the first seen; normalised: uppercase hex, no leading zeros, at least
+    // two digits -- "0x0001" and "01" are one key).
+    void note_encrypted(Family& F, Call& k, const std::map<std::string, std::string>& x) {
+        k.encrypted = true;
+        auto hexid = [](std::string v) {
+            v = upper(v);
+            const std::size_t nz = v.find_first_not_of('0');
+            v = nz == std::string::npos ? std::string() : v.substr(nz);
+            while (v.size() < 2) v = "0" + v;
+            return v;
+        };
+        if (k.kid.empty()) {
+            auto ki = x.find("key_id");
+            if (ki != x.end() && !ki->second.empty()) {
+                k.kid = hexid(ki->second);
+                auto ai = x.find("alg_id");
+                if (ai != x.end() && !ai->second.empty()) k.alg = hexid(ai->second);
+            }
+        }
+        note_enc_counts(F, k);
+    }
+    // Once a call is counted: the key it used, on its network, talkgroup
+    // and talker (once per call). (Its talkgroup's encrypted-call count is
+    // taken when it closes: close_call.)
+    void note_enc_counts(Family& F, Call& k) {
+        if (!k.counted || k.kid.empty() || k.key_noted) return;
+        k.key_noted = true;
+        const std::string key = enc_key(k.alg, k.kid);
+        if (auto n = F.networks.find(k.net); n != F.networks.end()) key_add(n->second.keys, key);
+        if (!k.priv) if (auto t = F.tgs.find(k.tgt); t != F.tgs.end()) key_add(t->second.keys, key);
+        if (auto r = F.radios.find(k.src); r != F.radios.end()) key_add(r->second.keys, key);
     }
 
     // A call already counted as group turned out to be unit-to-unit: move its
@@ -1571,6 +1616,7 @@ private:
         if (tit != F.tgs.end()) {
             bump(tit->second.radios, k.src, -1);
             if (tit->second.calls) --tit->second.calls;
+            if (k.key_noted) bump(tit->second.keys, enc_key(k.alg, k.kid), -1);
             if (tit->second.calls == 0 && tit->second.radios.empty()) F.tgs.erase(tit);
         }
         if (rit != F.radios.end()) bump(rit->second.peers, k.tgt);
@@ -1600,6 +1646,7 @@ private:
         twin.data = twin.data || dup.data;
         twin.emergency = twin.emergency || dup.emergency;
         twin.encrypted = twin.encrypted || dup.encrypted;
+        if (twin.kid.empty()) { twin.alg = dup.alg; twin.kid = dup.kid; }
         if (twin.alias.empty()) twin.alias = dup.alias;
         if (!dup.text.empty() && twin.text.find(dup.text) == std::string::npos)
             twin.text = twin.text.empty() ? dup.text : twin.text + " | " + dup.text;
@@ -1629,7 +1676,9 @@ private:
         // re-find the twin by id afterwards.
         for (auto it = F.calls.begin(); it != F.calls.end(); ++it)
             if (it->id == dup_id) { F.calls.erase(it); break; }
-        return find_call(F, twin_id);
+        Call* t = find_call(F, twin_id);
+        if (t) note_enc_counts(F, *t);                // the key the duplicate knew
+        return t;
     }
     static Call* find_call(Family& F, std::uint64_t id) {
         for (auto it = F.calls.rbegin(); it != F.calls.rend(); ++it)

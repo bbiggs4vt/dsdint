@@ -731,10 +731,15 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     // P25 (dsd-fme formats: dsd_frame.c "NAC: %03X;" / "NAC/CC: %03llX;",
     // p25p1_hdu.c/ldu2.c "ALG ID: 0x%02X KEY ID: 0x%04X", plus the
     // "ALG: 0x.. KEY ID: 0x.." error form). NAC is the P25 network access
-    // code (its color-code/RAN analog); ALG/KEY are the encryption ids.
+    // code (its color-code/RAN analog); ALG/KEY are the encryption ids --
+    // DMR prints them without "0x" (dmr_pi.c "DMR PI H- ALG ID: %02X; KEY ID:
+    // %02X;", dmr_flco.c "Slot %d Alg: %02X; KEY ID: %02X;"), NXDN as its
+    // cipher name and a decimal key id (nxdn_element.c "DES - Key ID 3 - ").
+    // Never "Key: <hex>": that is dsd-fme printing a loaded key's value.
     static const std::regex nac_re(R"(\bNAC(?:/CC)?:\s*([0-9A-Fa-f]+))", std::regex::icase);
-    static const std::regex algid_re(R"(\bALG(?:\s*ID)?:\s*0x([0-9A-Fa-f]+))", std::regex::icase);
-    static const std::regex keyid_re(R"(\bKEY(?:\s*ID)?:\s*0x([0-9A-Fa-f]+))", std::regex::icase);
+    static const std::regex algid_re(R"(\bALG(?:\s*ID)?:\s*(?:0x)?([0-9A-Fa-f]{1,2})\b)", std::regex::icase);
+    static const std::regex keyid_re(R"(\b(?:KEY\s*ID|KID):\s*(?:0x)?([0-9A-Fa-f]{1,4})\b)", std::regex::icase);
+    static const std::regex nxdn_cipher_re(R"(\b(Scrambler|DES|AES)\s*-\s*Key ID (\d{1,3})\b)");
     // P25 trunking system identity, in dsd-fme's two forms: colon
     // ("RFSS: 001; Site: 097;") and bracketed ("RFSS[001] SITE [091]
     // SYSID [715]", "WACN [BEE0A]") -- both verified against a real P25
@@ -859,8 +864,20 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     if (std::regex_search(line, m, wacn_re))    tokens.push_back("wacn=" + upper_hex(m[1].str()));
     // P25 encryption identifiers (bare hex; alg 0x80=clear, 0xAA=ADP, etc.;
     // key 0x0000=unencrypted). crc_error flags the FEC-ERR variants.
-    if (std::regex_search(line, m, algid_re))   tokens.push_back("alg_id=" + m[1].str());
-    if (std::regex_search(line, m, keyid_re))   tokens.push_back("key_id=" + m[1].str());
+    // (Not a P25 supergroup's "SG: n; KEY: kkkk; ALG: aa;": that describes
+    // the regroup, not this call.) NXDN: alg_id is the cipher type (1
+    // scrambler, 2 DES, 3 AES), key_id the key id in hex.
+    if (line.find("SG:") == std::string::npos) {
+        if (std::regex_search(line, m, algid_re))   tokens.push_back("alg_id=" + m[1].str());
+        if (std::regex_search(line, m, keyid_re))   tokens.push_back("key_id=" + m[1].str());
+    }
+    if (std::regex_search(line, m, nxdn_cipher_re)) {
+        const std::string c = m[1].str();
+        char kid[8];
+        std::snprintf(kid, sizeof kid, "%02X", std::stoi(m[2].str()) & 0xFF);
+        tokens.push_back(std::string("alg_id=") + (c == "Scrambler" ? "1" : c == "DES" ? "2" : "3"));
+        tokens.push_back(std::string("key_id=") + kid);
+    }
     // What a data call carries (svc=): its announcement (preamble CSBK), an
     // acknowledgement (Response Packet), a data packet, and -- from the
     // Motorola MNIS header after it -- which service (ARS registration, LRRP

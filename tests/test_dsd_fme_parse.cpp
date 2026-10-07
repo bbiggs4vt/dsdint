@@ -173,6 +173,25 @@ int main() {
         check(e.crc_error == "1", "P25 ESS FEC ERR: crc_error flagged");
     }
     {
+        // DMR prints the ids without "0x"; NXDN as a cipher name and a decimal
+        // key id; a P25 supergroup line and a loaded key's value are not ids.
+        DsdEvent e = classify_dsd_fme_line(" DMR PI H- ALG ID: 25; KEY ID: 01; MI(32): 1A2B3C4D;");
+        check(e.extra.find("alg_id=25") != std::string::npos && e.extra.find("key_id=01") != std::string::npos,
+              "DMR PI header: alg_id=25 (AES-256), key_id=01");
+        e = classify_dsd_fme_line(" Slot 2 Alg: 21; KEY ID: 07; MI(40): 0011223344;");
+        check(e.extra.find("alg_id=21") != std::string::npos && e.extra.find("key_id=07") != std::string::npos,
+              "DMR LE: alg_id=21 (RC4), key_id=07");
+        e = classify_dsd_fme_line("  DES - Key ID 12 - Group Call - ");
+        check(e.extra.find("alg_id=2") != std::string::npos && e.extra.find("key_id=0C") != std::string::npos,
+              "NXDN: DES (cipher 2), key id 12 -> 0C");
+        e = classify_dsd_fme_line(" SG: 7; KEY: 0042; ALG: 84;");
+        check(e.extra.find("alg_id") == std::string::npos && e.extra.find("key_id") == std::string::npos,
+              "P25 supergroup line: no call encryption ids");
+        e = classify_dsd_fme_line(" Slot 1 Alg: 21; KEY ID: 01; MI(40): 0011223344; Key: 0102030405; ");
+        check(e.extra.find("key_id=01") != std::string::npos && e.extra.find("0102030405") == std::string::npos,
+              "a loaded key's value (\"Key: ...\") is never taken as an id");
+    }
+    {
         DsdEvent e = classify_dsd_fme_line(" P25 LCW  Group Call; Emergency");
         check(e.emergency == "1", "P25 LCW: emergency flag");
         DsdEvent sy = classify_dsd_fme_line("15:01:40 Sync: +P25p1 WACN: 580A0; SYS: 006; NAC/CC: 00D; RFSS: 008; Site: 008;  TSBK");

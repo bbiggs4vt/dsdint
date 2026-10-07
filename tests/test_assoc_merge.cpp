@@ -32,12 +32,14 @@ static void line(AssocModel& m, std::uint64_t sid, const std::string& l, std::in
 static std::string pad8(const std::string& id) { return std::string(8 - std::min<std::size_t>(8, id.size()), '0') + id; }
 
 // One P25 stream on WACN BEE0A / SYS 715 (a strong identity) with a call.
-static void p25_call(AssocModel& m, std::uint64_t sid, std::int64_t t, const std::string& tg, const std::string& src) {
+static void p25_call(AssocModel& m, std::uint64_t sid, std::int64_t t, const std::string& tg, const std::string& src,
+                     const std::string& kid = "") {
     m.begin_stream(sid, "p25p1", t);
     line(m, sid, "17:30:46 Sync: +P25p1 NAC/CC: 717; RFSS: 001; Site: 097;  TSBK", t + 10);
     m.ingest(sid, classify_dsd_fme_line(" LRA [00] CFVA [3] RFSS[001] SITE [097] SYSID [715]"), t + 20);
     line(m, sid, " CHAN-T [52E6] CHAN-R [50D7] SSC [70] WACN [BEE0A]", t + 30);
     line(m, sid, "2023/10/02 10:23:18 P25 TGT: " + pad8(tg) + "; SRC: " + pad8(src) + "; NAC: 717; ", t + 40);
+    if (!kid.empty()) line(m, sid, " HDU  ALG ID: 0x84 KEY ID: 0x" + kid + " MI: 0x0123456789ABCDEF ENC", t + 50);
     m.end_stream(sid, t + 100);
 }
 // One DMR stream on color code 4 (a weak, per-stream identity) with a call.
@@ -366,6 +368,23 @@ int main() {
         const mjson::V* dmr4 = by(arr(fam(zj, "dmr"), "networks"), "key", "cc:4@s2~dddddddd");
         check(dmr4 && dmr4->str("label").find("delta") != std::string::npos,
               "import: the exporting server's own weak networks get its name when imported elsewhere");
+    }
+
+    // ---- an encrypted call two receivers heard: its key counted once ----
+    {
+        AssocModel X, Y;
+        X.set_identity("1111111100000000", "x-ray");
+        Y.set_identity("2222222200000000", "yankee");
+        p25_call(X, 1, 2000, "100", "2048", "0042");
+        p25_call(Y, 7, 2300, "100", "2048", "0042");
+        p25_call(Y, 7, 30000, "100", "2049", "0042");
+        std::vector<MergeReport> rep;
+        Dataset d = merge_exports({{"x", X.to_export_json(40000)}, {"y", Y.to_export_json(40000)}}, rep);
+        const DsFamily& P = d.fams["p25"];
+        check(P.calls.size() == 2 && P.tgs.at("100").keys.at("84:42") == 2 && P.networks.begin()->second.keys.at("84:42") == 2 &&
+                  P.radios.at("2048").keys.at("84:42") == 1 && P.radios.at("2049").keys.at("84:42") == 1,
+              "enc twins: the call both heard counts its key once (talkgroup, network, radio)");
+        check(P.calls.back().kid == "42" && P.calls.back().alg == "84", "enc twins: the merged call keeps its key");
     }
 
     // ---- one call heard by two receivers is one call ----

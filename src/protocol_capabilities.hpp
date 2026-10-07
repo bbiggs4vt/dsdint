@@ -100,6 +100,8 @@ inline const std::vector<CapFamily>& cap_families() {
             {"rest_channel", KeyBackend::Fme},
             {"lcn",          KeyBackend::Fme},
             {"svc",          KeyBackend::Fme},
+            {"alg_id",       KeyBackend::Fme},
+            {"key_id",       KeyBackend::Fme},
             {"gps",          KeyBackend::Fme},
         }},
         {"extra_keys_p25", {
@@ -116,6 +118,8 @@ inline const std::vector<CapFamily>& cap_families() {
             {"system_code", KeyBackend::Both},
             {"location_id", KeyBackend::Both},
             {"category",    KeyBackend::Fme},
+            {"alg_id",      KeyBackend::Fme},
+            {"key_id",      KeyBackend::Fme},
         }},
         {"extra_keys_dstar", {
             {"rpt1",       KeyBackend::Both},

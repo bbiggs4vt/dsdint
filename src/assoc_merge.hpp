@@ -329,6 +329,7 @@ struct DsNetwork {
     std::set<std::int64_t> freqs;
     std::uint64_t sessions = 0, calls = 0;
     std::int64_t first = 0, last = 0;
+    std::map<std::string, std::uint64_t> keys;   // encryption keys its calls used: "alg:kid" -> calls (enc_key)
 };
 struct DsTalkgroup {
     std::string id;
@@ -336,12 +337,14 @@ struct DsTalkgroup {
     std::set<std::string> networks;
     std::uint64_t calls = 0, emerg = 0, enc = 0;
     std::int64_t first = 0, last = 0;
+    std::map<std::string, std::uint64_t> keys;   // "alg:kid" -> calls
 };
 struct DsRadio {
     std::string id;
     std::vector<std::string> aliases;
     std::map<std::string, std::uint64_t> tgs, peers;
     std::set<std::string> networks;
+    std::map<std::string, std::uint64_t> keys;   // "alg:kid" -> calls
     std::uint64_t calls = 0;
     std::int64_t first = 0, last = 0;
     std::string pos;                           // last position report "lat,lon" ("" = none)
@@ -362,12 +365,24 @@ inline void track_add(std::vector<std::pair<std::int64_t, std::string>>& tr, std
 inline int svc_rank(const std::string& s) {
     return s.empty() ? 0 : s == "preamble" ? 1 : s == "ack" ? 2 : s == "data" ? 3 : 4;
 }
+// An encryption key as the explorer counts it: "alg:kid" (hex, as the
+// protocol numbers them; alg "" when only the key id was seen).
+inline std::string enc_key(const std::string& alg, const std::string& kid) { return alg + ":" + kid; }
+// Keys kept per network / talkgroup / radio (a system uses a handful).
+constexpr std::size_t kMaxKeys = 32;
+template <class M>
+inline void key_add(M& m, const std::string& k, typename M::mapped_type n = 1) {
+    auto it = m.find(k);
+    if (it != m.end()) it->second += n;
+    else if (m.size() < kMaxKeys) m.emplace(k, n);
+}
 struct DsCall {
     std::uint64_t id = 0, session = 0, streams = 1;
     std::string net, site, slot, src, tgt, alias, text;
     std::string svc;                            // a data call's service: preamble, ack, data, ars, lrrp, mnis:80, ...
     std::string pos;                            // a position report sent during the call "lat,lon"
     bool priv = false, voice = false, data = false, emerg = false, enc = false, open = false;
+    std::string alg, kid;                       // encrypted: the algorithm and key id it named ("" = not seen)
     std::int64_t start = 0, last = 0;
     std::int64_t freq = 0;
     std::string audio;                          // live server only: its audio file (see /net/audio/)
@@ -476,7 +491,9 @@ inline std::string families_json(const Dataset& d) {
             o << "{\"key\":" << q(n.key) << ",\"label\":" << q(n.label) << ",\"confidence\":" << q(n.confidence)
               << ",\"ids\":" << obj(n.ids) << ",\"sites\":" << arr(n.sites) << ",\"freqs\":" << nums(n.freqs)
               << ",\"sessions\":" << n.sessions
-              << ",\"calls\":" << n.calls << ",\"first\":" << n.first << ",\"last\":" << n.last << "}";
+              << ",\"calls\":" << n.calls << ",\"first\":" << n.first << ",\"last\":" << n.last;
+            if (!n.keys.empty()) o << ",\"keys\":" << counts(n.keys);
+            o << "}";
         }
         o << "],\"talkgroups\":[";
         first = true;
@@ -486,7 +503,9 @@ inline std::string families_json(const Dataset& d) {
             first = false;
             o << "{\"id\":" << q(t.id) << ",\"networks\":" << arr(t.networks) << ",\"radios\":" << counts(t.radios)
               << ",\"calls\":" << t.calls << ",\"emerg\":" << t.emerg << ",\"enc\":" << t.enc
-              << ",\"first\":" << t.first << ",\"last\":" << t.last << "}";
+              << ",\"first\":" << t.first << ",\"last\":" << t.last;
+            if (!t.keys.empty()) o << ",\"keys\":" << counts(t.keys);
+            o << "}";
         }
         o << "],\"radios\":[";
         first = true;
@@ -497,6 +516,7 @@ inline std::string families_json(const Dataset& d) {
             o << "{\"id\":" << q(r.id) << ",\"aliases\":" << arr(r.aliases) << ",\"tgs\":" << counts(r.tgs)
               << ",\"peers\":" << counts(r.peers) << ",\"networks\":" << arr(r.networks) << ",\"calls\":" << r.calls
               << ",\"first\":" << r.first << ",\"last\":" << r.last;
+            if (!r.keys.empty()) o << ",\"keys\":" << counts(r.keys);
             if (!r.pos.empty()) o << ",\"pos\":" << q(r.pos) << ",\"pos_t\":" << r.pos_t;
             if (!r.track.empty()) {
                 o << ",\"track\":[";
@@ -521,6 +541,7 @@ inline std::string families_json(const Dataset& d) {
             if (!k.audio.empty()) o << ",\"audio\":" << q(k.audio) << ",\"audio_ms\":" << k.audio_ms;
             if (!k.svc.empty()) o << ",\"svc\":" << q(k.svc);
             if (!k.pos.empty()) o << ",\"pos\":" << q(k.pos);
+            if (!k.kid.empty()) o << ",\"alg\":" << q(k.alg) << ",\"kid\":" << q(k.kid);
             o << "}";
         }
         o << "]}";
@@ -672,6 +693,7 @@ inline bool dataset_from_export(const mjson::V& root, const std::string& label, 
                 if (const mjson::V* fq = e.get("freqs"); fq && fq->t == mjson::V::Arr)
                     for (const auto& x : fq->a) if (x.t == mjson::V::Num && x.n > 0) n.freqs.insert(static_cast<std::int64_t>(x.n));
                 n.sessions = u(e, "sessions"); n.calls = u(e, "calls"); n.first = i64(e, "first"); n.last = i64(e, "last");
+                detail::countmap(e.get("keys"), n.keys);
                 df.networks[n.key] = std::move(n);
             }
         if (const mjson::V* a = F.get("talkgroups"); a && a->t == mjson::V::Arr)
@@ -682,6 +704,7 @@ inline bool dataset_from_export(const mjson::V& root, const std::string& label, 
                 detail::strset(e.get("networks"), t.networks);
                 detail::countmap(e.get("radios"), t.radios);
                 t.calls = u(e, "calls"); t.emerg = u(e, "emerg"); t.enc = u(e, "enc");
+                detail::countmap(e.get("keys"), t.keys);
                 t.first = i64(e, "first"); t.last = i64(e, "last");
                 df.tgs[t.id] = std::move(t);
             }
@@ -695,6 +718,7 @@ inline bool dataset_from_export(const mjson::V& root, const std::string& label, 
                 detail::countmap(e.get("tgs"), r.tgs);
                 detail::countmap(e.get("peers"), r.peers);
                 detail::strset(e.get("networks"), r.networks);
+                detail::countmap(e.get("keys"), r.keys);
                 r.calls = u(e, "calls"); r.first = i64(e, "first"); r.last = i64(e, "last");
                 r.pos = e.str("pos"); r.pos_t = i64(e, "pos_t");
                 if (const mjson::V* tr = e.get("track"); tr && tr->t == mjson::V::Arr)
@@ -715,6 +739,7 @@ inline bool dataset_from_export(const mjson::V& root, const std::string& label, 
                 c.audio = e.str("audio"); c.audio_ms = u(e, "audio_ms");
                 c.priv = e.boolean("priv"); c.voice = e.boolean("voice"); c.data = e.boolean("data");
                 c.emerg = e.boolean("emerg"); c.enc = e.boolean("enc");
+                c.alg = e.str("alg"); c.kid = e.str("kid");
                 c.open = false;                                  // history, not live
                 c.start = i64(e, "start"); c.last = i64(e, "last"); c.freq = i64(e, "freq");
                 df.calls.push_back(std::move(c));
@@ -836,8 +861,10 @@ inline void dec(std::uint64_t& n) { if (n) --n; }
 // `dup` (already added to F's counters) is the same call as one already in
 // the merge: take back what counting it added. Mirrors AssocModel::count_call.
 inline void uncount(DsFamily& F, const DsCall& dup) {
+    const std::string key = dup.kid.empty() ? std::string() : enc_key(dup.alg, dup.kid);
     auto r = F.radios.find(dup.src);
     if (r != F.radios.end()) dec(r->second.calls);
+    if (r != F.radios.end() && !key.empty()) dec(r->second.keys, key);
     if (dup.priv) {
         if (r != F.radios.end()) dec(r->second.peers, dup.tgt);
         auto p = F.radios.find(dup.tgt);
@@ -850,16 +877,19 @@ inline void uncount(DsFamily& F, const DsCall& dup) {
             dec(t->second.radios, dup.src);
             if (dup.emerg) dec(t->second.emerg);
             if (dup.enc) dec(t->second.enc);
+            if (!key.empty()) dec(t->second.keys, key);
         }
     }
     auto n = F.networks.find(dup.net);
     if (n != F.networks.end()) dec(n->second.calls);
+    if (n != F.networks.end() && !key.empty()) dec(n->second.keys, key);
 }
 inline void fold_call(DsCall& twin, const DsCall& dup) {
     twin.voice = twin.voice || dup.voice;
     twin.data = twin.data || dup.data;
     twin.emerg = twin.emerg || dup.emerg;
     twin.enc = twin.enc || dup.enc;
+    if (twin.kid.empty()) { twin.alg = dup.alg; twin.kid = dup.kid; }
     if (twin.alias.empty()) twin.alias = dup.alias;
     if (!dup.text.empty() && twin.text.find(dup.text) == std::string::npos)
         twin.text = twin.text.empty() ? dup.text : twin.text + " | " + dup.text;
@@ -904,6 +934,7 @@ inline void merge_into(Dataset& into, const Dataset& from) {
             n.sites.insert(m.sites.begin(), m.sites.end());
             n.freqs.insert(m.freqs.begin(), m.freqs.end());
             n.sessions += m.sessions; n.calls += m.calls;
+            for (const auto& x : m.keys) key_add(n.keys, x.first, x.second);
             n.first = lo(n.first, m.first); n.last = std::max(n.last, m.last);
         }
         for (const auto& kv : F.tgs) {
@@ -914,6 +945,7 @@ inline void merge_into(Dataset& into, const Dataset& from) {
             for (const auto& r : m.radios) t.radios[r.first] += r.second;
             t.networks.insert(m.networks.begin(), m.networks.end());
             t.calls += m.calls; t.emerg += m.emerg; t.enc += m.enc;
+            for (const auto& x : m.keys) key_add(t.keys, x.first, x.second);
             t.first = lo(t.first, m.first); t.last = std::max(t.last, m.last);
         }
         for (const auto& kv : F.radios) {
@@ -925,6 +957,7 @@ inline void merge_into(Dataset& into, const Dataset& from) {
                 if (r.aliases.size() < 8 && std::find(r.aliases.begin(), r.aliases.end(), a) == r.aliases.end()) r.aliases.push_back(a);
             for (const auto& x : m.tgs) r.tgs[x.first] += x.second;
             for (const auto& x : m.peers) r.peers[x.first] += x.second;
+            for (const auto& x : m.keys) key_add(r.keys, x.first, x.second);
             r.networks.insert(m.networks.begin(), m.networks.end());
             r.calls += m.calls;
             r.first = lo(r.first, m.first); r.last = std::max(r.last, m.last);
@@ -1132,6 +1165,7 @@ inline void apply_merges(Dataset& d) {
                 n.sites.insert(m.sites.begin(), m.sites.end());
                 n.freqs.insert(m.freqs.begin(), m.freqs.end());
                 n.sessions += m.sessions; n.calls += m.calls;
+                for (const auto& x : m.keys) key_add(n.keys, x.first, x.second);
                 n.first = lo(n.first, m.first); n.last = std::max(n.last, m.last);
             }
         F.networks = std::move(nets);

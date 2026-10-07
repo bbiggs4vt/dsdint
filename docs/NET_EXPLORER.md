@@ -112,9 +112,9 @@ decoder lines (sync, voice frames, call headers, aliases, SMS) — see
 | **Slot** | TDMA timeslot where the decoder reports one (DMR's 1 or 2; P25 Phase 2); `—` otherwise. |
 | **From** | The talking radio, with its talker alias when decoded. Click it for the radio's details. |
 | **To** | The talkgroup (`TG 1234`), or `⇄ 5678` for a private (radio-to-radio) call. Click it for details. |
-| **Type** | Badges: **VOICE** or **DATA**, **GROUP** or **PRIVATE**, **EMERGENCY**, **ENCRYPTED**, and **2 RX** when two receivers heard the same call (it is listed once). Hover for an explanation. |
+| **Type** | Badges: **VOICE** or **DATA**, **GROUP** or **PRIVATE**, **EMERGENCY**, **ENCRYPTED** (hover for the algorithm and key id it named), and **2 RX** when two receivers heard the same call (it is listed once). Hover for an explanation. |
 | **Audio** | **▶ 0:12** plays the call's recorded voice, **⤓** downloads it — only when audio recording is on ([section 10](#10-call-audio)). |
-| **Content** | What the call carried: an SMS / text message, or — for a data call without text — what kind of data, in grey italics: **ACK (delivery confirmed)**, **Data packet**, **ARS (registration)**, **LRRP (location)**, **TMS (text message)**, **Moto data (service 0x…)** for a Motorola (MNIS) service with no published format (0x80 and 0x20 are common — binary packets from radios to the data gateway, kept undecoded rather than shown as nonsense text), or **Data announced only** when only the announcement was heard here (the data may have gone out on another channel). Motorola ARS packets are decoded: **ARS registration · radio 21518** (a radio registering with the system's data gateway, by its device id) and **ARS registration ACK** (the gateway's answer). A position report sent during the call shows as **📍 lat, lon**, linked to Google Maps. This column only appears when some call has any of these. |
+| **Content** | What the call carried: an SMS / text message, or — for a data call without text — what kind of data, in grey italics: **ACK (delivery confirmed)**, **Data packet**, **ARS (registration)**, **LRRP (location)**, **TMS (text message)**, **Moto data (service 0x…)** for a Motorola (MNIS) service with no published format (0x80 and 0x20 are common — binary packets from radios to the data gateway, kept undecoded rather than shown as nonsense text), or **Data announced only** when only the announcement was heard here (the data may have gone out on another channel). An encrypted call shows the algorithm and key id it announced: **AES-256 · key 0x666A**. Motorola ARS packets are decoded: **ARS registration · radio 21518** (a radio registering with the system's data gateway, by its device id) and **ARS registration ACK** (the gateway's answer). A position report sent during the call shows as **📍 lat, lon**, linked to Google Maps. This column only appears when some call has any of these. |
 
 A call's **transcript** (when speech-to-text is used) appears in quotes on its
 own line under the row.
@@ -327,23 +327,32 @@ tablet or phone the details are a drawer: **Close** or Esc.
   positions and path (oldest fix green, latest red — a sketch instead with
   **No map**), how far it spans and moved, **Map view**, **Download KML**
   (the exact track and every fix, timestamped, for Google Earth or Google My
-  Maps' *Import*) and the fixes, newest first; **Recent
+  Maps' *Import*) and the fixes, newest first; **Encryption keys seen**
+  (below); **Recent
   calls**, with ▶ where audio exists and, under each, its text, what a data
   call carried (ACK, ARS, …) and any position report.
 - **Talkgroup**: **Only** (show only this talkgroup; **All** undoes it) and
   **Exclude** (hide it; **Include** undoes it); calls, radios, emergency /
-  encrypted counts, networks; **Radios on this talkgroup**; **Linked talkgroups (shared radios)**;
-  **Recent calls**.
+  encrypted counts, networks; **Encryption keys seen** (below); **Radios on
+  this talkgroup**; **Linked talkgroups (shared radios)**; **Recent calls**.
 - **Network**: **Only** (show only this network; **All** undoes it) and
   **Exclude** (hide it; **Include** undoes it); counts;
   identifiers; sites; channels; **Merged networks** with **Unmerge**, and
   **Merge into…** ([Merging networks](#merging-networks)); first and last
-  heard; its busiest talkgroups and radios.
+  heard; **Encryption keys seen** (below); its busiest talkgroups and radios.
+- **Encryption keys seen** (radio, talkgroup, network; only when there are
+  any): each key its encrypted calls announced -- the algorithm (named per
+  protocol: P25 *AES-256*, *ADP (RC4)*, *DES-OFB*…; DMR *RC4 (EP)*, *AES-256*…;
+  NXDN *DES*, *AES*, *Scrambler*) and the **key id** -- with how many calls
+  used it. Keys belong to a talkgroup or channel rather than a radio: every
+  radio on a talkgroup uses its key. (P25, DMR and NXDN, from dsd-fme; a call
+  flagged encrypted without its key id decoded counts as encrypted only.)
 
 ## 9. Searching, filtering and sorting
 
-- The **search box** matches radio ids, talkgroup ids, aliases, SMS text and
-  frequencies (e.g. `460.17`), in every view, including the graph and links.
+- The **search box** matches radio ids, talkgroup ids, aliases, SMS text,
+  frequencies (e.g. `460.17`) and encryption (a key id such as `0x666A`, or
+  an algorithm such as `AES`), in every view, including the graph and links.
 - The **Filters** section gathers every filter. Each limits every view, the
   graph and the stat cards, and they combine:
   - **Networks** — click network chips to show only those (one or several;
@@ -655,8 +664,9 @@ A call is assembled from many events:
    the same call is recognised with or without a slot marker, or before its
    target is known), talker alias, SMS text, and flags: **voice** (voice
    frames / voice sync), **data** (data headers, SMS, UDT), **emergency**,
-   **encrypted** (a non-clear algorithm id or an encryption flag) and
-   **private**.
+   **encrypted** (a non-clear algorithm id or an encryption flag) -- with the
+   algorithm and **key id** the call names, when decoded -- and **private**.
+   The key is counted once per call on its network, talkgroup and talker.
 5. **Private calls.** A call is private (radio → radio) when the decoder marks
    it so: a unit-target flag, or "Private", "Unit to Unit", "Individual",
    "I-Call" or "U2U" on its lines. A call first counted as a group call and
