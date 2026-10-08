@@ -366,6 +366,14 @@ tablet or phone the details are a drawer: **Close** or Esc.
     again, never sent in `/net.json`, and never put in an export — only the
     key-list download returns it.
   - Only enter keys for systems you are **authorized to monitor**.
+  - **Keys tab.** Each protocol tab gains a **Keys** sub-tab when it has any
+    encryption key ids (seen or loaded). It lists them grouped by network
+    with the same add / replace / remove and **Download key list** as the
+    network details, so you can manage every key for a protocol in one
+    place. **Download all (<protocol>)** gives a zip of per-network key
+    lists (one `-K` CSV per network, so there are no key-id collisions),
+    and **Remove all** clears every loaded key for the protocol (with a
+    confirm). Values are never shown.
 
 ## 9. Searching, filtering and sorting
 

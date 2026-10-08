@@ -1247,9 +1247,9 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
   `net_merges.json` in the recordings folder), and an import adds its
   export's rules (this server's own win).
 - `keyed` lists, per protocol and network, which encryption **key ids** have a
-  decryption key stored on the server
-  (`{"p25": {"nac:201@408200000": ["666A"]}}`) — **ids only, never the key
-  values**. It lets the explorer show "key loaded" next to a key id it saw
+  decryption key stored on the server, each with its algorithm id
+  (`{"p25": {"nac:201@408200000": {"666A": "84"}}}`) — **ids and algorithm
+  only, never the key values**. It lets the explorer show "key loaded" next to a key id it saw
   (`families` ... `keys`). Keys are entered in the network's details and kept
   across restarts (`DSD_NET_KEYS_FILE`, default `net_keys.json` in the
   recordings folder, written readable only by the server's user). The explorer

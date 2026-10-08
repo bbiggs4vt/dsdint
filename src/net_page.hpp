@@ -214,6 +214,10 @@ inline std::string render_net_page_html() {
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   td.mono, .mono { font-family: Menlo, Monaco, Consolas, 'Courier New', monospace; font-size: .82rem; }
   /* Encryption keyring (details panel). */
+  .keynet { padding: .5rem .2rem .2rem; border-top: 1px solid var(--table-bd); }
+  .keynet:first-of-type { border-top: 0; }
+  .keynet-h { margin: 0 0 .2rem; font-size: .95rem; }
+  .btn.off2 { opacity: .6; pointer-events: none; }
   .keylst { list-style: none; margin: .2rem 0 0; padding: 0; }
   .keylst li { padding: .35rem 0; border-top: 1px solid var(--table-bd); }
   .keylst li:first-child { border-top: 0; }
@@ -550,6 +554,7 @@ inline std::string render_net_page_html() {
           <button class="tab" data-v="map">Map</button>
           <button class="tab" data-v="links">Links</button>
           <button class="tab" data-v="nets">Networks <span class="count" id="c-nets"></span></button>
+          <button class="tab" data-v="keys" id="tab-keys" hidden>Keys <span class="count" id="c-keys"></span></button>
         </div>
         <div class="panel" id="v-calls">
           <div class="callbar">
@@ -588,6 +593,7 @@ inline std::string render_net_page_html() {
         </div>
         <div class="panel" id="v-links" hidden><div class="scroll" id="t-links" style="max-height:78vh"></div></div>
         <div class="panel" id="v-nets" hidden><div class="scroll" id="t-nets"></div></div>
+        <div class="panel" id="v-keys" hidden><div class="scroll" id="t-keys"></div></div>
       </div>
       <aside class="panel side" id="detail"></aside>
     </div>
@@ -997,9 +1003,9 @@ function mergePickBusy() {
 }
 // A decryption key is being typed in the details panel: don't rebuild it (the
 // box would vanish mid-type) and don't let a server-update reload fire.
-function keyEditing() {
+function keyEditing() {                                 // a key is being typed (details panel or Keys tab)
   var ae = document.activeElement;
-  return !!(ae && ae.classList && ae.classList.contains('ki') && $('detail').contains(ae));
+  return !!(ae && ae.classList && ae.classList.contains('ki'));
 }
 
 // ---------- indexing ----------
@@ -1281,27 +1287,27 @@ function keyLen(alg) {
   if (p === ENCALG.dmr) return alg === '25' ? 64 : alg === '24' ? 32 : alg === '21' ? 10 : alg === '22' ? 16 : 0;
   return 0;
 }
-// Is a decryption key loaded (on the server) for this key id on any of these
-// networks? S.d.keyed is {fam:{net:[kid,…]}} -- ids only, never values.
+// S.d.keyed is {fam:{net:{kid:alg}}} -- which key ids have a key loaded on the
+// server, with the algorithm; NEVER the values. keyedOf(net, fam) -> {kid:alg}.
+function keyedOf(net, fam) { var K = S.d && S.d.keyed && S.d.keyed[fam || S.fam]; return (K && K[net]) || {}; }
+// Is a decryption key loaded for this key id on any of these networks?
 function keyedHas(nets, kid) {
-  var K = S.d && S.d.keyed && S.d.keyed[S.fam];
-  if (!K) return false;
   var id = (kid || '').toUpperCase();
-  for (var i = 0; i < (nets || []).length; i++) { var a = K[nets[i]]; if (a && a.indexOf(id) >= 0) return true; }
+  for (var i = 0; i < (nets || []).length; i++) if (keyedOf(nets[i]).hasOwnProperty(id)) return true;
   return false;
 }
-function markKeyed(net, kid, on) {                       // reflect a set/remove at once (poll confirms)
+function markKeyed(net, kid, on, alg) {                  // reflect a set/remove at once (poll confirms)
   if (!S.d) return;
   S.d.keyed = S.d.keyed || {};
-  var F = S.d.keyed[S.fam] = S.d.keyed[S.fam] || {}, a = F[net] = F[net] || [], id = (kid || '').toUpperCase(), i = a.indexOf(id);
-  if (on && i < 0) a.push(id); else if (!on && i >= 0) a.splice(i, 1);
+  var F = S.d.keyed[S.fam] = S.d.keyed[S.fam] || {}, a = F[net] = F[net] || {}, id = (kid || '').toUpperCase();
+  if (on) a[id] = alg || ''; else delete a[id];
 }
 function setKey(net, kid, alg, value, done) {
   fetch('/net/keys/set', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
                            body: JSON.stringify({ fam: S.fam, net: net, kid: kid, alg: alg, key: value }) })
     .then(function (r) { return r.json().then(function (j) { return r.ok && j.ok; }, function () { return false; }); })
     .then(function (ok) {
-      if (ok) { S.keyEdit = null; markKeyed(net, kid, true); toast('Key loaded for ' + keyText(alg, kid) + '.'); renderDetail(true); }
+      if (ok) { S.keyEdit = null; markKeyed(net, kid, true, alg); toast('Key loaded for ' + keyText(alg, kid) + '.'); if (S.d) render(); }
       else toast('That key wasn’t accepted (expected hex digits, up to 64).');
       if (done) done(ok);
     }).catch(function () { toast('Could not reach the server to set the key.'); });
@@ -1310,7 +1316,7 @@ function removeKey(net, kid) {
   fetch('/net/keys/remove?fam=' + encodeURIComponent(S.fam) + '&net=' + encodeURIComponent(net) + '&kid=' + encodeURIComponent(kid),
         { cache: 'no-store' })
     .then(function (r) { return r.json(); }).then(function (j) {
-      if (j.ok) { if (S.keyEdit && S.keyEdit.kid === kid) S.keyEdit = null; markKeyed(net, kid, false); toast('Key removed.'); renderDetail(true); }
+      if (j.ok) { if (S.keyEdit && S.keyEdit.kid === kid) S.keyEdit = null; markKeyed(net, kid, false); toast('Key removed.'); if (S.d) render(); }
     }).catch(function () { toast('Could not reach the server to remove the key.'); });
 }
 // "Encryption keys seen": each key id the entity's encrypted calls named, how
@@ -1321,7 +1327,7 @@ function keysSection(d, m, what, opts) {
   var ks = keys(m || {});
   if (!ks.length) return;
   var nets = opts.nets || [], editNet = opts.net && !S.file ? opts.net : null;
-  d.appendChild(h('h4', { text: 'Encryption keys seen' }));
+  if (!opts.compact) d.appendChild(h('h4', { text: 'Encryption keys seen' }));
   var ul = h('ul', { class: 'lst keylst' });
   ks.sort(function (a, b) { return m[b] - m[a]; }).forEach(function (k) {
     var i = k.indexOf(':'), alg = k.slice(0, i), kid = k.slice(i + 1), loaded = keyedHas(nets, kid);
@@ -1366,13 +1372,94 @@ function keysSection(d, m, what, opts) {
     ul.appendChild(row);
   });
   d.appendChild(ul);
-  if (editNet && nets.some(function (n) { return (S.d.keyed && S.d.keyed[S.fam] && S.d.keyed[S.fam][n] || []).length; }))
+  if (editNet && nets.some(function (n) { return Object.keys(keyedOf(n)).length; }))
     d.appendChild(h('a', { class: 'btn sm', style: 'margin-top:.4rem', href: '/net/keys/list?fam=' + encodeURIComponent(S.fam) +
                            '&net=' + encodeURIComponent(editNet), download: 'dsd_keys_' + S.fam + '.csv',
                           title: 'Download this network’s keys as a dsd-fme key list (feed your decoder with -K)' }, '⤓ Download key list'));
-  d.appendChild(h('div', { class: 'hint', style: 'margin-top:.4rem;font-size:.8rem',
-    text: 'The key id each encrypted call ' + what + ' announced. A key belongs to the talkgroup or channel, not the radio: every radio talking on a talkgroup uses its key.' +
-          (editNet ? ' Keys you add are kept on the server and used by your own decoder via the downloaded key list — the explorer does not decrypt. Only enter keys for systems you are authorized to monitor.' : '') }));
+  if (!opts.compact)
+    d.appendChild(h('div', { class: 'hint', style: 'margin-top:.4rem;font-size:.8rem',
+      text: 'The key id each encrypted call ' + what + ' announced. A key belongs to the talkgroup or channel, not the radio: every radio talking on a talkgroup uses its key.' +
+            (editNet ? ' Keys you add are kept on the server and used by your own decoder via the downloaded key list — the explorer does not decrypt. Only enter keys for systems you are authorized to monitor.' : '') }));
+}
+// How many decryption keys are loaded for the current protocol, and the
+// networks that have encryption key ids (seen in calls, or a key loaded).
+function keyNets() {
+  if (!IX) return [];
+  var kf = (S.d && S.d.keyed && S.d.keyed[S.fam]) || {};
+  return IX.nets.filter(function (n) {
+    if (Object.keys(n.keys || {}).length) return true;
+    return (n.parts || [n]).some(function (p) { return Object.keys(keyedOf(p.key)).length; });
+  });
+}
+function keysLoadedCount() {
+  var kf = (S.d && S.d.keyed && S.d.keyed[S.fam]) || {}, n = 0;
+  for (var net in kf) n += Object.keys(kf[net]).length;
+  return n;
+}
+// Download every loaded key in this protocol as a zip of per-network dsd-fme
+// key lists (one -K CSV per network -- no key-id collisions across networks).
+function downloadAllKeys(btn) {
+  var kf = (S.d && S.d.keyed && S.d.keyed[S.fam]) || {}, nets = Object.keys(kf).filter(function (x) { return Object.keys(kf[x]).length; });
+  if (!nets.length) { toast('No keys loaded for this protocol.'); return; }
+  var label = btn.textContent; btn.textContent = 'Preparing…'; btn.classList.add('off2');
+  var enc = new TextEncoder(), used = {}, files = [];
+  Promise.all(nets.map(function (net) {
+    return fetch('/net/keys/list?fam=' + encodeURIComponent(S.fam) + '&net=' + encodeURIComponent(net), { cache: 'no-store' })
+      .then(function (r) { return r.text(); })
+      .then(function (csv) {
+        var base = (netLabel(net) || net).replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'network';
+        var name = base + '.csv', k = 1; while (used[name]) name = base + '_' + (++k) + '.csv'; used[name] = 1;
+        files.push({ name: name, data: enc.encode(csv) });
+      });
+  })).then(function () {
+    var url = URL.createObjectURL(zipBlob(files)), a = h('a', { href: url, download: 'dsd_keys_' + S.fam + '.zip' });
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  }).catch(function () { toast('Could not build the key-list zip.'); })
+    .then(function () { btn.textContent = label; btn.classList.remove('off2'); });
+}
+// Remove every loaded key in this protocol (confirm first).
+function removeAllKeys() {
+  var kf = (S.d && S.d.keyed && S.d.keyed[S.fam]) || {}, jobs = [];
+  for (var net in kf) for (var kid in kf[net]) jobs.push([net, kid]);
+  if (!jobs.length) return;
+  if (!confirm('Remove all ' + jobs.length + ' loaded ' + (FAMN[S.fam] || S.fam) + ' key' + (jobs.length > 1 ? 's' : '') + '? This cannot be undone.')) return;
+  var chain = Promise.resolve();
+  jobs.forEach(function (j) {
+    chain = chain.then(function () {
+      return fetch('/net/keys/remove?fam=' + encodeURIComponent(S.fam) + '&net=' + encodeURIComponent(j[0]) + '&kid=' + encodeURIComponent(j[1]), { cache: 'no-store' })
+        .then(function (r) { return r.json(); }).then(function (jr) { if (jr.ok) markKeyed(j[0], j[1], false); });
+    });
+  });
+  chain.then(function () { toast('Removed ' + jobs.length + ' key' + (jobs.length > 1 ? 's' : '') + '.'); render(); })
+       .catch(function () { toast('Could not remove all keys (some may remain).'); render(); });
+}
+// The Keys view: every encryption key id seen in this protocol, grouped by
+// network, with its algorithm, call count and loaded state; add / replace /
+// remove a key and download the key list. Scoped to the current protocol tab.
+function viewKeys() {
+  var cont = $('t-keys'); cont.textContent = '';
+  var kn = keyNets(), loaded = keysLoadedCount();
+  cont.appendChild(h('div', { class: 'section', text: 'Encryption keys — ' + (FAMN[S.fam] || S.fam) +
+    ' (' + loaded + ' loaded across ' + kn.length + ' network' + (kn.length === 1 ? '' : 's') + ')' }));
+  if (!kn.length) {
+    cont.appendChild(h('div', { class: 'note', text: 'No encryption key ids seen on ' + (FAMN[S.fam] || S.fam) +
+      ' yet. When an encrypted call names a key id, it appears here (and in the network’s details) with a place to enter the key.' }));
+    return;
+  }
+  if (!S.file && loaded) {
+    var bar = h('div', { class: 'tagrow', style: 'margin:-.2rem 0 .4rem' }, [
+      h('button', { class: 'btn sm', type: 'button', title: 'Download every loaded key for this protocol as a zip of dsd-fme key lists (one -K CSV per network)',
+                    onclick: function () { downloadAllKeys(this); } }, '⤓ Download all (' + (FAMN[S.fam] || S.fam) + ')'),
+      h('button', { class: 'btn sm', type: 'button', title: 'Remove every loaded key for this protocol', onclick: removeAllKeys }, 'Remove all')]);
+    cont.appendChild(bar);
+  }
+  cont.appendChild(h('div', { class: 'note', style: 'margin-top:0', text: 'Keys are stored on the server (never shown again) and used by your own decoder via the downloaded key list — the explorer does not decrypt. A key belongs to a talkgroup or channel; enter keys only for systems you are authorized to monitor.' }));
+  kn.sort(function (a, b) { return (b.calls || 0) - (a.calls || 0); }).forEach(function (n) {
+    var blk = h('div', { class: 'keynet' });
+    blk.appendChild(h('h4', { class: 'keynet-h' }, [netc(n.key), h('span', { class: 'alias', text: ' · ' + Object.keys(n.keys || {}).length + ' key id' + (Object.keys(n.keys || {}).length === 1 ? '' : 's') })]));
+    keysSection(blk, n.keys, 'on it', { nets: (n.parts || [n]).map(function (p) { return p.key; }), net: n.key, compact: true });
+    cont.appendChild(blk);
+  });
 }
 function typeBadges(c) {
   var rx = 'Heard by ' + c.streams + ' receivers (one call, deduplicated)';
@@ -2854,7 +2941,7 @@ function setView(v) {
   S.view = v; store('view', v);
   var tabs = document.querySelectorAll('#viewtabs .tab');
   for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-v') === v);
-  ['calls', 'tgs', 'radios', 'graph', 'map', 'links', 'nets'].forEach(function (x) { $('v-' + x).hidden = x !== v; });
+  ['calls', 'tgs', 'radios', 'graph', 'map', 'links', 'nets', 'keys'].forEach(function (x) { $('v-' + x).hidden = x !== v; });
   renderView();
 }
 function renderView() {
@@ -2863,6 +2950,7 @@ function renderView() {
   else if (S.view === 'tgs') viewTgs();
   else if (S.view === 'radios') viewRadios();
   else if (S.view === 'nets') viewNets();
+  else if (S.view === 'keys') viewKeys();
   else if (S.view === 'links') viewLinks();
   else if (S.view === 'graph') { legend(); buildGraph(); highlight(); run(); }
   else if (S.view === 'map') viewMap();
@@ -3123,6 +3211,11 @@ function renderAll() {
   $('c-calls').textContent = (S.noSig || (S.audOnly && (!S.file || !fAll(FILEAUDIO)))) ? fCalls().length : calls.length;   // the list's own rows
   $('c-tgs').textContent = tgs.length;
   $('c-radios').textContent = radios.length; $('c-nets').textContent = IX.nets.length;
+  // Keys tab: shown when this protocol has encryption key ids (seen or loaded).
+  var kn = keyNets(), kidCount = kn.reduce(function (t, n) { return t + Object.keys(n.keys || {}).length; }, 0);
+  $('tab-keys').hidden = !kn.length;
+  $('c-keys').textContent = kidCount || keysLoadedCount();
+  if (S.view === 'keys' && !kn.length) setView('calls');
   renderView();
   renderDetail();
 }
@@ -3473,6 +3566,7 @@ document.addEventListener('scroll', function (e) {
 }, true);
 function holdReason() {
   var t = Date.now();
+  if (keyEditing()) return ['entering a key', 'while you enter a key'];
   if (HOLD.down && t - HOLD.down < 30000) return ['clicking', 'while you click or drag'];
   if (t - HOLD.scroll < 500) return ['scrolling', 'while you scroll'];
   var s = window.getSelection && getSelection();

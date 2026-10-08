@@ -129,8 +129,9 @@ inline std::string keyring_json(const KeyRing& r) {
     return o.str() + "}";
 }
 
-// Which key ids are set per (family, network) -- NO values. For /net.json, so
-// the explorer can show "key loaded". {"p25":{"<net>":["309","666A"]}}
+// Which key ids are set per (family, network), with the algorithm -- NO values.
+// For /net.json, so the explorer can show "key loaded" and name the algorithm
+// (even for a key id not yet heard in a call). {"p25":{"<net>":{"309":"84","666A":"84"}}}
 inline std::string keyring_loaded_json(const KeyRing& r) {
     using assocjson::q;
     std::ostringstream o;
@@ -140,10 +141,10 @@ inline std::string keyring_loaded_json(const KeyRing& r) {
         o << (ff ? "" : ",") << q(fk.first) << ":{"; ff = false;
         bool fn = true;
         for (const auto& nk : fk.second) {
-            o << (fn ? "" : ",") << q(nk.first) << ":["; fn = false;
+            o << (fn ? "" : ",") << q(nk.first) << ":{"; fn = false;
             bool fi = true;
-            for (const auto& ik : nk.second) { o << (fi ? "" : ",") << q(ik.first); fi = false; }
-            o << "]";
+            for (const auto& ik : nk.second) { o << (fi ? "" : ",") << q(ik.first) << ":" << q(ik.second.alg); fi = false; }
+            o << "}";
         }
         o << "}";
     }
