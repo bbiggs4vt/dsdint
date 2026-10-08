@@ -231,6 +231,19 @@ inline std::string render_net_page_html() {
   .keyact .kh { color: var(--muted); font-size: .74rem; flex-basis: 100%; }
   a.keyrm { color: var(--muted); font-size: .78rem; cursor: pointer; }
   a.keyrm:hover { color: var(--text); }
+  /* Keys tab: the manual "Add a key" form. */
+  .keyadd { margin: .1rem .9rem .55rem; padding: .6rem .7rem; border: 1px solid var(--table-bd);
+            border-radius: 5px; background: var(--panel2); }
+  .keyadd h4 { margin: 0 0 .5rem; font-size: .9rem; }
+  .keyadd-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem .7rem; }
+  .keyadd-grid > label { display: flex; flex-direction: column; gap: .2rem;
+            font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .keyadd .ki, .keyadd .ksel { font-size: .82rem; padding: .3rem .4rem; width: 100%; box-sizing: border-box;
+            background: var(--input-bg, #11161b); color: var(--text); border: 1px solid var(--table-bd); border-radius: 3px; }
+  .keyadd .ki { font-family: Menlo, Monaco, Consolas, monospace; }
+  .keyadd .keyact { margin-top: .55rem; }
+  .keyadd .kh { color: var(--muted); font-size: .74rem; margin-top: .35rem; }
+  @media (max-width: 560px) { .keyadd-grid { grid-template-columns: 1fr; } }
   td.wrap { white-space: pre-wrap; word-break: break-word; }
   /* Calls: a call with many badges (VOICE GROUP EMERGENCY ENCRYPTED) wraps
      them instead of widening the column for every row, and the Content column
@@ -620,7 +633,7 @@ var FAMN = {dmr:'DMR', p25:'P25', nxdn:'NXDN', tetra:'TETRA', dpmr:'dPMR', dstar
 var PAL = ['#5bc0de','#62c462','#f89406','#ee5f5b','#b38bff','#e6c229','#3fc1a5','#ff7eb6','#8fa8ff',
            '#c3e88d','#ffab70','#4dd0e1','#d4a5ff','#a3d977'];
 var S = { d: null, fam: null, nets: {}, tgf: {}, rf: {}, view: 'calls', sel: null, q: '', paused: false, skew: 0,
-          ncol: {}, nidx: {}, sort: {}, rows: {}, audOnly: false, noSig: false, fOpen: false };
+          ncol: {}, nidx: {}, sort: {}, rows: {}, audOnly: false, noSig: false, fOpen: false, keyAdd: null };
 var IX = null;
 
 function $(id) { return document.getElementById(id); }
@@ -1324,17 +1337,31 @@ function removeKey(net, kid) {
 // (live view) a key can be added / removed and the key list downloaded.
 function keysSection(d, m, what, opts) {
   opts = opts || {};
-  var ks = keys(m || {});
-  if (!ks.length) return;
+  m = m || {};
   var nets = opts.nets || [], editNet = opts.net && !S.file ? opts.net : null;
+  // Rows keyed by key id. From the calls seen (m: "alg:kid" -> count) and, on
+  // an editable network panel, from the keys already loaded on the server
+  // (keyedOf -> {kid:alg}) so a manually-added key that was never heard in a
+  // call still shows -- with its Replace / Remove controls.
+  var rows = {};                                          // kid -> { alg, count }
+  keys(m).forEach(function (k) {
+    var i = k.indexOf(':'), alg = k.slice(0, i), kid = k.slice(i + 1);
+    rows[kid] = { alg: alg, count: m[k] };
+  });
+  if (editNet) nets.forEach(function (nk) {
+    var ld = keyedOf(nk);
+    for (var id in ld) { if (!rows[id]) rows[id] = { alg: ld[id], count: 0 }; else if (!rows[id].alg) rows[id].alg = ld[id]; }
+  });
+  var ids = Object.keys(rows);
+  if (!ids.length) return;
   if (!opts.compact) d.appendChild(h('h4', { text: 'Encryption keys seen' }));
   var ul = h('ul', { class: 'lst keylst' });
-  ks.sort(function (a, b) { return m[b] - m[a]; }).forEach(function (k) {
-    var i = k.indexOf(':'), alg = k.slice(0, i), kid = k.slice(i + 1), loaded = keyedHas(nets, kid);
+  ids.sort(function (a, b) { return rows[b].count - rows[a].count; }).forEach(function (kid) {
+    var alg = rows[kid].alg, cnt = rows[kid].count, loaded = keyedHas(nets, kid);
     var row = h('li', null, [h('div', { class: 'keyhdr' }, [
       h('span', { class: 'mono', text: keyText(alg, kid) }),
       loaded ? h('span', { class: 'keyok', text: '✓ key loaded' }) : null,
-      h('span', { class: 'c', text: m[k] + ' call' + (m[k] > 1 ? 's' : '') })])]);
+      h('span', { class: 'c', text: cnt ? (cnt + ' call' + (cnt > 1 ? 's' : '')) : 'not heard yet' })])]);
     if (editNet) {
       var act = h('div', { class: 'keyact' });
       // The open form and what has been typed survive a panel rebuild
@@ -1396,6 +1423,17 @@ function keysLoadedCount() {
   for (var net in kf) n += Object.keys(kf[net]).length;
   return n;
 }
+// Distinct key ids on this protocol: per network, the union of ids seen in
+// calls and ids with a key loaded (so a manually-added, never-heard key is
+// counted). Drives the Keys tab's count badge.
+function keyIdCount() {
+  return keyNets().reduce(function (t, n) {
+    var seen = {};
+    for (var k in (n.keys || {})) { var i = k.indexOf(':'); seen[k.slice(i + 1)] = 1; }
+    (n.parts || [n]).forEach(function (p) { for (var id in keyedOf(p.key)) seen[id] = 1; });
+    return t + Object.keys(seen).length;
+  }, 0);
+}
 // Download every loaded key in this protocol as a zip of per-network dsd-fme
 // key lists (one -K CSV per network -- no key-id collisions across networks).
 function downloadAllKeys(btn) {
@@ -1441,25 +1479,85 @@ function viewKeys() {
   var kn = keyNets(), loaded = keysLoadedCount();
   cont.appendChild(h('div', { class: 'section', text: 'Encryption keys — ' + (FAMN[S.fam] || S.fam) +
     ' (' + loaded + ' loaded across ' + kn.length + ' network' + (kn.length === 1 ? '' : 's') + ')' }));
-  if (!kn.length) {
-    cont.appendChild(h('div', { class: 'note', text: 'No encryption key ids seen on ' + (FAMN[S.fam] || S.fam) +
-      ' yet. When an encrypted call names a key id, it appears here (and in the network’s details) with a place to enter the key.' }));
-    return;
-  }
-  if (!S.file && loaded) {
+  // Action bar: add a key by hand, plus Download all / Remove all once keys
+  // are loaded. Hidden in a file (export) view -- that is read-only.
+  if (!S.file) {
     var bar = h('div', { class: 'tagrow', style: 'margin:0; padding:.5rem .9rem .3rem; gap:.5rem' }, [
-      h('button', { class: 'btn sm', type: 'button', title: 'Download every loaded key for this protocol as a zip of dsd-fme key lists (one -K CSV per network)',
-                    onclick: function () { downloadAllKeys(this); } }, '⤓ Download all (' + (FAMN[S.fam] || S.fam) + ')'),
-      h('button', { class: 'btn sm', type: 'button', title: 'Remove every loaded key for this protocol', onclick: removeAllKeys }, 'Remove all')]);
+      h('button', { class: 'btn sm', type: 'button', title: 'Enter a key for a network and key id by hand',
+                    onclick: function () { S.keyAdd = S.keyAdd ? null : { net: '', kid: '', alg: '', val: '' }; viewKeys(); } },
+        S.keyAdd ? '× Cancel' : '+ Add a key manually')]);
+    if (loaded) {
+      bar.appendChild(h('button', { class: 'btn sm', type: 'button', title: 'Download every loaded key for this protocol as a zip of dsd-fme key lists (one -K CSV per network)',
+                    onclick: function () { downloadAllKeys(this); } }, '⤓ Download all (' + (FAMN[S.fam] || S.fam) + ')'));
+      bar.appendChild(h('button', { class: 'btn sm', type: 'button', title: 'Remove every loaded key for this protocol', onclick: removeAllKeys }, 'Remove all'));
+    }
     cont.appendChild(bar);
   }
+  if (!S.file && S.keyAdd) cont.appendChild(keyAddForm());
   cont.appendChild(h('div', { class: 'note', style: 'margin-top:0', text: 'Keys are stored on the server (never shown again) and used by your own decoder via the downloaded key list — the explorer does not decrypt. A key belongs to a talkgroup or channel; enter keys only for systems you are authorized to monitor.' }));
+  if (!kn.length) {
+    cont.appendChild(h('div', { class: 'note', text: 'No encryption key ids ' + (loaded ? '' : 'seen or ') + 'loaded on ' + (FAMN[S.fam] || S.fam) +
+      ' yet. Add one above, or when an encrypted call names a key id it appears here (and in the network’s details) with a place to enter the key.' }));
+    return;
+  }
   kn.sort(function (a, b) { return (b.calls || 0) - (a.calls || 0); }).forEach(function (n) {
     var blk = h('div', { class: 'keynet' });
-    blk.appendChild(h('h4', { class: 'keynet-h' }, [netc(n.key), h('span', { class: 'alias', text: ' · ' + Object.keys(n.keys || {}).length + ' key id' + (Object.keys(n.keys || {}).length === 1 ? '' : 's') })]));
+    var seen = {};
+    for (var k in (n.keys || {})) { var i = k.indexOf(':'); seen[k.slice(i + 1)] = 1; }
+    (n.parts || [n]).forEach(function (p) { for (var id in keyedOf(p.key)) seen[id] = 1; });
+    var idc = Object.keys(seen).length;
+    blk.appendChild(h('h4', { class: 'keynet-h' }, [netc(n.key), h('span', { class: 'alias', text: ' · ' + idc + ' key id' + (idc === 1 ? '' : 's') })]));
     keysSection(blk, n.keys, 'on it', { nets: (n.parts || [n]).map(function (p) { return p.key; }), net: n.key, compact: true });
     cont.appendChild(blk);
   });
+}
+// The manual "Add a key" form (Keys tab): pick a network, type a key id, pick
+// the algorithm (optional) and enter the hex value. Its state (S.keyAdd)
+// survives polls like S.keyEdit, and the poll is fully held while it is open.
+function keyAddForm() {
+  var wrap = h('div', { class: 'keyadd' });
+  wrap.appendChild(h('h4', { text: 'Add a key' }));
+  var lab = function (t, ctl) { return h('label', null, [h('span', { text: t }), ctl]); };
+  var nets = IX.nets.slice().sort(function (a, b) { return (b.calls || 0) - (a.calls || 0); });
+  var netSel = h('select', { class: 'ksel', 'aria-label': 'Network' });
+  nets.forEach(function (n) {
+    var o = h('option', { value: n.key }, netLabel(n.key) || n.key);
+    if (n.key === S.keyAdd.net) o.selected = true;
+    netSel.appendChild(o);
+  });
+  if (!S.keyAdd.net && nets.length) S.keyAdd.net = netSel.value;
+  netSel.addEventListener('change', function () { S.keyAdd.net = netSel.value; });
+  var kidInp = h('input', { class: 'ki', type: 'text', spellcheck: 'false', autocomplete: 'off', value: S.keyAdd.kid,
+                            placeholder: 'e.g. 1 or 666A', 'aria-label': 'Key id (hex)' });
+  kidInp.addEventListener('input', function () { S.keyAdd.kid = kidInp.value; });
+  var algSel = h('select', { class: 'ksel', 'aria-label': 'Algorithm' });
+  algSel.appendChild(h('option', { value: '' }, 'Unknown / any'));
+  var at = ENCALG[S.fam] || {};
+  Object.keys(at).forEach(function (a) {
+    var o = h('option', { value: a }, at[a] + ' (0x' + a + ')');
+    if (a === S.keyAdd.alg) o.selected = true;
+    algSel.appendChild(o);
+  });
+  algSel.addEventListener('change', function () { S.keyAdd.alg = algSel.value; });
+  var valInp = h('input', { class: 'ki', type: 'text', spellcheck: 'false', autocomplete: 'off', value: S.keyAdd.val,
+                            placeholder: 'key (hex)', 'aria-label': 'Key value (hex)' });
+  valInp.addEventListener('input', function () { S.keyAdd.val = valInp.value; });
+  var save = function () {
+    var net = S.keyAdd.net, kid = (S.keyAdd.kid || '').trim(), alg = S.keyAdd.alg, val = (S.keyAdd.val || '').trim();
+    if (!net) { toast('Pick a network.'); return; }
+    if (!kid) { toast('Enter a key id.'); kidInp.focus(); return; }
+    if (!val) { toast('Enter the key value (hex).'); valInp.focus(); return; }
+    setKey(net, kid, alg, val, function (ok) { if (ok) S.keyAdd = null; if (S.view === 'keys') viewKeys(); });
+  };
+  valInp.addEventListener('keydown', function (e) { if (e.key === 'Enter') save(); if (e.key === 'Escape') { S.keyAdd = null; viewKeys(); } });
+  kidInp.addEventListener('keydown', function (e) { if (e.key === 'Escape') { S.keyAdd = null; viewKeys(); } });
+  var grid = h('div', { class: 'keyadd-grid' }, [lab('Network', netSel), lab('Key id', kidInp), lab('Algorithm', algSel), lab('Key value', valInp)]);
+  wrap.appendChild(grid);
+  wrap.appendChild(h('div', { class: 'keyact' }, [
+    h('button', { class: 'btn sm', type: 'button', onclick: save }, 'Save key'),
+    h('button', { class: 'btn sm', type: 'button', onclick: function () { S.keyAdd = null; viewKeys(); } }, 'Cancel')]));
+  wrap.appendChild(h('div', { class: 'kh', text: 'Hex key, up to 64 digits. Stored on the server; never shown again. Only enter keys for systems you are authorized to monitor.' }));
+  return wrap;
 }
 function typeBadges(c) {
   var rx = 'Heard by ' + c.streams + ' receivers (one call, deduplicated)';
@@ -2938,6 +3036,7 @@ function onlyNet(k) { var ks = netKeys(); return ks.length === 1 && ks[0] === k 
 // The Filters section's collapsed / open state (remembered per browser).
 function setFOpen(open) { S.fOpen = open; store('filtersOpen', open ? '1' : ''); render(); }
 function setView(v) {
+  if (v !== 'keys') S.keyAdd = null;                      // leaving Keys: drop a half-entered manual key
   S.view = v; store('view', v);
   var tabs = document.querySelectorAll('#viewtabs .tab');
   for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-v') === v);
@@ -3220,11 +3319,14 @@ function renderAll() {
   $('c-calls').textContent = (S.noSig || (S.audOnly && (!S.file || !fAll(FILEAUDIO)))) ? fCalls().length : calls.length;   // the list's own rows
   $('c-tgs').textContent = tgs.length;
   $('c-radios').textContent = radios.length; $('c-nets').textContent = IX.nets.length;
-  // Keys tab: shown when this protocol has encryption key ids (seen or loaded).
-  var kn = keyNets(), kidCount = kn.reduce(function (t, n) { return t + Object.keys(n.keys || {}).length; }, 0);
-  $('tab-keys').hidden = !kn.length;
-  $('c-keys').textContent = kidCount || keysLoadedCount();
-  if (S.view === 'keys' && !kn.length) setView('calls');
+  // Keys tab: shown when this protocol has encryption key ids (seen or loaded)
+  // or any encrypted call -- so a key can be added by hand even before a key id
+  // is decoded.
+  var kn = keyNets();
+  var anyEnc = !S.file && IX.calls.some(function (c) { return c.enc; });
+  $('tab-keys').hidden = !(kn.length || anyEnc);
+  $('c-keys').textContent = keyIdCount();
+  if (S.view === 'keys' && !(kn.length || anyEnc)) setView('calls');
   renderView();
   renderDetail();
 }
@@ -3575,6 +3677,7 @@ document.addEventListener('scroll', function (e) {
 }, true);
 function holdReason() {
   var t = Date.now();
+  if (S.keyAdd) return ['adding a key', 'while you add a key'];
   if (keyEditing()) return ['entering a key', 'while you enter a key'];
   if (HOLD.down && t - HOLD.down < 30000) return ['clicking', 'while you click or drag'];
   if (t - HOLD.scroll < 500) return ['scrolling', 'while you scroll'];

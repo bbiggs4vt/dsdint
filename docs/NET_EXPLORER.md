@@ -367,13 +367,23 @@ tablet or phone the details are a drawer: **Close** or Esc.
     key-list download returns it.
   - Only enter keys for systems you are **authorized to monitor**.
   - **Keys tab.** Each protocol tab gains a **Keys** sub-tab when it has any
-    encryption key ids (seen or loaded). It lists them grouped by network
-    with the same add / replace / remove and **Download key list** as the
-    network details, so you can manage every key for a protocol in one
-    place. **Download all (<protocol>)** gives a zip of per-network key
-    lists (one `-K` CSV per network, so there are no key-id collisions),
-    and **Remove all** clears every loaded key for the protocol (with a
-    confirm). Values are never shown.
+    encryption key ids (seen or loaded) or any encrypted call. It lists them
+    grouped by network with the same add / replace / remove and **Download
+    key list** as the network details, so you can manage every key for a
+    protocol in one place. A key id with a key loaded but not yet heard in a
+    call still appears (marked **not heard yet**), so a key you added by hand
+    is always visible with its **Replace key** / **Remove** controls.
+    **Download all (<protocol>)** gives a zip of per-network key lists (one
+    `-K` CSV per network, so there are no key-id collisions), and **Remove
+    all** clears every loaded key for the protocol (with a confirm). Values
+    are never shown.
+  - **Adding a key by hand.** **+ Add a key manually** (Keys tab) opens a
+    short form — pick the **network**, type the **key id** (hex, e.g. `1` or
+    `666A`), optionally choose the **algorithm**, and enter the **key value**
+    (hex, up to 64 digits) — so you can load a key you already have before an
+    encrypted call for that key id is ever heard. The key is stored exactly
+    like one added from a key id in a call, and the download key lists and
+    your decoder pick it up the same way.
 
 ## 9. Searching, filtering and sorting
 
