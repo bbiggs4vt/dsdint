@@ -3142,14 +3142,23 @@ function fillTab(b, f) {
                  st.map(streamText).join('\n') : '');
   if (b.title !== title) b.title = title;            // in place: a shown native tooltip is not dismissed
   var label = FAMN[f] || f.toUpperCase(), count = F.radios.length + ' radios' + (lv ? ' · ' + lv + ' live' : '');
-  var sig = (st.length ? (dec ? 'D' : 'q') : '-') + '|' + label + '|' + count;
-  if (b._sig !== sig) {                              // the visible content changed: rebuild the inner nodes only
-    b._sig = sig;
+  // Build the inner nodes once, then update their text / class IN PLACE. Never
+  // tear the subtree down (textContent='') on an update: doing so dismisses a
+  // native tooltip the pointer is on, which flashed as the "· N live" count
+  // changed each poll on a busy system.
+  if (!b._built) {
+    b._built = true;
     b.textContent = '';
-    if (st.length) b.appendChild(h('span', { class: 'cdot' + (dec ? ' on' : '') }));
-    b.appendChild(document.createTextNode(label + ' '));
-    b.appendChild(h('span', { class: 'count', text: count }));
+    b._cdot = h('span', { class: 'cdot' });
+    b._label = document.createTextNode('');
+    b._count = h('span', { class: 'count' });
+    b.appendChild(b._cdot); b.appendChild(b._label); b.appendChild(b._count);
   }
+  var cdDisp = st.length ? '' : 'none';
+  if (b._cdot.style.display !== cdDisp) b._cdot.style.display = cdDisp;
+  var cd = 'cdot' + (dec ? ' on' : ''); if (b._cdot.className !== cd) b._cdot.className = cd;
+  var lt = label + ' '; if (b._label.nodeValue !== lt) b._label.nodeValue = lt;
+  if (b._count.textContent !== count) b._count.textContent = count;
 }
 function renderFamtabs(fams) {
   var ft = $('famtabs');
