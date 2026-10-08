@@ -214,7 +214,7 @@ inline std::string render_net_page_html() {
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   td.mono, .mono { font-family: Menlo, Monaco, Consolas, 'Courier New', monospace; font-size: .82rem; }
   /* Encryption keyring (details panel). */
-  .keynet { padding: .5rem .2rem .2rem; border-top: 1px solid var(--table-bd); }
+  .keynet { padding: .55rem .9rem .35rem; border-top: 1px solid var(--table-bd); }
   .keynet:first-of-type { border-top: 0; }
   .keynet-h { margin: 0 0 .2rem; font-size: .95rem; }
   .btn.off2 { opacity: .6; pointer-events: none; }
@@ -1447,7 +1447,7 @@ function viewKeys() {
     return;
   }
   if (!S.file && loaded) {
-    var bar = h('div', { class: 'tagrow', style: 'margin:-.2rem 0 .4rem' }, [
+    var bar = h('div', { class: 'tagrow', style: 'margin:0; padding:.5rem .9rem .3rem; gap:.5rem' }, [
       h('button', { class: 'btn sm', type: 'button', title: 'Download every loaded key for this protocol as a zip of dsd-fme key lists (one -K CSV per network)',
                     onclick: function () { downloadAllKeys(this); } }, '⤓ Download all (' + (FAMN[S.fam] || S.fam) + ')'),
       h('button', { class: 'btn sm', type: 'button', title: 'Remove every loaded key for this protocol', onclick: removeAllKeys }, 'Remove all')]);
