@@ -2997,13 +2997,22 @@ function streamText(x) {
 // The row-end summary: "● 4 clients · 6 streams" (green while any stream
 // decodes), or "No clients connected". Nothing in a file view.
 function connSummary() {
-  if (S.file || !S.d || S.d.clients == null) return null;
+  if (S.file || !S.d || S.d.clients == null) {
+    if (FT.conn && FT.conn.parentNode) FT.conn.parentNode.removeChild(FT.conn);
+    FT.conn = null;
+    return null;
+  }
   var st = streamsOf(null), dec = st.some(decodingNow), n = S.d.clients;
   var tip = n ? n + ' client' + (n > 1 ? 's' : '') + ' connected' + (st.length ? '; decode streams:\n' + st.map(streamText).join('\n') : ', no decode stream running') :
                 'No client is connected to this server.';
-  return h('span', { class: 'conn' + (n ? ' on' : ''), title: tip, 'data-tip': tip },
-    [h('span', { class: 'cdot' + (dec ? ' on' : '') }),
-     n ? n + ' client' + (n > 1 ? 's' : '') + (st.length ? ' \u00B7 ' + st.length + ' stream' + (st.length > 1 ? 's' : '') : '') : 'No clients connected']);
+  var txt = n ? n + ' client' + (n > 1 ? 's' : '') + (st.length ? ' \u00B7 ' + st.length + ' stream' + (st.length > 1 ? 's' : '') : '') : 'No clients connected';
+  var b = FT.conn;
+  if (!b) { b = h('span', {}, [h('span', { class: 'cdot' }), document.createTextNode('')]); FT.conn = b; }
+  var cls = 'conn' + (n ? ' on' : ''); if (b.className !== cls) b.className = cls;
+  if (b.title !== tip) { b.title = tip; b.setAttribute('data-tip', tip); }
+  var cd = 'cdot' + (dec ? ' on' : ''); if (b.firstChild.className !== cd) b.firstChild.className = cd;
+  if (b.lastChild.nodeValue !== txt) b.lastChild.nodeValue = txt;
+  return b;
 }
 // A protocol whose streams are connected gets its tab even before any traffic.
 function addStreamFams(d) {
@@ -3011,6 +3020,52 @@ function addStreamFams(d) {
     if (!x.fam || x.fam === 'auto' || d.families[x.fam]) return;
     d.families[x.fam] = { networks: [], talkgroups: [], radios: [], calls: [] };
   });
+}
+// The protocol tabs and the clients/imports chips are UPDATED IN PLACE, not
+// rebuilt, every poll: the nodes stay the same so a native tooltip the pointer
+// is on (a tab's "… streams connected …", which ticks) doesn't flicker as the
+// page refreshes. FT caches the elements; only their text / title / class
+// change, and a node is created or removed only when the set changes.
+var FT = { tab: {}, conn: null, imps: null };
+function famTabEl(f) {
+  var b = FT.tab[f];
+  if (!b) {
+    b = document.createElement('button');
+    b.type = 'button';
+    b.addEventListener('click', function () { S.fam = f; store('fam', f); S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; GR.sig = ''; render(); });
+    FT.tab[f] = b;
+  }
+  return b;
+}
+function fillTab(b, f) {
+  var F = S.d.families[f], lv = F.calls.filter(live).length, st = streamsOf(f), dec = st.some(decodingNow);
+  var cls = 'tab' + (f === S.fam ? ' active' : '');
+  if (b.className !== cls) b.className = cls;
+  var title = F.radios.length + ' radios' + (lv ? ', ' + lv + ' live calls' : '') + ' on all of its networks' +
+    (st.length ? '\n' + st.length + ' stream' + (st.length > 1 ? 's' : '') + ' connected' + (dec ? ' (decoding)' : ' (quiet)') + ':\n' +
+                 st.map(streamText).join('\n') : '');
+  if (b.title !== title) b.title = title;            // in place: a shown native tooltip is not dismissed
+  var label = FAMN[f] || f.toUpperCase(), count = F.radios.length + ' radios' + (lv ? ' · ' + lv + ' live' : '');
+  var sig = (st.length ? (dec ? 'D' : 'q') : '-') + '|' + label + '|' + count;
+  if (b._sig !== sig) {                              // the visible content changed: rebuild the inner nodes only
+    b._sig = sig;
+    b.textContent = '';
+    if (st.length) b.appendChild(h('span', { class: 'cdot' + (dec ? ' on' : '') }));
+    b.appendChild(document.createTextNode(label + ' '));
+    b.appendChild(h('span', { class: 'count', text: count }));
+  }
+}
+function renderFamtabs(fams) {
+  var ft = $('famtabs');
+  Object.keys(FT.tab).forEach(function (f) {         // families gone: drop their tabs
+    if (fams.indexOf(f) < 0) { if (FT.tab[f].parentNode) ft.removeChild(FT.tab[f]); delete FT.tab[f]; }
+  });
+  var want = fams.map(function (f) { var b = famTabEl(f); fillTab(b, f); return b; });
+  var imps = impChip(); if (imps) want.push(imps);
+  var conn = connSummary(); if (conn) want.push(conn);
+  for (var i = 0; i < want.length; i++)              // reconcile order; a node already in place is not moved
+    if (ft.childNodes[i] !== want[i]) ft.insertBefore(want[i], ft.childNodes[i] || null);
+  while (ft.childNodes.length > want.length) ft.removeChild(ft.lastChild);
 }
 // Rebuilding parts of the page must never move it: if the page's scroll
 // position changed while they were rebuilt (a part briefly empty), put it back.
@@ -3029,23 +3084,9 @@ function renderAll() {
   }).sort(function (a, b) { return famTotals(b) - famTotals(a); });
   $('empty').hidden = fams.length > 0;
   $('main').hidden = !fams.length;
-  var ft = $('famtabs');
-  ft.textContent = '';
-  var conn = connSummary(), imps = impChip();
-  if (!fams.length) { IX = null; if (imps) ft.appendChild(imps); if (conn) ft.appendChild(conn); return; }
-  if (fams.indexOf(S.fam) < 0) { S.fam = fams[0]; S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; }
-  fams.forEach(function (f) {
-    var F = S.d.families[f], lv = F.calls.filter(live).length, st = streamsOf(f), dec = st.some(decodingNow);
-    ft.appendChild(h('button', { class: 'tab' + (f === S.fam ? ' active' : ''), type: 'button',
-      title: F.radios.length + ' radios' + (lv ? ', ' + lv + ' live calls' : '') + ' on all of its networks' +
-             (st.length ? '\n' + st.length + ' stream' + (st.length > 1 ? 's' : '') + ' connected' + (dec ? ' (decoding)' : ' (quiet)') + ':\n' +
-                          st.map(streamText).join('\n') : ''),
-      onclick: function () { S.fam = f; store('fam', f); S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; GR.sig = ''; render(); } },
-      [st.length ? h('span', { class: 'cdot' + (dec ? ' on' : '') }) : null,
-       FAMN[f] || f.toUpperCase(), ' ', h('span', { class: 'count', text: F.radios.length + ' radios' + (lv ? ' · ' + lv + ' live' : '') })]));
-  });
-  if (imps) ft.appendChild(imps);
-  if (conn) ft.appendChild(conn);
+  if (fams.length && fams.indexOf(S.fam) < 0) { S.fam = fams[0]; S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; }
+  renderFamtabs(fams);
+  if (!fams.length) { IX = null; return; }
   index();
   netKeys().forEach(function (k) { if (!IX.netByKey[k]) delete S.nets[k]; });
   var calls = fCalls(null, true), tgs = fTgs(), radios = fRadios(), lv = calls.filter(live).length, sites = {};
@@ -3299,10 +3340,22 @@ function showImports(hide) {
   if (IX) render();
 }
 function impChip() {
-  if (S.file || !impHidden()) return null;
+  if (S.file || !impHidden()) {
+    if (FT.imps && FT.imps.parentNode) FT.imps.parentNode.removeChild(FT.imps);
+    FT.imps = null;
+    return null;
+  }
   var n = S.d.imports.length, tip = 'Data from ' + n + ' imported export' + (n > 1 ? 's is' : ' is') + ' included — show the imports bar';
-  return h('a', { class: 'imps', href: '#', title: tip, 'data-tip': tip,
-                  onclick: function (e) { e.preventDefault(); showImports(false); } }, n + ' import' + (n > 1 ? 's' : ''));
+  var txt = n + ' import' + (n > 1 ? 's' : '');
+  var b = FT.imps;
+  if (!b) {
+    b = h('a', { class: 'imps', href: '#' }, '');
+    b.addEventListener('click', function (e) { e.preventDefault(); showImports(false); });
+    FT.imps = b;
+  }
+  if (b.title !== tip) { b.title = tip; b.setAttribute('data-tip', tip); }
+  if (b.textContent !== txt) b.textContent = txt;
+  return b;
 }
 function updateImports(list) {
   list = list || [];
