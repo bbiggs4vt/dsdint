@@ -248,6 +248,7 @@ inline std::string render_net_page_html() {
   .b-data { background: rgba(179,139,255,.18); color: var(--purple); }
   .b-priv { border-color: var(--warn); color: var(--warn); }
   .b-group { background: rgba(255,255,255,.07); color: var(--muted); }
+  .b-sig { background: rgba(255,255,255,.05); color: var(--muted); border-color: var(--table-bd); }
   .b-emerg { background: var(--danger); color: #fff; }
   .b-enc { background: rgba(248,148,6,.2); color: var(--warn); }
   .b-strong { background: rgba(98,196,98,.18); color: var(--success); }
@@ -1373,8 +1374,10 @@ function keysSection(d, m, what, opts) {
 function typeBadges(c) {
   var rx = 'Heard by ' + c.streams + ' receivers (one call, deduplicated)';
   var et = c.kid ? 'Encrypted: ' + keyText(c.alg, c.kid) : 'Encrypted (its key id wasn\u2019t decoded)';
+  var sig = 'Signalling only \u2014 a call was announced (source / target decoded) but no voice or data was heard on this channel, so there is no audio.';
   return h('span', null, [
-    (c.data && !c.voice) ? badge('b-data', 'DATA') : badge('b-voice', 'VOICE'),
+    c.voice ? badge('b-voice', 'VOICE') : c.data ? badge('b-data', 'DATA')
+            : h('span', { class: 'badge b-sig', title: sig, 'data-tip': sig }, 'SIGNALING'),
     c.priv ? badge('b-priv', 'PRIVATE') : badge('b-group', 'GROUP'),
     c.emerg ? badge('b-emerg', 'EMERGENCY') : null, c.enc ? h('span', { class: 'badge b-enc', title: et, 'data-tip': et }, 'ENCRYPTED') : null,
     c.streams > 1 ? h('span', { class: 'badge b-group', title: rx, 'data-tip': rx }, c.streams + ' RX') : null]);
