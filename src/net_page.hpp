@@ -351,7 +351,7 @@ inline std::string render_net_page_html() {
   .callbar select { background: #1f2327; color: var(--heading); border: 1px solid var(--comp-bd); border-radius: 3px; font: inherit; }
   .callbar .btn { padding: .2rem .65rem; font-size: .78rem; }
   .callbar .grow { flex: 1 1 auto; }
-  body.filemode .callbar, .callbar .audctl.off { display: none !important; }
+  body.filemode .callbar, .callbar .audctl.off, .callbar .sigctl.off { display: none !important; }
   @media (pointer: coarse) {
     .callbar .btn { min-height: 40px; }
     .callbar select, .callbar label { min-height: 40px; }
@@ -554,6 +554,7 @@ inline std::string render_net_page_html() {
         <div class="panel" id="v-calls">
           <div class="callbar">
             <label class="audctl" title="List only calls whose voice was recorded"><input type="checkbox" id="audonly"> With audio only</label>
+            <label class="sigctl" id="nosigctl" title="Hide signalling-only calls: a call was announced (source / target) but no voice or data was heard here, so there is no audio"><input type="checkbox" id="nosig"> Hide signalling</label>
             <span class="grow"></span>
             <label class="audctl live-only" id="asrctl" title="Turn each call's speech into text when you play it (runs in this browser)"><input type="checkbox" id="asron"> Transcribe on play</label>
             <select id="asrlang" class="audctl live-only" aria-label="Spoken language" title="Spoken language"></select>
@@ -613,7 +614,7 @@ var FAMN = {dmr:'DMR', p25:'P25', nxdn:'NXDN', tetra:'TETRA', dpmr:'dPMR', dstar
 var PAL = ['#5bc0de','#62c462','#f89406','#ee5f5b','#b38bff','#e6c229','#3fc1a5','#ff7eb6','#8fa8ff',
            '#c3e88d','#ffab70','#4dd0e1','#d4a5ff','#a3d977'];
 var S = { d: null, fam: null, nets: {}, tgf: {}, rf: {}, view: 'calls', sel: null, q: '', paused: false, skew: 0,
-          ncol: {}, nidx: {}, sort: {}, rows: {}, audOnly: false, fOpen: false };
+          ncol: {}, nidx: {}, sort: {}, rows: {}, audOnly: false, noSig: false, fOpen: false };
 var IX = null;
 
 function $(id) { return document.getElementById(id); }
@@ -1097,8 +1098,10 @@ function qm() {
 // Calls-list option; the stat cards count every call).
 function fCalls(list, allAudio) {
   var aud = S.audOnly && (!S.file || !fAll(FILEAUDIO)) && !allAudio;
+  var sig = S.noSig && !allAudio;                    // hide signalling-only calls (list option, not the stat counts)
   return (list || IX.calls).filter(function (c) {
     return (netAll() || netOk(c.net)) && callTgOk(c) && callROk(c) && (!aud || hasAudio(c)) &&
+      (!sig || c.voice || c.data) &&
       (!S.q || qm(c.src, c.tgt, c.alias, c.text, svcLabel(c.svc), mhz(c.freq), IX.rById[c.src] && IX.rById[c.src].aliases,
                    c.kid ? ['0x' + c.kid, algName(c.alg)] : null));
   });
@@ -2155,6 +2158,8 @@ function viewCalls() {
   var rows = fCalls();
   var anyAud = (S.audio && S.audio.on && !S.file) || S.audOnly || IX.calls.some(hasAudio);
   document.querySelectorAll('.callbar .audctl').forEach(function (e) { e.classList.toggle('off', !anyAud); });
+  var anySig = IX.calls.some(function (c) { return !c.voice && !c.data; });
+  var sc = document.getElementById('nosigctl'); if (sc) sc.classList.toggle('off', !anySig);
   table($('t-calls'), 'calls', [
     { label: 'Start (UTC)', cls: 'mono nowrap', k: function (c) { return c.start; }, cell: function (c) { return hms(c.start); } },
     { label: 'Duration', cls: 'nowrap', k: function (c) { return c.last - c.start; }, cell: durCell },
@@ -3115,7 +3120,7 @@ function renderAll() {
        h('div', { class: 'l', text: c[0] })]));
   });
   renderFilters();
-  $('c-calls').textContent = S.audOnly && (!S.file || !fAll(FILEAUDIO)) ? fCalls().length : calls.length;   // the list's own rows
+  $('c-calls').textContent = (S.noSig || (S.audOnly && (!S.file || !fAll(FILEAUDIO)))) ? fCalls().length : calls.length;   // the list's own rows
   $('c-tgs').textContent = tgs.length;
   $('c-radios').textContent = radios.length; $('c-nets').textContent = IX.nets.length;
   renderView();
@@ -3606,6 +3611,9 @@ S.audOnly = load('audonly') === '1';
 S.fOpen = load('filtersOpen') === '1';
 $('audonly').checked = S.audOnly;
 $('audonly').addEventListener('change', function () { S.audOnly = this.checked; store('audonly', S.audOnly ? '1' : '0'); if (S.d) render(); });
+S.noSig = load('nosig') === '1';
+$('nosig').checked = S.noSig;
+$('nosig').addEventListener('change', function () { S.noSig = this.checked; store('nosig', S.noSig ? '1' : '0'); if (S.d) render(); });
 $('asron').checked = ASR.on;
 $('asron').addEventListener('change', function () {
   ASR.on = this.checked; store('asr', ASR.on ? '1' : '0');

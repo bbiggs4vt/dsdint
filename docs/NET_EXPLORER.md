@@ -80,7 +80,7 @@ From top to bottom:
 | **?** (Help) | Opens this manual (PDF) in a new tab. It is built into the server, so it matches the server's version and needs no internet. |
 | **Protocol tabs** | One per protocol with traffic (e.g. `DMR 62 radios · 1 live`), or with a client connected for it (even before any traffic). A dot marks a protocol with a decode stream connected: **green** while one is decoding (anything decoded in the last 10 s), **hollow** when connected but quiet. Hover for the streams. Protocols are never mixed: a DMR radio 1234 and a P25 radio 1234 are unrelated. |
 | **Connections** | At the end of the tabs row: `● 3 clients · 2 streams` — clients connected to the server and the decode streams they run (green dot while any decodes), or `No clients connected`. Hover for each stream's protocol, frequency, and when it last decoded something. |
-| **Stat cards** | Networks, Sites, Talkgroups, Radios, Calls (recent), **Streams** (this protocol's connected decode streams, green while one decodes; hover for each; not in a file view) and Live calls — for the current protocol, network filter and search (not **With audio only**, which only shortens the Calls list). The protocol tab's "N live" counts all of its networks, so with a network filter or a search the two can differ. |
+| **Stat cards** | Networks, Sites, Talkgroups, Radios, Calls (recent), **Streams** (this protocol's connected decode streams, green while one decodes; hover for each; not in a file view) and Live calls — for the current protocol, network filter and search (not **With audio only** or **Hide signalling**, which only shorten the Calls list). The protocol tab's "N live" counts all of its networks, so with a network filter or a search the two can differ. |
 | **Filters** | Everything that narrows the page, in one section under the stat cards (§9). Collapsed (the default) it is one row: **▸ Filters**, a [chip](#appendix-c-glossary) for each filter in force (click one to drop it) and **Clear all**; with none it says *none — showing everything*. Click **▸ Filters** to open it: a row each for networks (one chip per network, with its call count), talkgroups and radios (each with a box to type ids into), and the search. The browser remembers whether it is open. |
 | **View tabs** | Calls · Talkgroups · Radios · Graph · Map · Links · Networks. |
 | **Details panel** | On the right (or a drawer on smaller screens): everything tied to the radio, talkgroup or network you click. |
@@ -125,6 +125,9 @@ own line under the row.
 **Calls toolbar** (above the list):
 
 - **With audio only** — lists only calls with recorded voice.
+- **Hide signalling** — hides **SIGNALING** calls (announced, but no voice or data
+  heard here). Appears only when there are any. Like **With audio only**, it only
+  shortens the Calls list; the stat cards still count every call.
 - **Transcribe on play**, the language and model lists — see
   [section 11](#11-speech-to-text).
 - **⤓ Audio (.zip)** — downloads the audio of the calls listed
