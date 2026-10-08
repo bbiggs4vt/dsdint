@@ -385,7 +385,7 @@ struct DsCall {
     std::string alg, kid;                       // encrypted: the algorithm and key id it named ("" = not seen)
     std::int64_t start = 0, last = 0;
     std::int64_t freq = 0;
-    std::string audio;                          // live server only: its audio file (see /net/audio/)
+    std::string audio;                          // its audio file on this server, if any (see /net/audio/; an import's once uploaded)
     std::uint64_t audio_ms = 0;
 };
 struct DsFamily {

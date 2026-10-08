@@ -10,10 +10,13 @@
 #include "../src/dsd_process.hpp"
 
 #include <cctype>
+#include <filesystem>
 #include <cstdio>
 #include <map>
 #include <string>
 #include <vector>
+
+#include <unistd.h>
 
 using namespace dsdsrv;
 
@@ -1019,6 +1022,52 @@ int main() {
         live.set_identity("0123456789abcdef", "other");
         live.import_export(ex, "x.json", 2000);
         check(live.to_json(2000).find("call_1_x_1.wav") == std::string::npos, "import: an imported call has no audio to play");
+
+        // ...until Import uploads the zip's WAV for it (import_audio): then it
+        // plays, served as "i<id>_<name>" from the import's own folder, which
+        // goes with the import.
+        namespace fs = std::filesystem;
+        const std::string root = (fs::temp_directory_path() / ("dsd_imp_audio_" + std::to_string(::getpid()))).string();
+        fs::create_directories(root + "/stale");
+        AssocModel ia;
+        ia.set_identity("0123456789abcdef", "other");
+        ia.use_import_audio_dir(root, 1000);
+        check(!fs::exists(root + "/stale"), "import audio: the folder is emptied when set (imports don't outlive a restart)");
+        const auto ir = ia.import_export(ex, "x.json", 2000);
+        check(ir.id == 1 && ia.to_json(2000).find("\"audio_files\":1,\"audio_have\":0") != std::string::npos,
+              "import audio: the import lists 1 recording wanted, none uploaded yet");
+        std::string wav = "RIFF" + std::string(4, '\0') + "WAVEfmt " + std::string(32, '\0');   // 44-byte header
+        wav += std::string(100, '\x01');
+        check(ia.import_audio(1, "call_9_x_9.wav", wav).status == "unknown", "import audio: a file no call names is refused");
+        check(ia.import_audio(1, "../call_1_x_1.wav", wav).status == "unknown", "import audio: a path is refused");
+        check(ia.import_audio(7, "call_1_x_1.wav", wav).status == "unknown", "import audio: an unknown import is refused");
+        check(ia.import_audio(1, "call_1_x_1.wav", std::string(100, 'x')).status == "invalid", "import audio: a non-WAV is refused");
+        const auto up = ia.import_audio(1, "call_1_x_1.wav", wav);
+        check(up.status == "added" && up.calls == 1, "import audio: the WAV is kept and attached to its call");
+        const std::string js = ia.to_json(2100);
+        check(js.find("\"audio\":\"i1_call_1_x_1.wav\",\"audio_ms\":2000") != std::string::npos &&
+                  js.find("\"audio_have\":1") != std::string::npos,
+              "import audio: the call now names its served file (with its length)");
+        const std::string ap = ia.audio_path("i1_call_1_x_1.wav");
+        check(!ap.empty() && fs::file_size(ap) == wav.size(), "import audio: /net/audio serves the uploaded file");
+        check(ia.audio_path("i1_call_9_x_9.wav").empty() && ia.audio_path("i1_../x.wav").empty(),
+              "import audio: nothing else under the import is served");
+        check(ia.import_audio(1, "call_1_x_1.wav", wav).status == "have", "import audio: a repeat upload is a no-op");
+        check(ia.to_export_json(2100).find("i1_call_1_x_1.wav") != std::string::npos,
+              "import audio: an export of the view names the imported audio (so export with audio carries it on)");
+        check(AssocModel::import_audio_base("i3_i12_call_1_x_1.wav") == "call_1_x_1.wav" &&
+                  AssocModel::import_audio_base("i3_notacall.wav").empty(),
+              "import audio: an import of an import maps back to the original file name");
+        ia.remove_import(1);
+        check(ia.audio_path("i1_call_1_x_1.wav").empty() && !fs::exists(ap), "import audio: removing the import deletes its audio");
+        // The cap (1000 bytes here) across all imports.
+        const auto ir2 = ia.import_export(ex, "x.json", 2200);
+        check(ir2.id == 2 && ia.import_audio(2, "call_1_x_1.wav", wav + std::string(1000, '\x01')).status == "full",
+              "import audio: past the cap a file is refused (full)");
+        check(ia.import_audio(2, "call_1_x_1.wav", wav).status == "added", "import audio: within the cap it is kept");
+        ia.clear_imports();
+        check(!fs::exists(root + "/2"), "import audio: Remove all deletes every import's audio");
+        fs::remove_all(root);
     }
 
     // ---- JSON escaping of decoder-derived text ----

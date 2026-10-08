@@ -455,8 +455,9 @@ What gets recorded:
   files go first, and calls with audio stay in the call list longest.
 - Audio stays on the server that recorded it. A plain export notes which
   calls had audio; **Export ▾ → Explorer data with audio (.zip)** also packs
-  the audio, and opening that zip plays it (§12). An **Import** into the live
-  view never has audio to play.
+  the audio, and opening that zip plays it (§12). **Importing** that zip into
+  the live view uploads its audio to this server too, so the imported calls
+  play alongside your own (see below).
 
 Rules on keeping intercepted communications differ from place to place;
 check what applies to you before switching audio on.
@@ -501,7 +502,17 @@ goes into the audio zip's `calls.csv`.
   work as live; opened together with other exports, its calls keep their
   audio in the merged view. The zip is built in the browser and stops adding
   audio at 1 GB (it says how many were left out). **Import…** takes the zip
-  too, without its audio.
+  too: the export joins the live view and the page then uploads each call's
+  audio to this server (*Uploading audio 12 / 40…*), so imported calls get ▶,
+  ⤓ and speech-to-text like your own. The report line says how many calls got
+  audio; hover the import in the imports bar for *audio for N of M
+  recordings*. Only audio a call in that import names is kept (anything else
+  in the zip is ignored), it is deleted when the import is removed (✕,
+  **Remove all**, **Clear**, or a newer export of the same run replacing it),
+  and imports — and so their audio — don't survive a server restart. Imported
+  audio has its own cap (`DSD_NET_IMPORT_AUDIO_MAX_MB`, 1 GB by default);
+  past it, the rest is left out and the report says so. A plain `.json`
+  export has no audio to upload.
 - **Export ▾ → Association graph (.graphml)** is for graph tools (Gephi,
   Cytoscape, yEd, networkx).
 - **Export ▾ → Positions (.kml)** saves the position reports of the radios
@@ -612,6 +623,7 @@ Server environment variables that affect the explorer (details in the README):
 | `DSD_NET_SETTINGS_FILE` | `net_settings.json` in the log dir | Where remembered switches (♫ Audio) are kept. |
 | `DSD_NET_AUDIO_DIR` | `net_audio/` in the log dir | Where call audio goes. |
 | `DSD_NET_AUDIO_MAX_MB` / `DSD_NET_AUDIO_MAX_AGE_H` | 1024 / none | Audio disk cap and maximum age. |
+| `DSD_NET_IMPORT_AUDIO_MAX_MB` | 1024 | Cap on audio uploaded with imported "export with audio" zips (kept in `imported/` under the audio dir, emptied at startup). |
 | `DSD_NET_ASR_DIR` | `net_asr/` in the log dir | Speech-to-text files (`tools/get_asr_assets.sh`). |
 | `DSD_NET_MAP_TILES` / `DSD_NET_MAP_ATTRIB` | (public tiles) | A map tile server of your own — a URL template with `{z}` `{x}` `{y}` (e.g. `http://maps.local/tile/{z}/{x}/{y}.png`) — and its credit line, for the Map view. |
 | `DSD_NET_ASR_MODEL` / `DSD_NET_ASR_LANG` | most accurate present / english | Default speech model and language. |

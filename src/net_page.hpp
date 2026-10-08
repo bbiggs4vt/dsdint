@@ -3428,13 +3428,17 @@ function unzip(buf) {
   })).then(function (l) { return l.filter(Boolean); });
 }
 // A zip's export (its .json) -- and, with `audio`, its .wav files registered
-// for playback in the file view.
-function readZip(f, audio) {
+// for playback in the file view; with `wavs` (an array), its .wav entries
+// collected ({name, data}) for Import to upload.
+function readZip(f, audio, wavs) {
   return f.arrayBuffer().then(unzip).then(function (ents) {
     var js = ents.filter(function (x) { return /\.json$/i.test(x.name); })[0];
     if (!js) throw new Error('no explorer export (.json) in it');
-    if (audio) ents.forEach(function (x) {
-      if (/\.wav$/i.test(x.name)) FILEAUDIO[x.name.replace(/^.*\//, '')] = URL.createObjectURL(new Blob([x.data], { type: 'audio/wav' }));
+    ents.forEach(function (x) {
+      if (!/\.wav$/i.test(x.name)) return;
+      var base = x.name.replace(/^.*\//, '');
+      if (audio) FILEAUDIO[base] = URL.createObjectURL(new Blob([x.data], { type: 'audio/wav' }));
+      if (wavs) wavs.push({ name: base, data: x.data });
     });
     return new TextDecoder().decode(js.data);
   });
@@ -3527,10 +3531,16 @@ function importFiles(fl) {
   note.hidden = false;
   files.reduce(function (p, f) {
     return p.then(function () {
-      var body = /\.zip$/i.test(f.name) ? readZip(f, false) : Promise.resolve(f);
+      var wavs = [];
+      var body = /\.zip$/i.test(f.name) ? readZip(f, false, wavs) : Promise.resolve(f);
       return body.then(function (b) { return fetch('/net/import?name=' + encodeURIComponent(f.name), { method: 'POST', cache: 'no-store', body: b }); })
         .then(function (r) { return r.json(); })
-        .then(function (r) { out.push(r); }, function (e) { out.push({ name: f.name, status: 'failed', message: String(e) }); });
+        .then(function (r) {
+          // An "export with audio" zip: once the import is in, upload its
+          // calls' audio so they play in the live view too.
+          if (!wavs.length || !r.id || !/^(imported|replaced)$/.test(r.status)) { out.push(r); return; }
+          return uploadImportAudio(r, wavs, note).then(function () { out.push(r); });
+        }, function (e) { out.push({ name: f.name, status: 'failed', message: String(e) }); });
     });
   }, Promise.resolve()).then(function () {
     note.textContent = '';
@@ -3538,6 +3548,36 @@ function importFiles(fl) {
     note.appendChild(h('span', { class: 'x', title: 'Dismiss', onclick: function () { note.hidden = true; } }, '✕'));
     note.appendChild(reportList(out));
     S.impsig = null;
+  });
+}
+// Upload an imported zip's WAVs (one request each, so no file nears the
+// server's upload limit), then add how it went to the import's report line.
+// The server keeps only files a call in that import names.
+function uploadImportAudio(r, wavs, note) {
+  var i = 0, added = 0, calls = 0, full = 0, bad = 0;
+  var msg = h('span', { class: 'm' });
+  note.appendChild(msg);
+  function next() {
+    if (i >= wavs.length) return Promise.resolve();
+    if (full) { full += wavs.length - i; i = wavs.length; return Promise.resolve(); }
+    var w = wavs[i++];
+    msg.textContent = ' Uploading ' + r.name + '’s audio ' + i + ' / ' + wavs.length + '…';
+    return fetch('/net/import/audio?id=' + r.id + '&name=' + encodeURIComponent(w.name),
+                 { method: 'POST', cache: 'no-store', body: new Blob([w.data], { type: 'audio/wav' }) })
+      .then(function (q) { return q.json(); })
+      .then(function (q) {
+        if (q.status === 'added') { ++added; calls += q.calls || 0; }
+        else if (q.status === 'full') full = 1;
+        else if (q.status !== 'have') ++bad;
+      }, function () { ++bad; })
+      .then(next);
+  }
+  return next().then(function () {
+    msg.remove();
+    S.impsig = null;
+    r.message = (r.message || r.status) + ' · audio for ' + calls + ' call' + (calls === 1 ? '' : 's') +
+      (full ? ' — the server’s space for imported audio is full, so ' + full + ' file' + (full === 1 ? ' was' : 's were') + ' left out' : '') +
+      (bad ? ' (' + bad + ' file' + (bad === 1 ? '' : 's') + ' not used)' : '');
   });
 }
 // The bar can be hidden (its ✕): remembered for this set of imports, so a new
@@ -3571,7 +3611,7 @@ function impChip() {
 }
 function updateImports(list) {
   list = list || [];
-  var sig = JSON.stringify(list.map(function (x) { return [x.id, x.calls]; }));
+  var sig = JSON.stringify(list.map(function (x) { return [x.id, x.calls, x.audio_have]; }));
   if (sig === S.impsig) return;
   S.impsig = sig;
   var bar = $('impbar');
@@ -3581,7 +3621,9 @@ function updateImports(list) {
   bar.appendChild(h('span', null, ['Including ', h('b', { text: list.length + ' import' + (list.length > 1 ? 's' : '') }), ':']));
   list.forEach(function (x) {
     var tip = x.networks + ' networks · ' + x.talkgroups + ' talkgroups · ' +
-        x.radios + ' radios · ' + x.calls + ' calls\n' + (x.sources || []).map(srcText).join('\n');
+        x.radios + ' radios · ' + x.calls + ' calls' +
+        (x.audio_files ? ' · audio for ' + x.audio_have + ' of ' + x.audio_files + ' recordings' : '') + '\n' +
+        (x.sources || []).map(srcText).join('\n');
     bar.appendChild(h('span', { class: 'imp-item', title: tip, 'data-tip': tip }, [
       x.label, h('span', { class: 'm', text: ' (' + (x.sources || []).map(function (s) { return s.name || '?'; }).join(', ') + ')' }),
       h('a', { href: '#', title: 'Remove this import', onclick: function (e) {

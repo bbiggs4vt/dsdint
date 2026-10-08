@@ -87,6 +87,15 @@ std::uint64_t net_audio_max_bytes() {
     unsigned long mb = (m && m[0]) ? std::strtoul(m, nullptr, 10) : 1024;
     return static_cast<std::uint64_t>(mb) * 1024ull * 1024ull;
 }
+// Imported calls' audio (an "export with audio" zip's WAVs, uploaded by
+// Import): <audio dir>/imported, emptied at startup (imports aren't kept
+// across a restart); capped at DSD_NET_IMPORT_AUDIO_MAX_MB (default 1024).
+std::string net_import_audio_dir() { return (std::filesystem::path(net_audio_dir()) / "imported").string(); }
+std::uint64_t net_import_audio_max_bytes() {
+    const char* m = std::getenv("DSD_NET_IMPORT_AUDIO_MAX_MB");
+    unsigned long mb = (m && m[0]) ? std::strtoul(m, nullptr, 10) : 1024;
+    return static_cast<std::uint64_t>(mb) * 1024ull * 1024ull;
+}
 std::int64_t net_audio_max_age_ms() {
     const char* h = std::getenv("DSD_NET_AUDIO_MAX_AGE_H");
     return (h && h[0]) ? static_cast<std::int64_t>(std::strtod(h, nullptr) * 3600.0 * 1000.0) : 0;
@@ -624,6 +633,23 @@ void Session::serve_http() {
             res->body() = "{\"name\":" + assocjson::q(name) + ",\"status\":" + assocjson::q(r.status) +
                           ",\"message\":" + assocjson::q(r.message) + ",\"id\":" + std::to_string(r.id) + "}";
         } else {
+            res->body() = "{}";
+        }
+    } else if (post && target == "/net/import/audio") {
+        // One call's WAV from an imported "export with audio" zip (body),
+        // for import ?id= -- kept only if a call in that import names ?name=.
+        res->set(http::field::content_type, "application/json");
+        if (stats_) {
+            const auto r = stats_->assoc().import_audio(std::strtoull(query_param(query, "id").c_str(), nullptr, 10),
+                                                        query_param(query, "name"), http_req_.body());
+            res->result(r.status == "added" || r.status == "have" ? http::status::ok
+                        : r.status == "full" ? http::status::insufficient_storage
+                        : r.status == "failed" ? http::status::internal_server_error
+                        : r.status == "invalid" ? http::status::bad_request : http::status::not_found);
+            res->body() = "{\"status\":" + assocjson::q(r.status) + ",\"message\":" + assocjson::q(r.message) +
+                          ",\"calls\":" + std::to_string(r.calls) + "}";
+        } else {
+            res->result(http::status::not_found);
             res->body() = "{}";
         }
     } else if (post && target == "/net/keys/set") {
@@ -1862,6 +1888,8 @@ Server::Server(net::io_context& ioc, const tcp::endpoint& endpoint)
     // across restarts. Entered in the UI, fed to the operator's own decoder.
     if (stats_->assoc().use_keys_file(net_keys_file()))
         std::cerr << "net keys: loaded " << stats_->assoc().keys_count() << " from " << net_keys_file() << "\n";
+
+    stats_->assoc().use_import_audio_dir(net_import_audio_dir(), net_import_audio_max_bytes());
 
     // Record each call's decoded voice from startup: DSD_NET_AUDIO=1 (=0 never),
     // or, with it unset, as the explorer's Audio switch was last left.

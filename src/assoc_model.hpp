@@ -541,6 +541,13 @@ public:
     // A served file's path ("" if `name` isn't one of the store's files).
     std::string audio_path(const std::string& name, std::int64_t now = now_ms()) {
         std::lock_guard<std::mutex> lk(mu_);
+        if (name.size() > 2 && name[0] == 'i' && std::isdigit(static_cast<unsigned char>(name[1]))) {
+            // An imported call's audio: only a file uploaded for that import.
+            const std::uint64_t id = std::strtoull(name.c_str() + 1, nullptr, 10);
+            auto it = import_audio_.find(id);
+            if (it == import_audio_.end() || !it->second.files.count(name)) return std::string();
+            return import_audio_root_ + "/" + std::to_string(id) + "/" + name;
+        }
         return audio_.path_for(name, now);
     }
 
@@ -701,19 +708,28 @@ public:
         std::string replaced;
         for (auto it = v.replaces.rbegin(); it != v.replaces.rend(); ++it) {
             replaced = imports_[*it].label + (replaced.empty() ? "" : ", ") + replaced;
+            drop_import_audio_locked(imports_[*it].id);
             imports_.erase(imports_.begin() + static_cast<std::ptrdiff_t>(*it));
         }
         x.id = ++next_import_;
         x.exported = x.exported ? x.exported : now;
+        ImportAudio ia;
         // Stable call ids for the layer, apart from live ones (and each other).
         for (auto& fk : x.fams) {
             auto& C = fk.second.calls;
             std::stable_sort(C.begin(), C.end(), [](const DsCall& p, const DsCall& q) { return p.start > q.start; });
             cap_calls(C, max_calls_);
             for (std::size_t i = 0; i < C.size(); ++i) C[i].id = x.id * kImportIdStride + (C.size() - i);
-            // An imported call's audio isn't on this server: nothing to play.
-            for (auto& c : C) { c.audio.clear(); c.audio_ms = 0; }
+            // An imported call's audio isn't on this server yet: nothing to
+            // play until its file is uploaded (import_audio). Note which file
+            // each call wants, so an upload can be matched to its calls.
+            for (auto& c : C) {
+                const std::string base = import_audio_base(c.audio);
+                if (!base.empty()) ia.want[base].push_back({fk.first, c.id, c.audio_ms});
+                c.audio.clear(); c.audio_ms = 0;
+            }
         }
+        if (!ia.want.empty()) import_audio_[x.id] = std::move(ia);
         r.id = x.id;
         r.status = replaced.empty() ? "imported" : "replaced";
         r.message = replaced.empty() ? std::string("imported") : "imported (replaces " + replaced + ", an older export of the same run)";
@@ -724,16 +740,93 @@ public:
     bool remove_import(std::uint64_t id) {
         std::lock_guard<std::mutex> lk(mu_);
         for (auto it = imports_.begin(); it != imports_.end(); ++it)
-            if (it->id == id) { imports_.erase(it); ++version_; return true; }
+            if (it->id == id) { drop_import_audio_locked(id); imports_.erase(it); ++version_; return true; }
         return false;
     }
     void clear_imports() {
         std::lock_guard<std::mutex> lk(mu_);
+        drop_all_import_audio_locked();
         if (!imports_.empty()) { imports_.clear(); ++version_; }
     }
     std::size_t import_count() const {
         std::lock_guard<std::mutex> lk(mu_);
         return imports_.size();
+    }
+
+    // ---- imported calls' audio ----------------------------------------------
+    // An "export with audio" zip carries each call's WAV. Import posts the
+    // export, then each WAV (import_audio); a file is kept only if a call in
+    // that import names it, and is served as "i<import id>_<its name>" from
+    // <root>/<import id>/. It goes when the import does (Remove, Clear, a
+    // newer export of the same run replacing it). Imports are not kept across
+    // a restart, so neither is their audio: the root is emptied when set.
+    // Total size is capped (`cap` bytes, across all imports).
+    void use_import_audio_dir(const std::string& root, std::uint64_t cap) {
+        std::lock_guard<std::mutex> lk(mu_);
+        import_audio_root_ = root;
+        import_audio_cap_ = cap;
+        std::error_code ec;
+        if (!root.empty()) std::filesystem::remove_all(root, ec);
+    }
+    struct AudioUpload {
+        std::string status;          // added | have | unknown | full | invalid | failed
+        std::string message;
+        std::uint64_t calls = 0;     // calls that now play it
+    };
+    AudioUpload import_audio(std::uint64_t id, const std::string& name, const std::string& data) {
+        AudioUpload r;
+        const std::string base = import_audio_base(name);
+        std::string dir, served, path;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            auto it = import_audio_.find(id);
+            if (import_audio_root_.empty()) { r.status = "failed"; r.message = "no folder for imported audio"; return r; }
+            if (it == import_audio_.end() || base.empty() || !it->second.want.count(base)) {
+                r.status = "unknown"; r.message = "no call in this import has that audio"; return r;
+            }
+            served = "i" + std::to_string(id) + "_" + base;
+            if (it->second.files.count(served)) { r.status = "have"; r.message = "already uploaded"; return r; }
+            if (data.size() < 44 || data.compare(0, 4, "RIFF") != 0 || data.compare(8, 4, "WAVE") != 0) {
+                r.status = "invalid"; r.message = "not a WAV file"; return r;
+            }
+            if (import_audio_bytes_locked() + data.size() > import_audio_cap_) {
+                r.status = "full"; r.message = "the imported-audio space is full"; return r;
+            }
+            dir = import_audio_root_ + "/" + std::to_string(id);
+        }
+        // Written outside the lock (a file can be large), then attached.
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        path = dir + "/" + served;
+        {
+            std::ofstream f(path + ".part", std::ios::binary | std::ios::trunc);
+            f.write(data.data(), static_cast<std::streamsize>(data.size()));
+            if (!f) { std::filesystem::remove(path + ".part", ec); r.status = "failed"; r.message = "could not write the file"; return r; }
+        }
+        std::filesystem::rename(path + ".part", path, ec);
+        if (ec) { std::filesystem::remove(path + ".part", ec); r.status = "failed"; r.message = "could not write the file"; return r; }
+        std::lock_guard<std::mutex> lk(mu_);
+        auto it = import_audio_.find(id);
+        Dataset* d = nullptr;
+        for (auto& x : imports_) if (x.id == id) d = &x;
+        if (it == import_audio_.end() || !d || it->second.files.count(served)) {   // removed meanwhile / raced
+            if (it == import_audio_.end() || !d) std::filesystem::remove(path, ec);
+            r.status = it == import_audio_.end() || !d ? "unknown" : "have";
+            r.message = r.status == "have" ? "already uploaded" : "the import was removed";
+            return r;
+        }
+        ImportAudio& ia = it->second;
+        ia.files[served] = data.size();
+        for (const auto& w : ia.want[base]) {
+            auto fit = d->fams.find(w.fam);
+            if (fit == d->fams.end()) continue;
+            for (auto& c : fit->second.calls)
+                if (c.id == w.call) { c.audio = served; c.audio_ms = w.ms; ++r.calls; }
+        }
+        r.status = "added";
+        r.message = "added";
+        ++version_;
+        return r;
     }
 
     // ---- network merges (NetMerges, assoc_merge.hpp) ------------------------
@@ -854,8 +947,42 @@ public:
     std::string name() const { std::lock_guard<std::mutex> lk(mu_); return name_; }
     std::int64_t since() const { std::lock_guard<std::mutex> lk(mu_); return since_; }
 
+    // A call's audio name from an export, as this server would store it: any
+    // "i<n>_" prefixes (an import of an import) dropped, and only the audio
+    // store's own safe "call_....wav" form accepted. "" if not.
+    static std::string import_audio_base(std::string n) {
+        while (n.size() > 2 && n[0] == 'i' && std::isdigit(static_cast<unsigned char>(n[1]))) {
+            std::size_t u = 1;
+            while (u < n.size() && std::isdigit(static_cast<unsigned char>(n[u]))) ++u;
+            if (u >= n.size() || n[u] != '_') break;
+            n = n.substr(u + 1);
+        }
+        return CallAudioStore::valid_name(n) ? n : std::string();
+    }
 private:
     static constexpr std::uint64_t kImportIdStride = 1000000000ull;
+
+    std::uint64_t import_audio_bytes_locked() const {
+        std::uint64_t t = 0;
+        for (const auto& ik : import_audio_) for (const auto& f : ik.second.files) t += f.second;
+        return t;
+    }
+    std::string import_audio_json_locked(std::uint64_t id) const {
+        auto it = import_audio_.find(id);
+        if (it == import_audio_.end()) return std::string();
+        return ",\"audio_files\":" + std::to_string(it->second.want.size()) +
+               ",\"audio_have\":" + std::to_string(it->second.files.size());
+    }
+    void drop_import_audio_locked(std::uint64_t id) {
+        if (!import_audio_.erase(id) || import_audio_root_.empty()) return;
+        std::error_code ec;
+        std::filesystem::remove_all(import_audio_root_ + "/" + std::to_string(id), ec);
+    }
+    void drop_all_import_audio_locked() {
+        std::vector<std::uint64_t> ids;
+        for (const auto& ik : import_audio_) ids.push_back(ik.first);
+        for (auto id : ids) drop_import_audio_locked(id);
+    }
 
     // /net.json up to its "families" (the view: live + imports): this run's
     // identity and the import list. Recording snapshots use the live-only
@@ -873,7 +1000,8 @@ private:
             im += "{\"id\":" + std::to_string(d.id) + ",\"label\":" + assocjson::q(d.label) +
                   ",\"exported\":" + std::to_string(d.exported) + ",\"sources\":" + sources_json(d.sources) +
                   ",\"networks\":" + std::to_string(nn) + ",\"talkgroups\":" + std::to_string(nt) +
-                  ",\"radios\":" + std::to_string(nr) + ",\"calls\":" + std::to_string(nc) + "}";
+                  ",\"radios\":" + std::to_string(nr) + ",\"calls\":" + std::to_string(nc) +
+                  import_audio_json_locked(d.id) + "}";
         }
         im += "]";
         return "{\"version\":" + std::to_string(version_) + ",\"now\":" + std::to_string(now) +
@@ -1070,6 +1198,7 @@ private:
             for (auto& k : fk.second.calls)
                 if (!k.audio.empty()) audio_.finish(k.audio);   // the files stay on disk
         fam_.clear();
+        drop_all_import_audio_locked();
         imports_.clear();
         since_ = now;
         for (auto& kv : sess_) {
@@ -1931,6 +2060,16 @@ private:
     std::int64_t since_ = now_ms();
     std::vector<Dataset> imports_;
     std::uint64_t next_import_ = 0;
+    // Imported calls' audio (import_audio): per import, the files its calls
+    // name ("call_....wav" -> the calls) and the ones uploaded (served name -> bytes).
+    struct AudioWant { std::string fam; std::uint64_t call = 0, ms = 0; };
+    struct ImportAudio {
+        std::map<std::string, std::vector<AudioWant>> want;
+        std::map<std::string, std::uint64_t> files;
+    };
+    std::map<std::uint64_t, ImportAudio> import_audio_;
+    std::string import_audio_root_;                    // "" = imported audio not kept
+    std::uint64_t import_audio_cap_ = 0;
     NetMerges merges_;                                 // network merges (shared; kept through Clear)
     std::string merges_file_;                          // where they are kept ("" = memory only)
     KeyRing keys_;                                     // per-network decryption keyring (values never leave in /net.json/exports)
