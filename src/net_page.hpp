@@ -2571,7 +2571,7 @@ function viewCalls() {
     { label: 'To', cls: 'tgcell', k: function (c) { return c.tgt; }, cell: toCell },
     { label: 'Type', cls: 'ctype', cell: typeBadges },
     { label: 'Audio', cls: 'nowrap', k: function (c) { return hasAudio(c) ? 1 : 0; }, cell: audioCell,
-      hideEmpty: function (c) { return hasAudio(c) || !!c.q; } },   // also keep the column for a quality badge with no file
+      hideEmpty: function (c) { return hasAudio(c) || (!!c.q && c.q !== 'good'); } },   // keep for audio or a VISIBLE quality badge ('good' shows nothing)
     { label: 'Content', cls: 'wrap', cell: textCell, hideEmpty: function (c) { return !!(c.text || c.svc || c.pos || c.kid); } }
   ], rows, (S.audOnly ? 'No calls with audio' : 'No calls heard yet') + (anyFilter() || S.q ? ' for this filter.' : '.'),
      null, null, callCard, function (c) { return sttSpan(c); });
