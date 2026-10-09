@@ -633,7 +633,7 @@ var FAMN = {dmr:'DMR', p25:'P25', nxdn:'NXDN', tetra:'TETRA', dpmr:'dPMR', dstar
 var PAL = ['#5bc0de','#62c462','#f89406','#ee5f5b','#b38bff','#e6c229','#3fc1a5','#ff7eb6','#8fa8ff',
            '#c3e88d','#ffab70','#4dd0e1','#d4a5ff','#a3d977'];
 var S = { d: null, fam: null, nets: {}, tgf: {}, rf: {}, view: 'calls', sel: null, q: '', paused: false, skew: 0,
-          ncol: {}, nidx: {}, sort: {}, rows: {}, audOnly: false, noSig: false, fOpen: false, keyAdd: null };
+          ncol: {}, nidx: {}, sort: {}, rows: {}, audOnly: false, noSig: false, fOpen: false, keyAdd: null, bpAdd: null };
 var IX = null;
 
 function $(id) { return document.getElementById(id); }
@@ -1332,6 +1332,85 @@ function removeKey(net, kid) {
       if (j.ok) { if (S.keyEdit && S.keyEdit.kid === kid) S.keyEdit = null; markKeyed(net, kid, false); toast('Key removed.'); if (S.d) render(); }
     }).catch(function () { toast('Could not reach the server to remove the key.'); });
 }
+// DMR Basic Privacy: a key NUMBER (1-255) per network, applied with dsd-fme's
+// -b. S.d.bp is {fam:{net:number}} from /net.json (the number isn't secret).
+function bpOf(net) { var B = S.d && S.d.bp && S.d.bp[S.fam]; return (B && B[net]) || 0; }
+function markBp(net, num) {
+  if (!S.d) return;
+  S.d.bp = S.d.bp || {}; var F = S.d.bp[S.fam] = S.d.bp[S.fam] || {};
+  if (num) F[net] = num; else delete F[net];
+}
+function setBp(net, num, done) {
+  fetch('/net/bp/set', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+                         body: JSON.stringify({ fam: S.fam, net: net, key: num }) })
+    .then(function (r) { return r.json().then(function (j) { return r.ok && j.ok; }, function () { return false; }); })
+    .then(function (ok) {
+      if (ok) { S.bpAdd = null; markBp(net, num); toast('Basic Privacy key ' + num + ' set for ' + (netLabel(net) || net) + '.'); if (S.d) render(); }
+      else toast('That BP key wasn’t accepted (a number 1–255).');
+      if (done) done(ok);
+    }).catch(function () { toast('Could not reach the server to set the BP key.'); });
+}
+function removeBp(net) {
+  fetch('/net/bp/remove?fam=' + encodeURIComponent(S.fam) + '&net=' + encodeURIComponent(net), { cache: 'no-store' })
+    .then(function (r) { return r.json(); }).then(function (j) {
+      if (j.ok) { markBp(net, 0); toast('Basic Privacy key removed.'); if (S.d) render(); }
+    }).catch(function () { toast('Could not reach the server to remove the BP key.'); });
+}
+// The Basic Privacy section of the Keys tab (DMR only): the networks with a BP
+// key set (with Clear) and a form to set one. BP has no key id, so a decoder
+// applies one BP key per channel.
+function bpSection(cont) {
+  var B = (S.d && S.d.bp && S.d.bp[S.fam]) || {}, nets = Object.keys(B);
+  cont.appendChild(h('div', { class: 'section', style: 'margin-top:1rem', text: 'Basic Privacy (DMR)' }));
+  if (!S.file) {
+    var bar = h('div', { class: 'tagrow', style: 'margin:0; padding:.4rem .9rem .3rem; gap:.5rem' }, [
+      h('button', { class: 'btn sm', type: 'button', title: 'Set a DMR Basic Privacy key number for a network',
+                    onclick: function () { S.bpAdd = S.bpAdd ? null : { net: '', num: '' }; viewKeys(); } },
+        S.bpAdd ? '× Cancel' : '+ Set a Basic Privacy key')]);
+    cont.appendChild(bar);
+  }
+  if (!S.file && S.bpAdd) cont.appendChild(bpAddForm());
+  cont.appendChild(h('div', { class: 'note', style: 'margin-top:0', text: 'Basic Privacy is a key number (1–255) that selects a well-known key — not a hex key, and it carries no key id, so a decoder applies one BP key per channel. It is applied to this network’s frequency on both backends. Set it only on channels you know use BP (on the in-process DSDcc backend a BP key is applied to every voice frame). Takes effect when a stream next starts — use “Apply to live streams” above to apply now.' }));
+  if (!nets.length) { cont.appendChild(h('div', { class: 'note', text: 'No Basic Privacy key set on DMR.' })); return; }
+  var ul = h('ul', { class: 'lst keylst' });
+  nets.sort().forEach(function (net) {
+    var row = h('li', null, [h('div', { class: 'keyhdr' }, [
+      netc(net), h('span', { class: 'mono', text: 'BP key ' + B[net] }),
+      h('span', { class: 'c' }, S.file ? '' : h('a', { class: 'keyrm', onclick: function () { removeBp(net); } }, 'Clear'))])]);
+    ul.appendChild(row);
+  });
+  cont.appendChild(ul);
+}
+// The "set a BP key" form: pick a network and enter the key number.
+function bpAddForm() {
+  var wrap = h('div', { class: 'keyadd' });
+  wrap.appendChild(h('h4', { text: 'Set a Basic Privacy key' }));
+  var lab = function (t, ctl) { return h('label', null, [h('span', { text: t }), ctl]); };
+  var nets = IX.nets.slice().sort(function (a, b) { return (b.calls || 0) - (a.calls || 0); });
+  var netSel = h('select', { class: 'ksel', 'aria-label': 'Network' });
+  nets.forEach(function (n) {
+    var o = h('option', { value: n.key }, netLabel(n.key) || n.key);
+    if (n.key === S.bpAdd.net) o.selected = true;
+    netSel.appendChild(o);
+  });
+  if (!S.bpAdd.net && nets.length) S.bpAdd.net = netSel.value;
+  netSel.addEventListener('change', function () { S.bpAdd.net = netSel.value; });
+  var numInp = h('input', { class: 'ki', type: 'text', inputmode: 'numeric', spellcheck: 'false', autocomplete: 'off',
+                            value: S.bpAdd.num, placeholder: '1–255', 'aria-label': 'BP key number' });
+  numInp.addEventListener('input', function () { S.bpAdd.num = numInp.value; });
+  var save = function () {
+    var net = S.bpAdd.net, num = parseInt((S.bpAdd.num || '').trim(), 10);
+    if (!net) { toast('Pick a network.'); return; }
+    if (!(num >= 1 && num <= 255)) { toast('Enter a BP key number (1–255).'); numInp.focus(); return; }
+    setBp(net, num, function (ok) { if (ok) S.bpAdd = null; if (S.view === 'keys') viewKeys(); });
+  };
+  numInp.addEventListener('keydown', function (e) { if (e.key === 'Enter') save(); if (e.key === 'Escape') { S.bpAdd = null; viewKeys(); } });
+  wrap.appendChild(h('div', { class: 'keyadd-grid' }, [lab('Network', netSel), lab('BP key number', numInp)]));
+  wrap.appendChild(h('div', { class: 'keyact' }, [
+    h('button', { class: 'btn sm', type: 'button', onclick: save }, 'Set key'),
+    h('button', { class: 'btn sm', type: 'button', onclick: function () { S.bpAdd = null; viewKeys(); } }, 'Cancel')]));
+  return wrap;
+}
 // "Encryption keys seen": each key id the entity's encrypted calls named, how
 // many calls, and whether a decryption key is loaded. On a network's panel
 // (live view) a key can be added / removed and the key list downloaded.
@@ -1516,18 +1595,20 @@ function viewKeys() {
   if (!kn.length) {
     cont.appendChild(h('div', { class: 'note', text: 'No encryption key ids ' + (loaded ? '' : 'seen or ') + 'loaded on ' + (FAMN[S.fam] || S.fam) +
       ' yet. Add one above, or when an encrypted call names a key id it appears here (and in the network’s details) with a place to enter the key.' }));
-    return;
+  } else {
+    kn.sort(function (a, b) { return (b.calls || 0) - (a.calls || 0); }).forEach(function (n) {
+      var blk = h('div', { class: 'keynet' });
+      var seen = {};
+      for (var k in (n.keys || {})) { var i = k.indexOf(':'); seen[k.slice(i + 1)] = 1; }
+      (n.parts || [n]).forEach(function (p) { for (var id in keyedOf(p.key)) seen[id] = 1; });
+      var idc = Object.keys(seen).length;
+      blk.appendChild(h('h4', { class: 'keynet-h' }, [netc(n.key), h('span', { class: 'alias', text: ' · ' + idc + ' key id' + (idc === 1 ? '' : 's') })]));
+      keysSection(blk, n.keys, 'on it', { nets: (n.parts || [n]).map(function (p) { return p.key; }), net: n.key, compact: true });
+      cont.appendChild(blk);
+    });
   }
-  kn.sort(function (a, b) { return (b.calls || 0) - (a.calls || 0); }).forEach(function (n) {
-    var blk = h('div', { class: 'keynet' });
-    var seen = {};
-    for (var k in (n.keys || {})) { var i = k.indexOf(':'); seen[k.slice(i + 1)] = 1; }
-    (n.parts || [n]).forEach(function (p) { for (var id in keyedOf(p.key)) seen[id] = 1; });
-    var idc = Object.keys(seen).length;
-    blk.appendChild(h('h4', { class: 'keynet-h' }, [netc(n.key), h('span', { class: 'alias', text: ' · ' + idc + ' key id' + (idc === 1 ? '' : 's') })]));
-    keysSection(blk, n.keys, 'on it', { nets: (n.parts || [n]).map(function (p) { return p.key; }), net: n.key, compact: true });
-    cont.appendChild(blk);
-  });
+  // DMR Basic Privacy (a key number per network, no key id) -- its own section.
+  if (S.fam === 'dmr') bpSection(cont);
 }
 // The manual "Add a key" form (Keys tab): pick a network, type a key id, pick
 // the algorithm (optional) and enter the hex value. Its state (S.keyAdd)
@@ -3054,7 +3135,7 @@ function onlyNet(k) { var ks = netKeys(); return ks.length === 1 && ks[0] === k 
 // The Filters section's collapsed / open state (remembered per browser).
 function setFOpen(open) { S.fOpen = open; store('filtersOpen', open ? '1' : ''); render(); }
 function setView(v) {
-  if (v !== 'keys') S.keyAdd = null;                      // leaving Keys: drop a half-entered manual key
+  if (v !== 'keys') { S.keyAdd = null; S.bpAdd = null; }  // leaving Keys: drop a half-entered manual key
   S.view = v; store('view', v);
   var tabs = document.querySelectorAll('#viewtabs .tab');
   for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-v') === v);
@@ -3737,7 +3818,7 @@ document.addEventListener('scroll', function (e) {
 }, true);
 function holdReason() {
   var t = Date.now();
-  if (S.keyAdd) return ['adding a key', 'while you add a key'];
+  if (S.keyAdd || S.bpAdd) return ['adding a key', 'while you add a key'];
   if (keyEditing()) return ['entering a key', 'while you enter a key'];
   if (HOLD.down && t - HOLD.down < 30000) return ['clicking', 'while you click or drag'];
   if (t - HOLD.scroll < 500) return ['scrolling', 'while you scroll'];

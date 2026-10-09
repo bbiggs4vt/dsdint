@@ -397,6 +397,19 @@ tablet or phone the details are a drawer: **Close** or Esc.
     encrypted call for that key id is ever heard. The key is stored exactly
     like one added from a key id in a call, and the download key lists and
     your decoder pick it up the same way.
+  - **Basic Privacy (DMR).** DMR Basic Privacy is different from the keys
+    above: its "key" is a **number, 1–255**, that selects a well-known key,
+    and it carries **no key id**. The DMR Keys tab has a **Basic Privacy**
+    section — **+ Set a Basic Privacy key**, pick the **network** and enter
+    the **number** — stored per network and applied to the server's own
+    decoder with dsd-fme's `-b` (and the in-process DSDcc backend's BP key),
+    matched to the network's **frequency** when a stream starts. It works on
+    **both** backends. Because BP has no key id, a decoder applies **one** BP
+    key per channel, so set it only on channels you know use BP: on the DSDcc
+    backend a BP key is applied to every voice frame, which garbles a clear
+    channel. The number isn't secret (the keys themselves are well known). As
+    with the key list, a change takes effect when a stream next starts, or now
+    with **↻ Apply to live streams**.
 
 ## 9. Searching, filtering and sorting
 

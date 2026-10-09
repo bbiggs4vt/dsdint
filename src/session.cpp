@@ -669,6 +669,22 @@ void Session::serve_http() {
         }
         if (!ok) res->result(http::status::bad_request);
         res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
+    } else if (post && target == "/net/bp/set") {
+        // Set a DMR Basic Privacy key number (1-255) for a network. BP has no
+        // key id and isn't a hex key, so it is kept apart from the keyring and
+        // applied with dsd-fme's -b. The number is not secret.
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "application/json");
+        bool ok = false;
+        if (stats_) {
+            const auto obj = json::parse_flat_object(http_req_.body());
+            std::string fam = json::get_string(obj, "fam");
+            if (fam.empty()) fam = "dmr";
+            ok = stats_->assoc().set_bp(fam, json::get_string(obj, "net"),
+                                        static_cast<int>(json::get_number(obj, "key", 0.0)));
+        }
+        if (!ok) res->result(http::status::bad_request);
+        res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
     } else if (post && target == "/net/merge") {
         const std::string out = net_merge_response(http_req_.body());
         res->result(out.compare(0, 9, "{\"error\":") == 0 ? http::status::bad_request : http::status::ok);
@@ -820,6 +836,13 @@ void Session::serve_http() {
     } else if (target == "/net/keys/remove") {
         bool ok = stats_ && stats_->assoc().remove_key(query_param(query, "fam"), query_param(query, "net"),
                                                        query_param(query, "kid"));
+        res->result(ok ? http::status::ok : http::status::bad_request);
+        res->set(http::field::content_type, "application/json");
+        res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
+    } else if (target == "/net/bp/remove") {
+        std::string fam = query_param(query, "fam");
+        if (fam.empty()) fam = "dmr";
+        bool ok = stats_ && stats_->assoc().remove_bp(fam, query_param(query, "net"));
         res->result(ok ? http::status::ok : http::status::bad_request);
         res->set(http::field::content_type, "application/json");
         res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
@@ -1542,6 +1565,18 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
 
         ActiveDsdBackendConfig dcfg;
         bool have_key_list = false;   // the explorer's keyring was handed to dsd-fme (-K)
+        // DMR Basic Privacy set in the explorer (per network, matched by this
+        // stream's frequency). Applied only when the client didn't send its
+        // own bp key; BP is DMR-only, though an "auto" stream may still match a
+        // DMR BP entry on its frequency. Works on both backends (-b / DSDcc).
+        int stored_bp = 0;
+        if (stats_ && key_type_enum != KeyType::Bp) {
+            const std::string bpfam = assoc_family(protocol_hint_label(hint));
+            if (bpfam == "dmr" || bpfam == "auto") {
+                const std::int64_t chf = center_freq_ > 0 ? channel_freq(center_freq_ + freq_offset) : 0;
+                stored_bp = stats_->assoc().bp_for_freq("dmr", chf);
+            }
+        }
 #if defined(DSD_USE_DSDCC_BACKEND)
         // Map the hint to DsdccDecoder's mode string (see DsdccDecoder::start,
         // which forwards it to DSDDecoder::setDecodeMode). Default -> "dmr",
@@ -1585,6 +1620,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
             std::cerr << "dsd-server: DSDcc backend supports only DMR Basic Privacy "
                          "('bp') keys; ignoring key_type='" << key_type << "'\n";
         }
+        if (!dcfg.bp_key && stored_bp) dcfg.bp_key = static_cast<unsigned>(stored_bp);  // explorer BP for this network
         // DsdccDecoder is in-process, so there's no UDP audio port to
         // allocate -- udp_audio_port_ stays 0 and the "started" message
         // below reports that accurately (0 meaning "not applicable here",
@@ -1652,6 +1688,10 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
                 dcfg.extra_args.push_back(key);
             }
         }
+        if (stored_bp) {   // explorer DMR Basic Privacy for this network's frequency
+            dcfg.extra_args.push_back("-b");
+            dcfg.extra_args.push_back(std::to_string(stored_bp));
+        }
 
         // Hand this decoder the explorer's stored keyring as a dsd-fme -K hex
         // key list, so keys entered in the UI decrypt this server's own
@@ -1699,7 +1739,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         if (stats_ && stats_id_) {
             auto st = stats_;
             const std::uint64_t sid = stats_id_;
-            const bool keyed = key_type_enum != KeyType::None || have_key_list;
+            const bool keyed = key_type_enum != KeyType::None || have_key_list || stored_bp != 0;
             dcfg.on_slot_audio = [st, sid, keyed](int slot, const int16_t* pcm, std::size_t n) {
                 st->assoc().audio(sid, slot, pcm, n, keyed);
             };

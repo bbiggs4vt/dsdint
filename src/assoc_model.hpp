@@ -901,6 +901,16 @@ public:
         mjson::V root;
         if (!mjson::parse(ss.str(), root) || root.t != mjson::V::Obj) return false;
         keys_ = keyring_parse(root);
+        bp_.clear();
+        if (const mjson::V* b = root.get("bp"); b && b->t == mjson::V::Obj)
+            for (const auto& fk : b->o) {
+                if (fk.second.t != mjson::V::Obj) continue;
+                for (const auto& nk : fk.second.o)
+                    if (nk.second.t == mjson::V::Num) {
+                        const int n = static_cast<int>(nk.second.n);
+                        if (n >= 1 && n <= 255) bp_[fk.first][nk.first] = n;
+                    }
+            }
         return true;
     }
     bool set_key(const std::string& fam, const std::string& net, const std::string& kid,
@@ -917,6 +927,43 @@ public:
         ++version_;
         save_keys_locked();
         return true;
+    }
+    // DMR Basic Privacy: a key NUMBER (1-255, selecting a built-in well-known
+    // key), set per network. BP carries no key id and isn't a hex key, so it
+    // lives apart from the keyring; it is applied to the server's decoder with
+    // dsd-fme's -b (DSDcc's setDMRBasicPrivacyKey), matched by the network's
+    // frequency at stream start. The number is not secret.
+    bool set_bp(const std::string& fam, const std::string& net, int number) {
+        if (fam.empty() || net.empty() || number < 1 || number > 255) return false;
+        std::lock_guard<std::mutex> lk(mu_);
+        bp_[fam][net] = number;
+        ++version_;
+        save_keys_locked();
+        return true;
+    }
+    bool remove_bp(const std::string& fam, const std::string& net) {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto f = bp_.find(fam);
+        if (f == bp_.end() || !f->second.erase(net)) return false;
+        if (f->second.empty()) bp_.erase(f);
+        ++version_;
+        save_keys_locked();
+        return true;
+    }
+    // The BP key number for a network of `fam` on `freq_hz` (0 = none). BP has
+    // no key id, so a stream is matched to a stored BP entry by the frequency
+    // in its network key ("cc:1@440425000"). First match wins.
+    int bp_for_freq(const std::string& fam, std::int64_t freq_hz) const {
+        if (freq_hz <= 0) return 0;
+        std::lock_guard<std::mutex> lk(mu_);
+        auto f = bp_.find(fam);
+        if (f == bp_.end()) return 0;
+        const std::string suffix = "@" + std::to_string(freq_hz);
+        for (const auto& nk : f->second)
+            if (nk.first.size() >= suffix.size() &&
+                nk.first.compare(nk.first.size() - suffix.size(), suffix.size(), suffix) == 0)
+                return nk.second;
+        return 0;
     }
     // The dsd-fme hex key list (-K) for one network. Returns at least a header.
     std::string keys_csv(const std::string& fam, const std::string& net) const {
@@ -1026,6 +1073,7 @@ private:
                ",\"streams\":" + streams_json_locked() + ",\"imports\":" + im +
                ",\"merges\":" + merges_json(view_merges_locked()) +
                ",\"keyed\":" + keyring_loaded_json(keys_) +
+               ",\"bp\":" + bp_json_locked() +
                ",\"families\":";
     }
     // The explorer's map: a tile server of your own (DSD_NET_MAP_TILES, a URL
@@ -1157,6 +1205,20 @@ private:
     }
     // The keyring holds decryption key values, so write it readable only by
     // the server's own user (0600), never world-readable like other state.
+    // {"dmr":{"cc:1@440425000":7,...}} -- BP key numbers per network (not secret).
+    std::string bp_json_locked() const {
+        using assocjson::q;
+        std::ostringstream o;
+        o << "{";
+        bool ff = true;
+        for (const auto& fk : bp_) {
+            o << (ff ? "" : ",") << q(fk.first) << ":{"; ff = false;
+            bool fn = true;
+            for (const auto& nk : fk.second) { o << (fn ? "" : ",") << q(nk.first) << ":" << nk.second; fn = false; }
+            o << "}";
+        }
+        return o.str() + "}";
+    }
     void save_keys_locked() const {
         if (keys_file_.empty()) return;
         const std::string tmp = keys_file_ + ".tmp";
@@ -1166,7 +1228,7 @@ private:
         {
             std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
             if (!f) return;
-            f << "{\"keys\":" << keyring_json(keys_) << "}\n";
+            f << "{\"keys\":" << keyring_json(keys_) << ",\"bp\":" << bp_json_locked() << "}\n";
             if (!f) return;
         }
         std::filesystem::permissions(tmp, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
@@ -2087,6 +2149,7 @@ private:
     NetMerges merges_;                                 // network merges (shared; kept through Clear)
     std::string merges_file_;                          // where they are kept ("" = memory only)
     KeyRing keys_;                                     // per-network decryption keyring (values never leave in /net.json/exports)
+    std::map<std::string, std::map<std::string, int>> bp_;  // DMR Basic Privacy key numbers: fam -> net -> 1..255 (not secret)
     std::string keys_file_;                            // where it is kept ("" = memory only)
     bool per_receiver_ = default_per_receiver();
     std::size_t max_calls_ = max_calls_setting();

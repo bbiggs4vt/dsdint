@@ -2,7 +2,10 @@
 // (no values), the whole-ring JSON (with values), round-trip, and the dsd-fme
 // -K key list. Also that AssocModel never puts a key value in /net.json.
 #include <cstdio>
+#include <filesystem>
 #include <string>
+
+#include <unistd.h>
 
 #include "assoc_keys.hpp"
 #include "assoc_model.hpp"
@@ -117,6 +120,37 @@ int main() {
         check(m.remove_key("p25", "nac:201@408200000", "666A") &&
                   m.to_json(2100).find("666A") == std::string::npos,
               "model: remove_key clears it from \"keyed\"");
+    }
+
+    // ---- DMR Basic Privacy (key number per network, applied by frequency) ----
+    {
+        AssocModel m;
+        check(m.set_bp("dmr", "cc:1@440425000", 7), "bp: a valid key number (1-255) is set");
+        check(!m.set_bp("dmr", "cc:1@440425000", 0) && !m.set_bp("dmr", "cc:1@440425000", 256) &&
+                  !m.set_bp("dmr", "", 7),
+              "bp: out-of-range numbers and an empty network are rejected");
+        check(m.to_json(2000).find("\"bp\":{\"dmr\":{\"cc:1@440425000\":7}}") != std::string::npos,
+              "bp: /net.json advertises the number (it is not secret)");
+        check(m.bp_for_freq("dmr", 440425000) == 7, "bp: matched by the network's frequency");
+        check(m.bp_for_freq("dmr", 460175000) == 0 && m.bp_for_freq("p25", 440425000) == 0 &&
+                  m.bp_for_freq("dmr", 0) == 0,
+              "bp: no match for another frequency / family / no frequency");
+
+        check(m.remove_bp("dmr", "cc:1@440425000") && m.bp_for_freq("dmr", 440425000) == 0 &&
+                  !m.remove_bp("dmr", "cc:1@440425000"),
+              "bp: remove clears it, and removing again is false");
+
+        // Round-trip through the keys file: the number persists across a load.
+        namespace fs = std::filesystem;
+        const std::string kf = (fs::temp_directory_path() / ("dsd_bp_keys_" + std::to_string(::getpid()) + ".json")).string();
+        fs::remove(kf);
+        AssocModel w;
+        w.use_keys_file(kf);                       // sets the path (file absent yet); set_bp then writes it
+        w.set_bp("dmr", "cc:5@451237500", 42);
+        AssocModel r;
+        check(r.use_keys_file(kf) && r.bp_for_freq("dmr", 451237500) == 42,
+              "bp: it is kept in the keys file and comes back on load");
+        fs::remove(kf);
     }
 
     if (g_failures == 0) { std::printf("\nALL KEYRING TESTS PASSED\n"); return 0; }

@@ -1105,6 +1105,8 @@ over HTTP and the connection closed:
 | `GET /net/keys/remove?fam=&net=&kid=` | remove that key; returns `{"ok":true\|false}` |
 | `GET /net/keys/list?fam=&net=` | `text/csv` attachment — the network's keys as a **dsd-fme hex key list** (`-K`): a header row then `keyid,key[,key…]` (a key over 64 bits split into 64-bit columns). This is the one response that carries key **values**, for feeding the operator's own decoder |
 | `GET /net/keys/reload` | restart every running decoder so it re-reads the keyring now (keys are handed to the server's own dsd-fme as a `-K` list at stream start, so an edit otherwise waits for the next start). Causes a brief audio gap per stream; the decode client's audio port is kept. Returns `{"ok":true,"restarted":N}` |
+| `POST /net/bp/set` | body `{"net","key"[,"fam"]}` — set a **DMR Basic Privacy** key *number* (`key` decimal 1–255) for a network (`fam` defaults to `dmr`); `400` if out of range. BP has no key id, so it is kept apart from the keyring and applied with dsd-fme's `-b` (DSDcc's BP key), matched to the network's frequency at stream start. The number is not secret and appears in `/net.json` `bp` |
+| `GET /net/bp/remove?net=[&fam=]` | remove that network's BP key; `{"ok":true\|false}` |
 | `GET /net/export.json` | `application/json` attachment `net_export_<UTC>.json` — the explorer export (below) |
 | `GET /net/export.graphml` | `application/graphml+xml` attachment — the association graph for graph tools |
 | `GET /net/log/on` | starts recording every input of the explorer's model to `net_<UTC>.jsonl.gz` (`?clear=1` clears the model first so the recording replays exactly); returns the recording status |
@@ -1264,6 +1266,11 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
   downloaded as a dsd-fme key list (`/net/keys/list`) for a decoder the
   operator runs separately. Key values are never put in `/net.json` or an
   export.
+- `bp` is the DMR Basic Privacy key *numbers* set per network
+  (`{"dmr": {"cc:1@440425000": 7}}`) — set via `/net/bp/set`, applied to the
+  server's own decoder by frequency with dsd-fme's `-b` (and the DSDcc BP key).
+  BP numbers select well-known keys and are not secret, so unlike the keyring
+  they do appear here.
 - `clients` is how many clients are connected (any session, decoding or not);
   `streams` lists the decode streams running now, whether or not anything is
   decoded: `[{"s":12,"fam":"dmr","label":"dmr","freq":460175000,"since":…,
