@@ -411,6 +411,22 @@ tablet or phone the details are a drawer: **Close** or Esc.
     secret (the keys themselves
     are well known). As with the key list, a change takes effect when a stream
     next starts, or now with **↻ Apply to live streams**.
+  - **Enhanced Privacy (DMR), any key id.** An EP (ARC4) key normally goes in
+    with its key id like any other key (algorithm **RC4 (EP)**). When you have
+    a network's EP key but not its key id, choose **DMR Enhanced Privacy (any
+    key id)** in the same form: the key-id box greys out and the value is the
+    **40-bit key, up to 10 hex digits**. It is stored per network and, matched
+    to the network's **frequency** when a stream starts, handed to the
+    server's own decoder as the key for **every** key id (00–FF) in its key
+    list; a key you stored for a specific key id still wins for that id.
+    Clear calls are unaffected, but an encrypted call on that channel whose
+    key id has no key of its own is tried with the EP key, so set it only on
+    channels you know use EP. Unlike a BP number it **is** secret: it is kept
+    with the keyring and never shown again — the networks that have one
+    appear in an **Enhanced Privacy** list on the DMR Keys tab, each with
+    **Clear**. It is not included in a network's key-list download. A change
+    takes effect when a stream next starts, or now with **↻ Apply to live
+    streams**.
 
 ## 9. Searching, filtering and sorting
 

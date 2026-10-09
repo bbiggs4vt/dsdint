@@ -911,6 +911,16 @@ public:
                         if (n >= 1 && n <= 255) bp_[fk.first][nk.first] = n;
                     }
             }
+        ep_.clear();
+        if (const mjson::V* e = root.get("ep"); e && e->t == mjson::V::Obj)
+            for (const auto& fk : e->o) {
+                if (fk.second.t != mjson::V::Obj) continue;
+                for (const auto& nk : fk.second.o)
+                    if (nk.second.t == mjson::V::Str) {
+                        const std::string v = ep_norm(nk.second.s);
+                        if (!v.empty()) ep_[fk.first][nk.first] = v;
+                    }
+            }
         return true;
     }
     bool set_key(const std::string& fam, const std::string& net, const std::string& kid,
@@ -958,12 +968,74 @@ public:
         std::lock_guard<std::mutex> lk(mu_);
         auto f = bp_.find(fam);
         if (f == bp_.end()) return 0;
-        const std::string suffix = "@" + std::to_string(freq_hz);
         for (const auto& nk : f->second)
-            if (nk.first.size() >= suffix.size() &&
-                nk.first.compare(nk.first.size() - suffix.size(), suffix.size(), suffix) == 0)
-                return nk.second;
+            if (net_on_freq(nk.first, freq_hz)) return nk.second;
         return 0;
+    }
+    // DMR Enhanced Privacy (Motorola EP, ARC4): a 40-bit hex key set per
+    // network for when its key id isn't known -- applied to every EP call on
+    // the network's frequency whatever key id it announces (a key-id key in
+    // the keyring still wins for its own id). Unlike BP it IS secret: kept in
+    // the owner-only keys file next to the keyring, never in /net.json (which
+    // says only which networks have one) or an export. Applied by writing it
+    // into the stream's dsd-fme -K list for every 8-bit key id (see
+    // keys_csv_stream) -- not with -1, which turns dsd-fme's key list off.
+    // Takes 1-10 hex digits (zero-padded to 10); 0 is not a key.
+    static std::string ep_norm(const std::string& in) {
+        std::string up;
+        for (char c : in) {
+            if (std::isspace(static_cast<unsigned char>(c))) continue;
+            if (!std::isxdigit(static_cast<unsigned char>(c))) return std::string();
+            up += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        if (up.empty() || up.size() > 10 || up.find_first_not_of('0') == std::string::npos) return std::string();
+        return std::string(10 - up.size(), '0') + up;
+    }
+    bool set_ep(const std::string& fam, const std::string& net, const std::string& value) {
+        const std::string v = ep_norm(value);
+        if (fam.empty() || net.empty() || v.empty()) return false;
+        std::lock_guard<std::mutex> lk(mu_);
+        ep_[fam][net] = v;
+        ++version_;
+        save_keys_locked();
+        return true;
+    }
+    bool remove_ep(const std::string& fam, const std::string& net) {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto f = ep_.find(fam);
+        if (f == ep_.end() || !f->second.erase(net)) return false;
+        if (f->second.empty()) ep_.erase(f);
+        ++version_;
+        save_keys_locked();
+        return true;
+    }
+    // The EP key (10 hex digits) for a network of `fam` on `freq_hz` ("" =
+    // none), matched by frequency like bp_for_freq. First match wins.
+    std::string ep_for_freq(const std::string& fam, std::int64_t freq_hz) const {
+        if (freq_hz <= 0) return std::string();
+        std::lock_guard<std::mutex> lk(mu_);
+        auto f = ep_.find(fam);
+        if (f == ep_.end()) return std::string();
+        for (const auto& nk : f->second)
+            if (net_on_freq(nk.first, freq_hz)) return nk.second;
+        return std::string();
+    }
+    // The -K list the server hands one of its own decoders: the family's
+    // keyring (keys_csv_family), plus -- when `ep` is set -- that EP key as
+    // the key for every 8-bit key id 00-FF. The EP rows come first: dsd-fme
+    // reads the list in order, so a key-id key from the keyring overwrites
+    // the EP key for its own id. Returns at least a header.
+    std::string keys_csv_stream(const std::string& fam, const std::string& ep) const {
+        std::string csv = keys_csv_family(fam);
+        if (ep.empty()) return csv;
+        const std::string hdr = "KEY ID,KEY\n";
+        std::string fill = hdr;
+        static const char* hex = "0123456789ABCDEF";
+        for (int k = 0; k < 256; ++k) {
+            fill += hex[k >> 4]; fill += hex[k & 15];
+            fill += "," + ep + "\n";
+        }
+        return fill + csv.substr(csv.compare(0, hdr.size(), hdr) == 0 ? hdr.size() : 0);
     }
     // The dsd-fme hex key list (-K) for one network. Returns at least a header.
     std::string keys_csv(const std::string& fam, const std::string& net) const {
@@ -1074,6 +1146,7 @@ private:
                ",\"merges\":" + merges_json(view_merges_locked()) +
                ",\"keyed\":" + keyring_loaded_json(keys_) +
                ",\"bp\":" + bp_json_locked() +
+               ",\"ep\":" + ep_nets_json_locked() +
                ",\"families\":";
     }
     // The explorer's map: a tile server of your own (DSD_NET_MAP_TILES, a URL
@@ -1219,6 +1292,41 @@ private:
         }
         return o.str() + "}";
     }
+    // A network key ("cc:1@440425000") is on `freq_hz` if it ends "@<freq>".
+    static bool net_on_freq(const std::string& net, std::int64_t freq_hz) {
+        const std::string suffix = "@" + std::to_string(freq_hz);
+        return net.size() >= suffix.size() &&
+               net.compare(net.size() - suffix.size(), suffix.size(), suffix) == 0;
+    }
+    // {"dmr":{"cc:1@440425000":"0102030405",...}} -- EP keys WITH values (the
+    // keys file only); ep_nets_json_locked is the value-free /net.json form,
+    // {"dmr":["cc:1@440425000",...]}.
+    std::string ep_json_locked() const {
+        using assocjson::q;
+        std::ostringstream o;
+        o << "{";
+        bool ff = true;
+        for (const auto& fk : ep_) {
+            o << (ff ? "" : ",") << q(fk.first) << ":{"; ff = false;
+            bool fn = true;
+            for (const auto& nk : fk.second) { o << (fn ? "" : ",") << q(nk.first) << ":" << q(nk.second); fn = false; }
+            o << "}";
+        }
+        return o.str() + "}";
+    }
+    std::string ep_nets_json_locked() const {
+        using assocjson::q;
+        std::ostringstream o;
+        o << "{";
+        bool ff = true;
+        for (const auto& fk : ep_) {
+            o << (ff ? "" : ",") << q(fk.first) << ":["; ff = false;
+            bool fn = true;
+            for (const auto& nk : fk.second) { o << (fn ? "" : ",") << q(nk.first); fn = false; }
+            o << "]";
+        }
+        return o.str() + "}";
+    }
     void save_keys_locked() const {
         if (keys_file_.empty()) return;
         const std::string tmp = keys_file_ + ".tmp";
@@ -1228,7 +1336,8 @@ private:
         {
             std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
             if (!f) return;
-            f << "{\"keys\":" << keyring_json(keys_) << ",\"bp\":" << bp_json_locked() << "}\n";
+            f << "{\"keys\":" << keyring_json(keys_) << ",\"bp\":" << bp_json_locked()
+              << ",\"ep\":" << ep_json_locked() << "}\n";
             if (!f) return;
         }
         std::filesystem::permissions(tmp, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
@@ -2150,6 +2259,7 @@ private:
     std::string merges_file_;                          // where they are kept ("" = memory only)
     KeyRing keys_;                                     // per-network decryption keyring (values never leave in /net.json/exports)
     std::map<std::string, std::map<std::string, int>> bp_;  // DMR Basic Privacy key numbers: fam -> net -> 1..255 (not secret)
+    std::map<std::string, std::map<std::string, std::string>> ep_;  // DMR Enhanced Privacy keys: fam -> net -> 10 hex digits (secret)
     std::string keys_file_;                            // where it is kept ("" = memory only)
     bool per_receiver_ = default_per_receiver();
     std::size_t max_calls_ = max_calls_setting();
