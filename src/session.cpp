@@ -1685,13 +1685,15 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         }
         if (!stored_forced.first.empty()) {   // explorer forced key for this frequency
             // Its dsd-fme option (verified against dsd-fme's dsd_main.c and
-            // crypt-*.c): -5 TYT EP, -A Anytone BP (16-bit hex), -! TYT AP
+            // crypt-*.c): -5 TYT EP, -2 TYT BP and -A Anytone BP (16-bit hex;
+            // -2 survives carrier loss beside -K only with
+            // patches/dsd-fme-keep-bp-key.patch), -! TYT AP
             // (PC4), -+ Baofeng AP (PC5), -@ Retevis AP (RC2). Keys over 64
             // bits go as space-separated 64-bit hex words in ONE argv token,
             // dsd-fme's own format (no shell, so the space is inert); the
             // value is validated hex of the kind's length.
             static const std::map<std::string, std::string> flag = {
-                {"tytep", "-5"}, {"anybp", "-A"}, {"tytap", "-!"}, {"bfap", "-+"}, {"rtap", "-@"}};
+                {"tytep", "-5"}, {"tytbp", "-2"}, {"anybp", "-A"}, {"tytap", "-!"}, {"bfap", "-+"}, {"rtap", "-@"}};
             const std::string& v = stored_forced.second;
             std::string arg;
             for (std::size_t i = 0; i < v.size(); i += 16) arg += (i ? " " : "") + v.substr(i, 16);
