@@ -272,6 +272,7 @@ inline std::string render_net_page_html() {
   .b-enc { background: rgba(248,148,6,.2); color: var(--warn); }
   .b-qlow { background: var(--danger); color: #fff; }
   .b-qmarg { background: rgba(248,148,6,.18); color: var(--warn); border-color: var(--warn); }
+  .nowrap .b-qlow, .nowrap .b-qmarg { margin-left: .4rem; }   /* gap from the play/download controls */
   .b-strong { background: rgba(98,196,98,.18); color: var(--success); }
   .b-weak { background: rgba(248,148,6,.18); color: var(--warn); }
   .b-channel { background: rgba(91,192,222,.16); color: var(--info); }
@@ -1660,7 +1661,6 @@ function typeBadges(c) {
             : h('span', { class: 'badge b-sig', title: sig, 'data-tip': sig }, 'SIGNALING'),
     c.priv ? badge('b-priv', 'PRIVATE') : badge('b-group', 'GROUP'),
     c.emerg ? badge('b-emerg', 'EMERGENCY') : null, c.enc ? h('span', { class: 'badge b-enc', title: et, 'data-tip': et }, 'ENCRYPTED') : null,
-    qualBadge(c),
     c.streams > 1 ? h('span', { class: 'badge b-group', title: rx, 'data-tip': rx }, c.streams + ' RX') : null]);
 }
 // A quality badge, only for audio that may not be usable (marginal / unusable);
@@ -1770,7 +1770,13 @@ function dlLink(c) {
   return h('a', { class: 'dl', href: audioUrl(c), download: callFile(c), title: 'Download this call\'s audio (.wav)',
                   onclick: function (e) { e.stopPropagation(); } }, '⤓');
 }
-function audioCell(c) { var p = playBtn(c); return p ? h('span', { class: 'nowrap' }, [p, dlLink(c)]) : ''; }
+function audioCell(c) {
+  var p = playBtn(c), qb = qualBadge(c);   // quality lives here, not in the crowded TYPE column
+  var kids = [];
+  if (p) { kids.push(p); kids.push(dlLink(c)); }
+  if (qb) kids.push(qb);
+  return kids.length ? h('span', { class: 'nowrap' }, kids) : '';
+}
 // A data call's service, in words (svc from the server: what its header /
 // Motorola MNIS service said).
 var SVC = { preamble: 'Data announced only', ack: 'ACK (delivery confirmed)', data: 'Data packet',
@@ -2467,7 +2473,7 @@ function viewCalls() {
     { label: 'To', cls: 'tgcell', k: function (c) { return c.tgt; }, cell: toCell },
     { label: 'Type', cls: 'ctype', cell: typeBadges },
     { label: 'Audio', cls: 'nowrap', k: function (c) { return hasAudio(c) ? 1 : 0; }, cell: audioCell,
-      hideEmpty: hasAudio },
+      hideEmpty: function (c) { return hasAudio(c) || !!c.q; } },   // also keep the column for a quality badge with no file
     { label: 'Content', cls: 'wrap', cell: textCell, hideEmpty: function (c) { return !!(c.text || c.svc || c.pos || c.kid); } }
   ], rows, (S.audOnly ? 'No calls with audio' : 'No calls heard yet') + (anyFilter() || S.q ? ' for this filter.' : '.'),
      null, null, callCard, function (c) { return sttSpan(c); });
