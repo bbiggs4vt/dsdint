@@ -25,6 +25,9 @@
 #include <mutex>
 #include <sstream>
 
+#include <unistd.h>
+#include <sys/stat.h>
+
 namespace dsdsrv {
 
 namespace {
@@ -831,6 +834,15 @@ void Session::serve_http() {
         res->set(http::field::content_disposition, "attachment; filename=\"" + fn + "\"");
         res->set(http::field::cache_control, "no-store");
         res->body() = stats_ ? stats_->assoc().keys_csv(fam, net) : std::string("KEY ID,KEY\n");
+    } else if (target == "/net/keys/reload") {
+        // Restart every running decoder so it re-reads the keyring (keys are
+        // applied to dsd-fme as a -K list at start). The operator triggers
+        // this from the Keys tab after editing keys; it causes a brief audio
+        // gap per stream. A side-effecting GET, matching /iq_log/on's style.
+        const std::size_t n = stats_ ? stats_->reload_pipelines() : 0;
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "application/json");
+        res->body() = "{\"ok\":true,\"restarted\":" + std::to_string(n) + "}";
     } else if (target == "/net/imports/remove" || target == "/net/imports/clear") {
         // Remove one import (?id=N) or all of them; the live data stays.
         bool ok = true;
@@ -908,6 +920,15 @@ void Session::on_accept(beast::error_code ec) {
         stats_->register_iq_control(stats_id_, [wp](bool on) {
             if (auto self = wp.lock())
                 net::post(self->ws_.get_executor(), [self, on] { self->set_iq_logging(on); });
+        });
+        // Let the Keys tab's "apply to live streams" restart this decoder so it
+        // re-reads the keyring. Returns true if it will restart (an active
+        // FM/DSD decode); the restart itself runs on this session's strand.
+        stats_->register_key_reload(stats_id_, [wp]() -> bool {
+            auto self = wp.lock();
+            if (!self || !self->pipeline_active_.load() || self->chain_.load() != Chain::Fm) return false;
+            net::post(self->ws_.get_executor(), [self] { self->restart_pipeline(); });
+            return true;
         });
     }
     // Advertise what this build can emit before the client sends anything,
@@ -1520,6 +1541,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         }
 
         ActiveDsdBackendConfig dcfg;
+        bool have_key_list = false;   // the explorer's keyring was handed to dsd-fme (-K)
 #if defined(DSD_USE_DSDCC_BACKEND)
         // Map the hint to DsdccDecoder's mode string (see DsdccDecoder::start,
         // which forwards it to DSDDecoder::setDecodeMode). Default -> "dmr",
@@ -1568,7 +1590,11 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         // below reports that accurately (0 meaning "not applicable here",
         // not "failed to allocate").
 #else
-        udp_audio_port_ = acquire_udp_port();
+        // On a keyring restart, keep the port the decode client is already
+        // receiving audio on (stop_pipeline left it reserved); otherwise take
+        // a fresh one.
+        udp_audio_port_ = pending_udp_port_ ? pending_udp_port_ : acquire_udp_port();
+        pending_udp_port_ = 0;
         dcfg.input_sample_rate_hz = 48000;
         // Map the hint to dsd-fme's "-f<letter>" mode. Default -> "s" (DMR),
         // matching the historical behavior; dsd-fme applies the matching
@@ -1626,6 +1652,45 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
                 dcfg.extra_args.push_back(key);
             }
         }
+
+        // Hand this decoder the explorer's stored keyring as a dsd-fme -K hex
+        // key list, so keys entered in the UI decrypt this server's own
+        // streams (not just a dsd-fme the operator runs separately). dsd-fme
+        // matches a key by the key id the call signals in its PI header / ESS,
+        // so clear calls are untouched -- unlike a single forced key. Applied
+        // for the stream's family (all families when the protocol is "auto");
+        // keys added later take effect when the stream restarts. The list
+        // carries key VALUES, so the file is owner-only and removed in
+        // stop_pipeline. DSDcc has no key-list option, so this is dsd-fme only.
+        if (stats_ && std::getenv("DSD_NET_NO_APPLY_KEYS") == nullptr) {
+            std::string kfam = assoc_family(protocol_hint_label(hint));
+            if (kfam == "auto") kfam.clear();                 // not known yet -> all families
+            const std::string csv = stats_->assoc().keys_csv_family(kfam);
+            if (csv.size() > sizeof("KEY ID,KEY\n") - 1) {    // more than just the header
+                std::string tmpl = (std::filesystem::temp_directory_path() / "dsd_klist_XXXXXX").string();
+                std::vector<char> path(tmpl.begin(), tmpl.end());
+                path.push_back('\0');
+                int fd = ::mkstemp(path.data());
+                if (fd >= 0) {
+                    ::fchmod(fd, S_IRUSR | S_IWUSR);          // owner-only: it carries key values
+                    std::size_t off = 0;
+                    while (off < csv.size()) {
+                        ssize_t w = ::write(fd, csv.data() + off, csv.size() - off);
+                        if (w <= 0) break;
+                        off += static_cast<std::size_t>(w);
+                    }
+                    ::close(fd);
+                    if (off == csv.size()) {
+                        klist_path_.assign(path.data());
+                        dcfg.extra_args.push_back("-K");
+                        dcfg.extra_args.push_back(klist_path_);
+                        have_key_list = true;
+                    } else {
+                        ::unlink(path.data());
+                    }
+                }
+            }
+        }
 #endif // DSD_USE_DSDCC_BACKEND
 
         // Network explorer per-call audio (off unless enabled): every slot's
@@ -1634,7 +1699,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         if (stats_ && stats_id_) {
             auto st = stats_;
             const std::uint64_t sid = stats_id_;
-            const bool keyed = key_type_enum != KeyType::None;
+            const bool keyed = key_type_enum != KeyType::None || have_key_list;
             dcfg.on_slot_audio = [st, sid, keyed](int slot, const int16_t* pcm, std::size_t n) {
                 st->assoc().audio(sid, slot, pcm, n, keyed);
             };
@@ -1655,6 +1720,10 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
     // right filename and xdelta without re-plumbing them.
     iq_protocol_ = protocol;
     iq_sample_rate_ = sample_rate;
+    // Cache the full start parameters so restart_pipeline() can relaunch with
+    // the same settings to pick up a keyring change.
+    last_start_ = StartParams{true, sample_rate, channel_bw, freq_offset, gain, afc,
+                              protocol, key_type, key, matched_filter, pocsag_mode, invert, iq_log};
     // Optional raw-IQ capture: open a BLUE (CF) file now that the backend
     // started, so a failed start never leaves an empty file. No IQ is logged
     // before pipeline_active_ anyway (handle_binary_message gates on it).
@@ -1682,6 +1751,22 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         if (iq_log_ && iq_log_->is_open()) w.field("iq_log_file", iq_log_->path());
         send_text(w.str());
     }
+}
+
+void Session::restart_pipeline() {
+    // Relaunch the running FM/DSD pipeline so the decoder re-reads the keyring
+    // (handed to dsd-fme as a -K list at start). Only the FM/DSD chain uses the
+    // keyring; a brief audio gap is expected, but the decode client's audio
+    // port is kept (pending_udp_port_) so its receiver doesn't move. Runs on
+    // this session's strand.
+    if (!pipeline_active_.load() || !last_start_.valid) return;
+    if (chain_.load() != Chain::Fm) return;
+    const StartParams p = last_start_;
+#if !defined(DSD_USE_DSDCC_BACKEND)
+    pending_udp_port_ = udp_audio_port_;   // keep it across the stop/start inside start_pipeline
+#endif
+    start_pipeline(p.sample_rate, p.channel_bw, p.freq_offset, p.gain, p.afc, p.protocol,
+                   p.key_type, p.key, p.matched_filter, p.pocsag_mode, p.invert, p.iq_log);
 }
 
 void Session::stop_pipeline() {
@@ -1717,9 +1802,18 @@ void Session::stop_pipeline() {
 #if !defined(DSD_USE_DSDCC_BACKEND)
     // Only the dsd-fme subprocess path allocates an audio port; a TETRA
     // session never did (udp_audio_port_ stayed 0, and release ignores 0).
-    release_udp_port(udp_audio_port_);
+    // During a keyring restart the port is kept reserved (pending_udp_port_)
+    // so the relaunch reuses it and the client's audio receiver doesn't move.
+    if (pending_udp_port_ == 0) release_udp_port(udp_audio_port_);
     udp_audio_port_ = 0;
 #endif
+
+    // Remove the temp dsd-fme key list this pipeline used (it held key values).
+    if (!klist_path_.empty()) {
+        std::error_code ec;
+        std::filesystem::remove(klist_path_, ec);
+        klist_path_.clear();
+    }
 
     {
         std::lock_guard<std::mutex> lock(iq_mutex_);

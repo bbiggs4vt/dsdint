@@ -357,14 +357,27 @@ tablet or phone the details are a drawer: **Close** or Esc.
     shows **✓ key loaded**, with **Replace key** / **Remove**. A key is stored
     per network and key id; talkgroup and radio panels show **✓ key loaded**
     for reference but are managed on the network.
-  - **Using it.** The explorer **does not decrypt** — it stores the keys and
-    hands them to your decoder. **⬇ Download key list** gives the network's
-    keys as a dsd-fme hex key list (`keyid,key`); point your decode client at
-    it with `-K`. Keys are kept on the server across restarts
+  - **Using it.** The server applies the stored keys to **its own** decoder
+    (the dsd-fme backend): when a stream starts, this protocol's keys are
+    handed to dsd-fme as a `-K` key list, so an encrypted call whose key id
+    matches a stored key is decoded in the clear — its audio plays and
+    records like any other. dsd-fme matches a key by the **key id the call
+    announces**, so clear calls are unaffected. Keys added while a stream is
+    running take effect the next time that stream starts; to apply them to the
+    streams running now, use **↻ Apply to live streams** in the Keys tab (it
+    restarts each running decoder, so its audio glitches briefly — the decode
+    client stays on the same audio port). The in-process DSDcc backend can
+    only use DMR Basic Privacy keys, so there the key list is not applied. To
+    decrypt in a
+    dsd-fme you run yourself instead, **⬇ Download key list** gives the
+    network's keys as a dsd-fme hex key list (`keyid,key`) to point your own
+    decoder at with `-K`. Keys are kept on the server across restarts
     (`DSD_NET_KEYS_FILE`, default `net_keys.json` in the recordings folder,
     written readable only by the server's user). A key value is never shown
     again, never sent in `/net.json`, and never put in an export — only the
-    key-list download returns it.
+    key-list download (or the server handing its own decoder the list)
+    returns it. (`DSD_NET_NO_APPLY_KEYS=1` keeps the keys for download only
+    and does not hand them to the server's decoder.)
   - Only enter keys for systems you are **authorized to monitor**.
   - **Keys tab.** Each protocol tab gains a **Keys** sub-tab when it has any
     encryption key ids (seen or loaded) or any encrypted call. It lists them
@@ -624,6 +637,8 @@ Server environment variables that affect the explorer (details in the README):
 | `DSD_NET_AUDIO_DIR` | `net_audio/` in the log dir | Where call audio goes. |
 | `DSD_NET_AUDIO_MAX_MB` / `DSD_NET_AUDIO_MAX_AGE_H` | 1024 / none | Audio disk cap and maximum age. |
 | `DSD_NET_IMPORT_AUDIO_MAX_MB` | 1024 | Cap on audio uploaded with imported "export with audio" zips (kept in `imported/` under the audio dir, emptied at startup). |
+| `DSD_NET_KEYS_FILE` | `net_keys.json` in the log dir | The encryption keyring (key values; owner-only). |
+| `DSD_NET_NO_APPLY_KEYS` | (unset) | Set to keep the keyring for download only — do not hand it to the server's own dsd-fme decoder. |
 | `DSD_NET_ASR_DIR` | `net_asr/` in the log dir | Speech-to-text files (`tools/get_asr_assets.sh`). |
 | `DSD_NET_MAP_TILES` / `DSD_NET_MAP_ATTRIB` | (public tiles) | A map tile server of your own — a URL template with `{z}` `{x}` `{y}` (e.g. `http://maps.local/tile/{z}/{x}/{y}.png`) — and its credit line, for the Map view. |
 | `DSD_NET_ASR_MODEL` / `DSD_NET_ASR_LANG` | most accurate present / english | Default speech model and language. |

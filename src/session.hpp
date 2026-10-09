@@ -227,6 +227,33 @@ private:
     std::string iq_protocol_;
     double iq_sample_rate_ = 0.0;
 
+    // The temp dsd-fme -K key list written for the running pipeline from the
+    // explorer's keyring (key VALUES, so owner-only). "" when none; removed in
+    // stop_pipeline. Strand-only, like iq_log_.
+    std::string klist_path_;
+
+    // The active pipeline's full start parameters, cached so restart_pipeline()
+    // can relaunch it (to pick up a keyring change) with the same settings.
+    // Strand-only.
+    struct StartParams {
+        bool valid = false;
+        double sample_rate = 0.0, channel_bw = 0.0, freq_offset = 0.0;
+        float gain = 0.0f;
+        bool afc = false;
+        std::string protocol, key_type, key;
+        bool matched_filter = false;
+        std::string pocsag_mode;
+        bool invert = false, iq_log = false;
+    };
+    StartParams last_start_;
+    // During a restart, the UDP audio port to keep (so the decode client's
+    // audio receiver survives the relaunch instead of moving to a new port).
+    // 0 = acquire a fresh one. Strand-only. (dsd-fme backend only.)
+    std::uint16_t pending_udp_port_ = 0;
+    // Relaunch the current FM/DSD pipeline so the decoder re-reads the keyring.
+    // No-op when not decoding on the FM/DSD chain. Runs on this session's strand.
+    void restart_pipeline();
+
     // Open a BLUE capture file for the current pipeline (no-op if one is
     // already open). Non-fatal on failure (logged). Strand-only.
     void open_iq_log(const std::string& protocol, double sample_rate);

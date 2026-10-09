@@ -19,6 +19,7 @@
 #include <cctype>
 #include <cstdint>
 #include <map>
+#include <set>
 #include <sstream>
 #include <string>
 
@@ -193,6 +194,31 @@ inline std::string keyring_csv(const KeyRing& r, const std::string& fam, const s
         const std::string& v = ik.second.value;
         for (std::size_t i = 0; i < v.size(); i += 16) o << "," << v.substr(i, 16);
         o << "\n";
+    }
+    return o.str();
+}
+
+// A dsd-fme hex key list (-K) covering every network of `fam` -- or, when
+// `fam` is empty, every family -- so the server can hand its own decoder the
+// keyring. One "keyid,key" row per distinct key id (same 64-bit-column split
+// as keyring_csv). A dsd-fme -K list is indexed by key id alone, so where two
+// networks use the same key id with different keys only the first is emitted
+// (a collision the UI can warn about); within one network, key ids are unique.
+inline std::string keyring_csv_family(const KeyRing& r, const std::string& fam) {
+    std::ostringstream o;
+    o << "KEY ID,KEY\n";
+    std::set<std::string> seen;
+    for (const auto& fk : r) {
+        if (!fam.empty() && fk.first != fam) continue;
+        for (const auto& nk : fk.second) {
+            for (const auto& ik : nk.second) {
+                if (!seen.insert(ik.first).second) continue;  // key id already emitted
+                o << ik.first;
+                const std::string& v = ik.second.value;
+                for (std::size_t i = 0; i < v.size(); i += 16) o << "," << v.substr(i, 16);
+                o << "\n";
+            }
+        }
     }
     return o.str();
 }

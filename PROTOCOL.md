@@ -1104,6 +1104,7 @@ over HTTP and the connection closed:
 | `POST /net/keys/set` | body `{"fam","net","kid","alg","key"}` — store a decryption key for a network's key id (`key` hex, up to 64 digits); returns `{"ok":true\|false}` (`400` if the id or value is malformed). The value is kept on the server and never returned in `/net.json` or an export |
 | `GET /net/keys/remove?fam=&net=&kid=` | remove that key; returns `{"ok":true\|false}` |
 | `GET /net/keys/list?fam=&net=` | `text/csv` attachment — the network's keys as a **dsd-fme hex key list** (`-K`): a header row then `keyid,key[,key…]` (a key over 64 bits split into 64-bit columns). This is the one response that carries key **values**, for feeding the operator's own decoder |
+| `GET /net/keys/reload` | restart every running decoder so it re-reads the keyring now (keys are handed to the server's own dsd-fme as a `-K` list at stream start, so an edit otherwise waits for the next start). Causes a brief audio gap per stream; the decode client's audio port is kept. Returns `{"ok":true,"restarted":N}` |
 | `GET /net/export.json` | `application/json` attachment `net_export_<UTC>.json` — the explorer export (below) |
 | `GET /net/export.graphml` | `application/graphml+xml` attachment — the association graph for graph tools |
 | `GET /net/log/on` | starts recording every input of the explorer's model to `net_<UTC>.jsonl.gz` (`?clear=1` clears the model first so the recording replays exactly); returns the recording status |
@@ -1253,10 +1254,16 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
   only, never the key values**. It lets the explorer show "key loaded" next to a key id it saw
   (`families` ... `keys`). Keys are entered in the network's details and kept
   across restarts (`DSD_NET_KEYS_FILE`, default `net_keys.json` in the
-  recordings folder, written readable only by the server's user). The explorer
-  does not decrypt: the stored keys are downloaded as a dsd-fme key list
-  (`/net/keys/list`) and applied by the operator's own decoder. Key values are
-  never put in `/net.json` or an export.
+  recordings folder, written readable only by the server's user). The stored
+  keys are applied to the server's **own** dsd-fme decoder: when a stream
+  starts, that protocol's keys are written to an owner-only temp file and
+  passed as a dsd-fme `-K` key list, so a call whose announced key id matches a
+  stored key is decoded in the clear (keys added later apply when the stream
+  next starts; `DSD_NET_NO_APPLY_KEYS=1` disables this and keeps them for
+  download only; the DSDcc backend takes no key list). They can also be
+  downloaded as a dsd-fme key list (`/net/keys/list`) for a decoder the
+  operator runs separately. Key values are never put in `/net.json` or an
+  export.
 - `clients` is how many clients are connected (any session, decoding or not);
   `streams` lists the decode streams running now, whether or not anything is
   decoded: `[{"s":12,"fam":"dmr","label":"dmr","freq":460175000,"since":…,

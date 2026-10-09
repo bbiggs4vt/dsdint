@@ -80,6 +80,26 @@ int main() {
               "csv: an unknown network is just the header");
     }
 
+    // ---- family-wide -K key list (what the server hands its own decoder) ----
+    {
+        KeyRing r;
+        keyring_set(r, "p25", "nac:201", "666A", "84", "A1B2C3D4E5F60708", 1000);
+        keyring_set(r, "p25", "nac:777", "0C", "AA", "1122334455", 1000);     // another p25 network
+        keyring_set(r, "p25", "nac:777", "666A", "84", "DEADBEEFDEADBEEF", 1000); // same id as nac:201
+        keyring_set(r, "dmr", "cc:1", "05", "25", "0011223344556677", 1000);  // a different family
+        const std::string p = keyring_csv_family(r, "p25");
+        check(p.rfind("KEY ID,KEY\n", 0) == 0, "family csv: header row");
+        check(p.find("666A,A1B2C3D4E5F60708") != std::string::npos && p.find("0C,1122334455") != std::string::npos,
+              "family csv: every network's key ids are included");
+        check(p.find("DEADBEEFDEADBEEF") == std::string::npos,
+              "family csv: a key id shared across networks is emitted once (first wins)");
+        check(p.find("0011223344556677") == std::string::npos, "family csv: another family's keys are excluded");
+        const std::string all = keyring_csv_family(r, "");
+        check(all.find("0011223344556677") != std::string::npos && all.find("A1B2C3D4E5F60708") != std::string::npos,
+              "family csv: an empty family covers every family");
+        check(keyring_csv_family(r, "nxdn") == "KEY ID,KEY\n", "family csv: a family with no keys is just the header");
+    }
+
     // ---- the model stores keys and never leaks a value into /net.json ----
     {
         AssocModel m;

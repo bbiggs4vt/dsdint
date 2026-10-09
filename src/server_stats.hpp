@@ -158,6 +158,33 @@ public:
         iq_controls_.erase(id);
     }
 
+    // Session registers (on connect) a callback that restarts its decode
+    // pipeline so the decoder re-reads the keyring (applied as a dsd-fme -K
+    // list at start). Returns true if it will restart (an active FM/DSD
+    // decode); invoked off-lock -- it just checks atomics and posts to the
+    // session's strand.
+    void register_key_reload(std::uint64_t id, std::function<bool()> fn) {
+        std::lock_guard<std::mutex> lk(mu_);
+        key_reloads_[id] = std::move(fn);
+    }
+    void unregister_key_reload(std::uint64_t id) {
+        std::lock_guard<std::mutex> lk(mu_);
+        key_reloads_.erase(id);
+    }
+    // Ask every live session to restart its decoder (to pick up a keyring
+    // change). Returns how many will restart.
+    std::size_t reload_pipelines() {
+        std::vector<std::function<bool()>> cbs;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            cbs.reserve(key_reloads_.size());
+            for (const auto& kv : key_reloads_) cbs.push_back(kv.second);
+        }
+        std::size_t n = 0;
+        for (auto& fn : cbs) if (fn()) ++n;   // off-lock: each checks atomics + posts to a strand
+        return n;
+    }
+
     // Flip the global switch and push the new state to every live session.
     // Returns the state now in effect.
     bool set_iq_logging(bool on) {
@@ -263,6 +290,7 @@ public:
         if (it == sessions_.end()) return;
         if (it->second.active) close_active_locked(it->second);
         iq_controls_.erase(id); // session gone: drop its capture control
+        key_reloads_.erase(id); // and its key-reload control
         FinishedRow f;
         f.id = it->second.id;
         f.remote = it->second.remote;
@@ -359,6 +387,7 @@ private:
     std::deque<LogEntry> log_;
     bool iq_logging_ = false;                                   // global IQ-capture switch
     std::map<std::uint64_t, std::function<void(bool)>> iq_controls_; // per-session appliers
+    std::map<std::uint64_t, std::function<bool()>> key_reloads_;      // per-session pipeline restart
     AssocModel assoc_;                                          // network explorer model
     std::size_t history_limit_;
     std::size_t log_limit_;

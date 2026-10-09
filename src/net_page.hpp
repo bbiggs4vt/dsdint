@@ -1406,7 +1406,7 @@ function keysSection(d, m, what, opts) {
   if (!opts.compact)
     d.appendChild(h('div', { class: 'hint', style: 'margin-top:.4rem;font-size:.8rem',
       text: 'The key id each encrypted call ' + what + ' announced. A key belongs to the talkgroup or channel, not the radio: every radio talking on a talkgroup uses its key.' +
-            (editNet ? ' Keys you add are kept on the server and used by your own decoder via the downloaded key list — the explorer does not decrypt. Only enter keys for systems you are authorized to monitor.' : '') }));
+            (editNet ? ' Keys you add are kept on the server and applied to its own dsd-fme decoder (matched by the key id a call announces), and can also be downloaded as a key list for a decoder you run yourself. Only enter keys for systems you are authorized to monitor.' : '') }));
 }
 // How many decryption keys are loaded for the current protocol, and the
 // networks that have encryption key ids (seen in calls, or a key loaded).
@@ -1455,6 +1455,17 @@ function downloadAllKeys(btn) {
   }).catch(function () { toast('Could not build the key-list zip.'); })
     .then(function () { btn.textContent = label; btn.classList.remove('off2'); });
 }
+// Restart the running decoders so they re-read the keyring now (keys are
+// applied to the server's own dsd-fme as a -K list at stream start). A brief
+// audio gap per stream, so it is confirmed first.
+function applyKeysToStreams(n) {
+  if (!confirm('Restart ' + n + ' running decoder' + (n > 1 ? 's' : '') + ' so ' + (n > 1 ? 'they' : 'it') +
+               ' use the current keys now?\n\nAudio glitches briefly on each stream while its decoder restarts.')) return;
+  fetch('/net/keys/reload', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+    var k = (j && j.restarted) || 0;
+    toast(k ? 'Restarted ' + k + ' stream' + (k > 1 ? 's' : '') + ' — keys applied.' : 'No running stream to restart.');
+  }).catch(function () { toast('Could not reach the server to restart the streams.'); });
+}
 // Remove every loaded key in this protocol (confirm first).
 function removeAllKeys() {
   var kf = (S.d && S.d.keyed && S.d.keyed[S.fam]) || {}, jobs = [];
@@ -1491,10 +1502,17 @@ function viewKeys() {
                     onclick: function () { downloadAllKeys(this); } }, '⤓ Download all (' + (FAMN[S.fam] || S.fam) + ')'));
       bar.appendChild(h('button', { class: 'btn sm', type: 'button', title: 'Remove every loaded key for this protocol', onclick: removeAllKeys }, 'Remove all'));
     }
+    // Keys are handed to the server's own decoder when a stream starts, so a
+    // key just added/removed reaches a running decoder only on restart. This
+    // restarts them now (brief audio gap); shown when a decoder is running.
+    var nrun = streamsOf(null).length;
+    if (nrun) bar.appendChild(h('button', { class: 'btn sm', type: 'button',
+      title: 'Restart the running decoder' + (nrun > 1 ? 's' : '') + ' so they use the current keys now (briefly interrupts audio)',
+      onclick: function () { applyKeysToStreams(nrun); } }, '↻ Apply to live streams'));
     cont.appendChild(bar);
   }
   if (!S.file && S.keyAdd) cont.appendChild(keyAddForm());
-  cont.appendChild(h('div', { class: 'note', style: 'margin-top:0', text: 'Keys are stored on the server (never shown again) and used by your own decoder via the downloaded key list — the explorer does not decrypt. A key belongs to a talkgroup or channel; enter keys only for systems you are authorized to monitor.' }));
+  cont.appendChild(h('div', { class: 'note', style: 'margin-top:0', text: 'Keys are stored on the server (never shown again) and applied to its own dsd-fme decoder — matched by the key id a call announces, so clear calls are unaffected and take effect when a stream next starts. You can also download them as a key list for a decoder you run yourself. A key belongs to a talkgroup or channel; enter keys only for systems you are authorized to monitor.' }));
   if (!kn.length) {
     cont.appendChild(h('div', { class: 'note', text: 'No encryption key ids ' + (loaded ? '' : 'seen or ') + 'loaded on ' + (FAMN[S.fam] || S.fam) +
       ' yet. Add one above, or when an encrypted call names a key id it appears here (and in the network’s details) with a place to enter the key.' }));

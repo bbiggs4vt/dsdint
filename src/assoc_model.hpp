@@ -923,10 +923,24 @@ public:
         std::lock_guard<std::mutex> lk(mu_);
         return keyring_csv(keys_, fam, net);
     }
+    // The dsd-fme hex key list (-K) covering a whole family (or, with fam "",
+    // every family), so a decoder can be handed the keyring at start. Returns
+    // at least a header.
+    std::string keys_csv_family(const std::string& fam) const {
+        std::lock_guard<std::mutex> lk(mu_);
+        return keyring_csv_family(keys_, fam);
+    }
     std::size_t keys_count() const {
         std::lock_guard<std::mutex> lk(mu_);
         std::size_t n = 0;
         for (const auto& fk : keys_) for (const auto& nk : fk.second) n += nk.second.size();
+        return n;
+    }
+    // How many keys are stored for one family (fam "" = all).
+    std::size_t keys_count_family(const std::string& fam) const {
+        std::lock_guard<std::mutex> lk(mu_);
+        std::size_t n = 0;
+        for (const auto& fk : keys_) { if (!fam.empty() && fk.first != fam) continue; for (const auto& nk : fk.second) n += nk.second.size(); }
         return n;
     }
 
