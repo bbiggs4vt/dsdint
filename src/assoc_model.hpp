@@ -911,8 +911,11 @@ public:
                         if (n >= 1 && n <= 255) bp_[fk.first][nk.first] = n;
                     }
             }
-        ep_ = net_secrets_parse(root.get("ep"), ep_norm);
-        tyt_ep_ = net_secrets_parse(root.get("tytep"), tyt_ep_norm);
+        net_keys_.clear();
+        for (const auto& k : net_key_kinds()) {
+            NetSecrets m = net_secrets_parse(root.get(k.id), k.id);
+            if (!m.empty()) net_keys_[k.id] = std::move(m);
+        }
         return true;
     }
     bool set_key(const std::string& fam, const std::string& net, const std::string& kid,
@@ -964,40 +967,82 @@ public:
             if (net_on_freq(nk.first, freq_hz)) return nk.second;
         return 0;
     }
-    // DMR Enhanced Privacy (Motorola EP, ARC4): a 40-bit hex key set per
-    // network for when its key id isn't known -- applied to every EP call on
-    // the network's frequency whatever key id it announces (a key-id key in
-    // the keyring still wins for its own id). Unlike BP it IS secret: kept in
-    // the owner-only keys file next to the keyring, never in /net.json (which
-    // says only which networks have one) or an export. Applied by writing it
-    // into the stream's dsd-fme -K list for every 8-bit key id (see
-    // keys_csv_stream) -- not with -1, which turns dsd-fme's key list off.
-    // Takes 1-10 hex digits (zero-padded to 10); 0 is not a key.
-    static std::string ep_norm(const std::string& in) { return hex_key_norm(in, 10); }
-    bool set_ep(const std::string& fam, const std::string& net, const std::string& value) {
-        return net_secret_set(ep_, fam, net, ep_norm(value));
+    // Secret per-network DMR keys that carry no key id, one store per kind
+    // (net_key_kinds). They are kept in the owner-only keys file next to the
+    // keyring, never in /net.json (which lists only which networks have one)
+    // or an export, and are matched to a stream by the network's frequency.
+    //  - "ep": Motorola Enhanced Privacy (ARC4), 40 bits -- applied to every
+    //    EP call whatever key id it announces, by writing it into the stream's
+    //    -K list for every 8-bit key id (keys_csv_stream); a key-id key in the
+    //    keyring still wins for its own id. (Not -1: that turns -K off.)
+    //  - "forced" kinds: keys for radios that send no key id or encryption
+    //    flag, which dsd-fme applies to EVERY voice frame on the channel, so
+    //    a clear call there is garbled -- TYT EP (AES-128, -5; TYT MD-380/
+    //    UV380, Baofeng DM-1701), Anytone BP (16 bits, -A), TYT AP (PC4, -!),
+    //    Baofeng AP (PC5, -+) and Retevis AP (RC2, -@), the AP kinds 128 or
+    //    256 bits. dsd-fme keeps them across carrier loss and beside -K. Only
+    //    one forced kind can be set per network (two can't both be right), so
+    //    setting one clears the network's other forced kinds.
+    // A key is 1..digits hex digits (spaces ignored), zero-padded; an AP kind
+    // also takes exactly 64 digits (256 bits). All-zero is not a key.
+    struct NetKeyKind { const char* id; std::size_t digits; bool forced; bool allow256; };
+    static const std::vector<NetKeyKind>& net_key_kinds() {
+        static const std::vector<NetKeyKind> k = {
+            {"ep", 10, false, false}, {"tytep", 32, true, false}, {"anybp", 4, true, false},
+            {"tytap", 32, true, true}, {"bfap", 32, true, true}, {"rtap", 32, true, true}};
+        return k;
     }
-    bool remove_ep(const std::string& fam, const std::string& net) { return net_secret_remove(ep_, fam, net); }
-    // The EP key (10 hex digits) for a network of `fam` on `freq_hz` ("" =
-    // none), matched by frequency like bp_for_freq. First match wins.
-    std::string ep_for_freq(const std::string& fam, std::int64_t freq_hz) const {
-        return net_secret_for_freq(ep_, fam, freq_hz);
+    static const NetKeyKind* net_key_kind(const std::string& id) {
+        for (const auto& k : net_key_kinds()) if (id == k.id) return &k;
+        return nullptr;
     }
-    // TYT-style Enhanced Privacy (TYT MD-380/UV380, Baofeng DM-1701 and kin
-    // call it "EP"): an AES-128 key, 32 hex digits (e.g.
-    // 00000000000000000000000000012345), set per network. These radios send
-    // no key id or algorithm, so dsd-fme applies it (-5) to EVERY voice frame
-    // on the channel -- a clear call there is garbled, so it belongs only on
-    // channels where all traffic uses the key. dsd-fme keeps it across
-    // carrier loss and alongside a -K list. Secret, like EP: keys file only,
-    // /net.json "tytep" lists just the networks. 1-32 hex digits, zero-padded.
-    static std::string tyt_ep_norm(const std::string& in) { return hex_key_norm(in, 32); }
-    bool set_tyt_ep(const std::string& fam, const std::string& net, const std::string& value) {
-        return net_secret_set(tyt_ep_, fam, net, tyt_ep_norm(value));
+    static std::string net_key_norm(const std::string& kind, const std::string& in) {
+        const NetKeyKind* k = net_key_kind(kind);
+        if (!k) return std::string();
+        std::string digits;
+        for (char c : in) if (!std::isspace(static_cast<unsigned char>(c))) digits += c;
+        if (k->allow256 && digits.size() == 64) return hex_key_norm(digits, 64);
+        return hex_key_norm(digits, k->digits);
     }
-    bool remove_tyt_ep(const std::string& fam, const std::string& net) { return net_secret_remove(tyt_ep_, fam, net); }
-    std::string tyt_ep_for_freq(const std::string& fam, std::int64_t freq_hz) const {
-        return net_secret_for_freq(tyt_ep_, fam, freq_hz);
+    bool set_net_key(const std::string& kind, const std::string& fam, const std::string& net, const std::string& value) {
+        const NetKeyKind* k = net_key_kind(kind);
+        const std::string v = net_key_norm(kind, value);
+        if (!k || fam.empty() || net.empty() || v.empty()) return false;
+        std::lock_guard<std::mutex> lk(mu_);
+        if (k->forced)   // one forced kind per network: drop the others
+            for (const auto& o : net_key_kinds())
+                if (o.forced && o.id != kind) erase_net_key_locked(o.id, fam, net);
+        net_keys_[kind][fam][net] = v;
+        ++version_;
+        save_keys_locked();
+        return true;
+    }
+    bool remove_net_key(const std::string& kind, const std::string& fam, const std::string& net) {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (!erase_net_key_locked(kind, fam, net)) return false;
+        ++version_;
+        save_keys_locked();
+        return true;
+    }
+    // The key of `kind` for a network of `fam` on `freq_hz` ("" = none),
+    // matched by frequency like bp_for_freq. First match wins.
+    std::string net_key_for_freq(const std::string& kind, const std::string& fam, std::int64_t freq_hz) const {
+        if (freq_hz <= 0) return std::string();
+        std::lock_guard<std::mutex> lk(mu_);
+        auto m = net_keys_.find(kind);
+        if (m == net_keys_.end()) return std::string();
+        auto f = m->second.find(fam);
+        if (f == m->second.end()) return std::string();
+        for (const auto& nk : f->second)
+            if (net_on_freq(nk.first, freq_hz)) return nk.second;
+        return std::string();
+    }
+    // The forced key for a stream on `freq_hz`: {kind, value}, or {"", ""}.
+    std::pair<std::string, std::string> forced_net_key_for_freq(const std::string& fam, std::int64_t freq_hz) const {
+        for (const auto& k : net_key_kinds())
+            if (k.forced)
+                if (std::string v = net_key_for_freq(k.id, fam, freq_hz); !v.empty()) return {k.id, v};
+        return {};
     }
     // The -K list the server hands one of its own decoders: the family's
     // keyring (keys_csv_family), plus -- when `ep` is set -- that EP key as
@@ -1125,8 +1170,7 @@ private:
                ",\"merges\":" + merges_json(view_merges_locked()) +
                ",\"keyed\":" + keyring_loaded_json(keys_) +
                ",\"bp\":" + bp_json_locked() +
-               ",\"ep\":" + net_secrets_nets_json(ep_) +
-               ",\"tytep\":" + net_secrets_nets_json(tyt_ep_) +
+               net_keys_nets_json_locked() +
                ",\"families\":";
     }
     // The explorer's map: a tile server of your own (DSD_NET_MAP_TILES, a URL
@@ -1292,45 +1336,41 @@ private:
         if (up.empty() || up.size() > digits || up.find_first_not_of('0') == std::string::npos) return std::string();
         return std::string(digits - up.size(), '0') + up;
     }
-    static NetSecrets net_secrets_parse(const mjson::V* v, std::string (*norm)(const std::string&)) {
+    static NetSecrets net_secrets_parse(const mjson::V* v, const std::string& kind) {
         NetSecrets m;
         if (!v || v->t != mjson::V::Obj) return m;
         for (const auto& fk : v->o) {
             if (fk.second.t != mjson::V::Obj) continue;
             for (const auto& nk : fk.second.o)
                 if (nk.second.t == mjson::V::Str) {
-                    const std::string k = norm(nk.second.s);
+                    const std::string k = net_key_norm(kind, nk.second.s);
                     if (!k.empty()) m[fk.first][nk.first] = k;
                 }
         }
         return m;
     }
-    bool net_secret_set(NetSecrets& m, const std::string& fam, const std::string& net, const std::string& v) {
-        if (fam.empty() || net.empty() || v.empty()) return false;
-        std::lock_guard<std::mutex> lk(mu_);
-        m[fam][net] = v;
-        ++version_;
-        save_keys_locked();
+    bool erase_net_key_locked(const std::string& kind, const std::string& fam, const std::string& net) {
+        auto m = net_keys_.find(kind);
+        if (m == net_keys_.end()) return false;
+        auto f = m->second.find(fam);
+        if (f == m->second.end() || !f->second.erase(net)) return false;
+        if (f->second.empty()) m->second.erase(f);
+        if (m->second.empty()) net_keys_.erase(m);
         return true;
     }
-    bool net_secret_remove(NetSecrets& m, const std::string& fam, const std::string& net) {
-        std::lock_guard<std::mutex> lk(mu_);
-        auto f = m.find(fam);
-        if (f == m.end() || !f->second.erase(net)) return false;
-        if (f->second.empty()) m.erase(f);
-        ++version_;
-        save_keys_locked();
-        return true;
+    // ,"ep":{...},"tytep":{...},... -- every kind, with values (keys file) or
+    // as the value-free network lists (/net.json).
+    std::string net_keys_json_locked(bool values) const {
+        static const NetSecrets none;
+        std::string o;
+        for (const auto& k : net_key_kinds()) {
+            auto m = net_keys_.find(k.id);
+            const NetSecrets& ns = m == net_keys_.end() ? none : m->second;
+            o += std::string(",\"") + k.id + "\":" + (values ? net_secrets_json(ns) : net_secrets_nets_json(ns));
+        }
+        return o;
     }
-    std::string net_secret_for_freq(const NetSecrets& m, const std::string& fam, std::int64_t freq_hz) const {
-        if (freq_hz <= 0) return std::string();
-        std::lock_guard<std::mutex> lk(mu_);
-        auto f = m.find(fam);
-        if (f == m.end()) return std::string();
-        for (const auto& nk : f->second)
-            if (net_on_freq(nk.first, freq_hz)) return nk.second;
-        return std::string();
-    }
+    std::string net_keys_nets_json_locked() const { return net_keys_json_locked(false); }
     // {"dmr":{"cc:1@440425000":"0102030405",...}} -- keys WITH values (the
     // keys file only); net_secrets_nets_json is the value-free /net.json form,
     // {"dmr":["cc:1@440425000",...]}.
@@ -1370,7 +1410,7 @@ private:
             std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
             if (!f) return;
             f << "{\"keys\":" << keyring_json(keys_) << ",\"bp\":" << bp_json_locked()
-              << ",\"ep\":" << net_secrets_json(ep_) << ",\"tytep\":" << net_secrets_json(tyt_ep_) << "}\n";
+              << net_keys_json_locked(true) << "}\n";
             if (!f) return;
         }
         std::filesystem::permissions(tmp, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
@@ -2292,8 +2332,7 @@ private:
     std::string merges_file_;                          // where they are kept ("" = memory only)
     KeyRing keys_;                                     // per-network decryption keyring (values never leave in /net.json/exports)
     std::map<std::string, std::map<std::string, int>> bp_;  // DMR Basic Privacy key numbers: fam -> net -> 1..255 (not secret)
-    NetSecrets ep_;                                    // DMR Enhanced Privacy keys: fam -> net -> 10 hex digits (secret)
-    NetSecrets tyt_ep_;                                // TYT-style EP (AES-128) keys: fam -> net -> 32 hex digits (secret)
+    std::map<std::string, NetSecrets> net_keys_;       // per-network keys without a key id: kind -> fam -> net -> hex (secret)
     std::string keys_file_;                            // where it is kept ("" = memory only)
     bool per_receiver_ = default_per_receiver();
     std::size_t max_calls_ = max_calls_setting();

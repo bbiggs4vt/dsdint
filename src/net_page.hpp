@@ -1375,19 +1375,36 @@ function bpSection(cont) {
   });
   cont.appendChild(h('div', { class: 'keynet' }, [ul]));   // same .9rem inset as the key-id network blocks
 }
-// Secret per-network DMR keys with no key id, one kind per entry: Motorola
-// Enhanced Privacy (a 40-bit ARC4 key for every EP call on the network,
-// whatever key id it announces) and TYT-style EP (an AES-128 key that dsd-fme
-// applies to every voice frame on the channel -- TYT / Baofeng DM-1701 radios
-// send no key id or algorithm). /net.json says only which networks have one:
-// S.d[kind] is {fam:[net,...]}; the value is never sent back.
+// Secret per-network DMR keys with no key id, one kind per entry (the
+// server's AssocModel::net_key_kinds): Motorola Enhanced Privacy (a 40-bit
+// ARC4 key for every EP call on the network, whatever key id it announces),
+// and the "forced" kinds -- TYT EP, Anytone BP, TYT / Baofeng / Retevis AP --
+// keys for radios that send no key id or encryption flag, which dsd-fme
+// applies to every voice frame on the channel (one forced kind per network;
+// setting one replaces another). `ap` kinds take 128 or 256 bits. /net.json
+// says only which networks have one: S.d[kind] is {fam:[net,...]}.
 var NETKEY = {
   ep:    { path: '/net/ep/', digits: 10, name: 'Motorola Enhanced Privacy', short: 'EP',
            opt: 'Motorola Enhanced Privacy (any key id)', list: 'EP key set (any key id)', eg: '0102030405' },
   tytep: { path: '/net/tytep/', digits: 32, name: 'TYT Enhanced Privacy', short: 'TYT EP',
            opt: 'TYT Enhanced Privacy (AES, 32 hex)', list: 'TYT EP key set (all voice on the channel)',
-           eg: '00000000000000000000000000012345' }
+           eg: '00000000000000000000000000012345', forced: true },
+  anybp: { path: '/net/anybp/', digits: 4, name: 'Anytone Basic Privacy', short: 'Anytone BP',
+           opt: 'Anytone Basic Privacy (16-bit, 4 hex)', list: 'Anytone BP key set (all voice on the channel)',
+           eg: '1A2B', forced: true },
+  tytap: { path: '/net/tytap/', digits: 32, ap: true, name: 'TYT Advanced Privacy', short: 'TYT AP',
+           opt: 'TYT Advanced Privacy (PC4, 32 or 64 hex)', list: 'TYT AP key set (all voice on the channel)',
+           eg: '736B9A9C5645288B243AD5CB8701EF8A', forced: true },
+  bfap:  { path: '/net/bfap/', digits: 32, ap: true, name: 'Baofeng Advanced Privacy', short: 'Baofeng AP',
+           opt: 'Baofeng Advanced Privacy (PC5, 32 or 64 hex)', list: 'Baofeng AP key set (all voice on the channel)',
+           eg: '736B9A9C5645288B243AD5CB8701EF8A', forced: true },
+  rtap:  { path: '/net/rtap/', digits: 32, ap: true, name: 'Retevis Advanced Privacy', short: 'Retevis AP',
+           opt: 'Retevis Advanced Privacy (RC2, 32 or 64 hex)', list: 'Retevis AP key set (all voice on the channel)',
+           eg: '736B9A9C5645288B243AD5CB8701EF8A', forced: true }
 };
+// A forced kind replaces any other forced kind on the network (server side);
+// mirror that locally so the lists update at once.
+function nkDigitsText(K) { return K.ap ? 'up to 32 hex digits, or 64 for 256 bits' : 'up to ' + K.digits + ' hex digits'; }
 function netKeyNets(kind) { return (S.d && S.d[kind] && S.d[kind][S.fam]) || []; }
 function markNetKey(kind, net, on) {
   if (!S.d) return;
@@ -1402,8 +1419,9 @@ function setNetKey(kind, net, val, done) {
                           body: JSON.stringify({ fam: S.fam, net: net, key: val }) })
     .then(function (r) { return r.json().then(function (j) { return r.ok && j.ok; }, function () { return false; }); })
     .then(function (ok) {
+      if (ok && K.forced) Object.keys(NETKEY).forEach(function (o) { if (o !== kind && NETKEY[o].forced) markNetKey(o, net, false); });
       if (ok) { markNetKey(kind, net, true); toast(K.name + ' key set for ' + (netLabel(net) || net) + '.'); if (S.d) render(); }
-      else toast('That ' + K.short + ' key wasn’t accepted (up to ' + K.digits + ' hex digits, not all zero).');
+      else toast('That ' + K.short + ' key wasn’t accepted (' + nkDigitsText(K) + ', not all zero).');
       if (done) done(ok);
     }).catch(function () { toast('Could not reach the server to set the ' + K.short + ' key.'); });
 }
@@ -1626,7 +1644,7 @@ function viewKeys() {
   }
   // DMR Basic Privacy (a key number per network, no key id) -- its own section.
   // DMR Enhanced Privacy keys set without a key id -- likewise.
-  if (S.fam === 'dmr') { bpSection(cont); netKeySection(cont, 'ep'); netKeySection(cont, 'tytep'); }
+  if (S.fam === 'dmr') { bpSection(cont); Object.keys(NETKEY).forEach(function (k) { netKeySection(cont, k); }); }
 }
 // The manual "Add a key" form (Keys tab): pick a network, type a key id, pick
 // the algorithm (optional) and enter the hex value. Its state (S.keyAdd)
@@ -1683,7 +1701,7 @@ function keyAddForm() {
     kidInp.placeholder = bp ? 'n/a for Basic Privacy' : nk ? 'n/a (no key id)' : 'e.g. 1 or 666A';
     kidLab.el.classList.toggle('off', bp || !!nk);
     valLab.span.textContent = bp ? 'BP key number' : nk ? nk.short + ' key (hex)' : 'Key value';
-    valInp.placeholder = bp ? '1–255' : nk ? nk.digits + ' hex digits, e.g. ' + nk.eg : 'key (hex)';
+    valInp.placeholder = bp ? '1–255' : nk ? (nk.ap ? '32 or 64' : nk.digits) + ' hex digits, e.g. ' + nk.eg : 'key (hex)';
     valInp.setAttribute('aria-label', bp ? 'BP key number' : nk ? nk.short + ' key (hex)' : 'Key value (hex)');
   };
   algSel.addEventListener('change', function () { S.keyAdd.alg = algSel.value; applyMode(); });
@@ -1698,8 +1716,8 @@ function keyAddForm() {
     }
     if (isDmr && NETKEY[alg]) {
       var nk = NETKEY[alg], hx = val.replace(/\s+/g, '');
-      if (!/^[0-9A-Fa-f]+$/.test(hx) || hx.length > nk.digits || /^0+$/.test(hx)) {
-        toast('Enter the ' + nk.short + ' key: up to ' + nk.digits + ' hex digits.'); valInp.focus(); return;
+      if (!/^[0-9A-Fa-f]+$/.test(hx) || (hx.length > nk.digits && !(nk.ap && hx.length === 64)) || /^0+$/.test(hx)) {
+        toast('Enter the ' + nk.short + ' key: ' + nkDigitsText(nk) + '.'); valInp.focus(); return;
       }
       setNetKey(alg, net, hx, function (ok) { if (ok) S.keyAdd = null; if (S.view === 'keys') viewKeys(); });
       return;
@@ -1714,7 +1732,7 @@ function keyAddForm() {
   wrap.appendChild(h('div', { class: 'keyact' }, [
     h('button', { class: 'btn sm', type: 'button', onclick: save }, 'Save key'),
     h('button', { class: 'btn sm', type: 'button', onclick: function () { S.keyAdd = null; viewKeys(); } }, 'Cancel')]));
-  wrap.appendChild(h('div', { class: 'kh', text: 'A hex key (up to 64 digits), matched by the key id a call announces' + (isDmr ? '; or DMR Basic Privacy, a key number 1–255 with no key id; or a Motorola Enhanced Privacy key (10 hex digits) applied to every EP call on the network whatever its key id; or a TYT Enhanced Privacy key (32 hex digits), applied to ALL voice on the channel — clear calls there are garbled, so only for channels that always use it' : '') + '. Stored on the server; never shown again. Only enter keys for systems you are authorized to monitor.' }));
+  wrap.appendChild(h('div', { class: 'kh', text: 'A hex key (up to 64 digits), matched by the key id a call announces' + (isDmr ? '; or DMR Basic Privacy, a key number 1–255 with no key id; or a Motorola Enhanced Privacy key (10 hex digits) applied to every EP call on the network whatever its key id; or a TYT EP, Anytone BP or TYT / Baofeng / Retevis AP key, applied to ALL voice on the channel — clear calls there are garbled, so only for channels that always use it (one of these per network)' : '') + '. Stored on the server; never shown again. Only enter keys for systems you are authorized to monitor.' }));
   applyMode();
   return wrap;
 }
