@@ -1373,7 +1373,7 @@ function bpSection(cont) {
       h('span', { class: 'c' }, S.file ? '' : h('a', { class: 'keyrm', onclick: function () { removeBp(net); } }, 'Clear'))])]);
     ul.appendChild(row);
   });
-  cont.appendChild(ul);
+  cont.appendChild(h('div', { class: 'keynet' }, [ul]));   // same .9rem inset as the key-id network blocks
 }
 // "Encryption keys seen": each key id the entity's encrypted calls named, how
 // many calls, and whether a decryption key is loaded. On a network's panel
