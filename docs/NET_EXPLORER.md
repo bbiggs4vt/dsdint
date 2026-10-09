@@ -407,7 +407,10 @@ tablet or phone the details are a drawer: **Close** or Esc.
     the DMR Keys tab, each with **Clear**. Because BP has no key id, a decoder
     applies **one** BP key per channel; dsd-fme applies it only to a call
     flagged encrypted that has no key id, so clear and key-id (EP/AES) calls
-    are unaffected. Set it on channels you know use BP. The number isn't
+    are unaffected. Set it on channels you know use BP. BP works alongside
+    the key list and Enhanced Privacy keys on the same channel with the
+    dsd-fme this server ships (it carries a small fix for that; a dsd-fme you
+    build yourself needs the same patch — see the README). The number isn't
     secret (the keys themselves
     are well known). As with the key list, a change takes effect when a stream
     next starts, or now with **↻ Apply to live streams**.

@@ -166,7 +166,12 @@ the Dockerfile.
 
 Dependencies: a C++17 compiler, CMake ≥ 3.16, Boost ≥ 1.74 (headers +
 `boost_system`), and `dsd-fme` built/installed separately
-(https://github.com/lwvmobile/dsd-fme).
+(https://github.com/lwvmobile/dsd-fme). Apply
+`patches/dsd-fme-keep-bp-key.patch` to it (`git apply`, at the commit pinned
+in the Dockerfile) as the Docker build does: without it, a DMR Basic Privacy
+key set in the network explorer stops working after the first call on any
+DMR stream that also has stored keys (dsd-fme clears a `-b` key at each
+carrier loss while a `-K` key list is loaded).
 
 ```bash
 # Debian/Ubuntu
