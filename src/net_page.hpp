@@ -273,7 +273,7 @@ inline std::string render_net_page_html() {
   .b-qlow { background: var(--danger); color: #fff; }
   .b-qmarg { background: rgba(248,148,6,.18); color: var(--warn); border-color: var(--warn); }
   .b-qunk { background: rgba(255,255,255,.06); color: var(--muted); border-color: var(--table-bd); }
-  .nowrap .b-qlow, .nowrap .b-qmarg, .nowrap .b-qunk { margin-left: .4rem; }   /* gap from the play/download controls */
+  .audcell { display: flex; flex-direction: column; align-items: flex-start; gap: .2rem; }   /* play/download on one line, quality badge below */
   .b-strong { background: rgba(98,196,98,.18); color: var(--success); }
   .b-weak { background: rgba(248,148,6,.18); color: var(--warn); }
   .b-channel { background: rgba(91,192,222,.16); color: var(--info); }
@@ -1780,9 +1780,9 @@ function dlLink(c) {
 function audioCell(c) {
   var p = playBtn(c), qb = qualBadge(c);   // quality lives here, not in the crowded TYPE column
   var kids = [];
-  if (p) { kids.push(p); kids.push(dlLink(c)); }
-  if (qb) kids.push(qb);
-  return kids.length ? h('span', { class: 'nowrap' }, kids) : '';
+  if (p) kids.push(h('span', { class: 'nowrap' }, [p, dlLink(c)]));   // play + download stay together
+  if (qb) kids.push(qb);                                              // badge on its own line (avoids cramping)
+  return kids.length ? h('div', { class: 'audcell' }, kids) : '';
 }
 // A data call's service, in words (svc from the server: what its header /
 // Motorola MNIS service said).
