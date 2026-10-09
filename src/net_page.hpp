@@ -272,7 +272,8 @@ inline std::string render_net_page_html() {
   .b-enc { background: rgba(248,148,6,.2); color: var(--warn); }
   .b-qlow { background: var(--danger); color: #fff; }
   .b-qmarg { background: rgba(248,148,6,.18); color: var(--warn); border-color: var(--warn); }
-  .nowrap .b-qlow, .nowrap .b-qmarg { margin-left: .4rem; }   /* gap from the play/download controls */
+  .b-qunk { background: rgba(255,255,255,.06); color: var(--muted); border-color: var(--table-bd); }
+  .nowrap .b-qlow, .nowrap .b-qmarg, .nowrap .b-qunk { margin-left: .4rem; }   /* gap from the play/download controls */
   .b-strong { background: rgba(98,196,98,.18); color: var(--success); }
   .b-weak { background: rgba(248,148,6,.18); color: var(--warn); }
   .b-channel { background: rgba(91,192,222,.16); color: var(--info); }
@@ -1671,6 +1672,10 @@ function typeBadges(c) {
 // (a weak signal, a bad decode, and encryption all read the same). See
 // docs/AUDIO_QUALITY_CHECK.md.
 function qualBadge(c) {
+  if (c.q === 'unknown') {
+    var ut = 'Audio quality: couldn’t assess — this call was flagged as voice but no voice frames were decoded (e.g. a sync-only channel, or a signal too weak to decode any audio).';
+    return h('span', { class: 'badge b-qunk', title: ut, 'data-tip': ut }, 'QUALITY ?');
+  }
   if (c.q !== 'unusable' && c.q !== 'marginal') return null;
   var pct = function (x) { return x != null ? (100 * x).toFixed(0) + '%' : '?'; };
   var how = 'silence frames ' + pct(c.qs) + ', repeats ' + pct(c.qr) +

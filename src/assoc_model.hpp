@@ -1195,6 +1195,11 @@ private:
                         c.qrep = s.rep;
                         c.qerr = s.err_per_frame;
                         c.qframes = s.frames;
+                    } else if (k.voice && s.frames == 0) {
+                        // Flagged voice but no AMBE voice frames ever decoded
+                        // (e.g. a sync-only channel): quality couldn't be
+                        // assessed -- say so rather than show nothing.
+                        c.qual = "unknown";
                     }
                 }
                 c.open = k.open && now - k.last_ms <= kContinueMs;

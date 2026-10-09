@@ -46,6 +46,12 @@ Status: **Layer 2 built** on branch `claude/audio-quality-check`. Layer 1
     frac), `qe` (err/frame), `qn` (frames); round-trips through export/import;
     merges in `fold_call`. Explorer shows LOW QUALITY / MARGINAL (good shows
     nothing); tooltip gives the numbers and states cause is not determined.
+  - A voice call that decoded NO AMBE frames (flagged voice from a sync, but
+    no voice bursts -- e.g. a sync-only channel, or too weak to decode any
+    audio) gets `q=unknown` and a muted "QUALITY ?" badge, so it reads
+    "couldn't assess" rather than showing nothing. A voice call with some
+    frames but fewer than the 50-frame minimum stays unbadged (it did get
+    bursts, just too few to judge).
   - Tests: `tests/test_audio_quality.cpp`, `tests/test_dsd_fme_parse.cpp`,
     `tests/test_assoc_model.cpp` integration -- all keyed to the real stats.
   - Scope: AMBE+2 only (DMR / NXDN / P25 Phase 2). P25 Phase 1 uses IMBE

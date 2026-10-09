@@ -1133,6 +1133,17 @@ int main() {
         const J& c = j["families"]["dmr"]["calls"].at(0);
         check(c["q"].s == "unusable", "quality: encrypted silence (no real comfort-noise) -> unusable");
     }
+    // Voice call with no AMBE frames decoded -> q=unknown (couldn't assess).
+    {
+        AssocModel m;
+        m.begin_stream(1, "dmr", 0);
+        line(m, 1, " SLOT 1 TGT=9 SRC=3112 Group Call ", 1000);
+        DsdEvent vs; vs.kind = "voice"; vs.slot = "1";   // marks voice, no voice_frame/err
+        for (int i = 0; i < 20; ++i) m.ingest(1, vs, 1001 + i);
+        J j = snap(m, 1100);
+        const J& c = j["families"]["dmr"]["calls"].at(0);
+        check(c["voice"].b && c["q"].s == "unknown", "quality: voice call, no frames decoded -> q=unknown");
+    }
 
     if (g_failures == 0) {
         std::printf("\nALL ASSOC MODEL TESTS PASSED\n");
