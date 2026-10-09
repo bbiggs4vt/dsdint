@@ -303,6 +303,17 @@ std::string url_decode(const std::string& s) {
     return o;
 }
 // The value of `key` in a query string, decoded ("" if absent).
+// The per-network key kind a "/net/<kind>/<action>" path names, or "" when
+// it isn't one (AssocModel::net_key_kinds).
+std::string net_key_route(const std::string& target, const std::string& action) {
+    const std::string pre = "/net/", suf = "/" + action;
+    if (target.size() <= pre.size() + suf.size() || target.compare(0, pre.size(), pre) != 0 ||
+        target.compare(target.size() - suf.size(), suf.size(), suf) != 0)
+        return std::string();
+    const std::string kind = target.substr(pre.size(), target.size() - pre.size() - suf.size());
+    return AssocModel::net_key_kind(kind) ? kind : std::string();
+}
+
 std::string query_param(const std::string& query, const std::string& key) {
     std::size_t p = 0;
     while (p <= query.size()) {
@@ -683,6 +694,22 @@ void Session::serve_http() {
         }
         if (!ok) res->result(http::status::bad_request);
         res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
+    } else if (post && !net_key_route(target, "set").empty()) {
+        // Set a per-network key without a key id: /net/<kind>/set, kind one
+        // of AssocModel::net_key_kinds (ep, tytep, anybp, tytap, bfap, rtap).
+        // Secret: kept with the keyring, never echoed.
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "application/json");
+        bool ok = false;
+        if (stats_) {
+            const auto obj = json::parse_flat_object(http_req_.body());
+            std::string fam = json::get_string(obj, "fam");
+            if (fam.empty()) fam = "dmr";
+            ok = stats_->assoc().set_net_key(net_key_route(target, "set"), fam, json::get_string(obj, "net"),
+                                             json::get_string(obj, "key"));
+        }
+        if (!ok) res->result(http::status::bad_request);
+        res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
     } else if (post && target == "/net/merge") {
         const std::string out = net_merge_response(http_req_.body());
         res->result(out.compare(0, 9, "{\"error\":") == 0 ? http::status::bad_request : http::status::ok);
@@ -841,6 +868,13 @@ void Session::serve_http() {
         std::string fam = query_param(query, "fam");
         if (fam.empty()) fam = "dmr";
         bool ok = stats_ && stats_->assoc().remove_bp(fam, query_param(query, "net"));
+        res->result(ok ? http::status::ok : http::status::bad_request);
+        res->set(http::field::content_type, "application/json");
+        res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
+    } else if (!net_key_route(target, "remove").empty()) {
+        std::string fam = query_param(query, "fam");
+        if (fam.empty()) fam = "dmr";
+        bool ok = stats_ && stats_->assoc().remove_net_key(net_key_route(target, "remove"), fam, query_param(query, "net"));
         res->result(ok ? http::status::ok : http::status::bad_request);
         res->set(http::field::content_type, "application/json");
         res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
@@ -1567,12 +1601,20 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         // stream's frequency). Applied only when the client didn't send its
         // own bp key; BP is DMR-only, though an "auto" stream may still match a
         // DMR BP entry on its frequency.
+        // DMR Enhanced Privacy set in the explorer is matched the same way
+        // and goes into this stream's -K list (below); a "forced" per-network
+        // key (TYT EP, Anytone BP, TYT / Baofeng / Retevis AP) is matched the
+        // same way and applied with its dsd-fme option.
         int stored_bp = 0;
-        if (stats_ && key_type_enum != KeyType::Bp) {
+        std::string stored_ep;
+        std::pair<std::string, std::string> stored_forced;   // {kind, hex}
+        if (stats_) {
             const std::string bpfam = assoc_family(protocol_hint_label(hint));
             if (bpfam == "dmr" || bpfam == "auto") {
                 const std::int64_t chf = center_freq_ > 0 ? channel_freq(center_freq_ + freq_offset) : 0;
-                stored_bp = stats_->assoc().bp_for_freq("dmr", chf);
+                if (key_type_enum != KeyType::Bp) stored_bp = stats_->assoc().bp_for_freq("dmr", chf);
+                stored_ep = stats_->assoc().net_key_for_freq("ep", "dmr", chf);
+                stored_forced = stats_->assoc().forced_net_key_for_freq("dmr", chf);
             }
         }
         // On a keyring restart, keep the port the decode client is already
@@ -1641,6 +1683,23 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
             dcfg.extra_args.push_back("-b");
             dcfg.extra_args.push_back(std::to_string(stored_bp));
         }
+        if (!stored_forced.first.empty()) {   // explorer forced key for this frequency
+            // Its dsd-fme option (verified against dsd-fme's dsd_main.c and
+            // crypt-*.c): -5 TYT EP, -2 TYT BP and -A Anytone BP (16-bit hex;
+            // -2 survives carrier loss beside -K only with
+            // patches/dsd-fme-keep-bp-key.patch), -! TYT AP
+            // (PC4), -+ Baofeng AP (PC5), -@ Retevis AP (RC2). Keys over 64
+            // bits go as space-separated 64-bit hex words in ONE argv token,
+            // dsd-fme's own format (no shell, so the space is inert); the
+            // value is validated hex of the kind's length.
+            static const std::map<std::string, std::string> flag = {
+                {"tytep", "-5"}, {"tytbp", "-2"}, {"anybp", "-A"}, {"tytap", "-!"}, {"bfap", "-+"}, {"rtap", "-@"}};
+            const std::string& v = stored_forced.second;
+            std::string arg;
+            for (std::size_t i = 0; i < v.size(); i += 16) arg += (i ? " " : "") + v.substr(i, 16);
+            dcfg.extra_args.push_back(flag.at(stored_forced.first));
+            dcfg.extra_args.push_back(arg);
+        }
 
         // Hand this decoder the explorer's stored keyring as a dsd-fme -K hex
         // key list, so keys entered in the UI decrypt this server's own
@@ -1650,11 +1709,13 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         // for the stream's family (all families when the protocol is "auto");
         // keys added later take effect when the stream restarts. The list
         // carries key VALUES, so the file is owner-only and removed in
-        // stop_pipeline.
+        // stop_pipeline. A DMR EP key for this frequency is written in as the
+        // key for every 8-bit key id (keyring keys still win for their ids);
+        // dsd-fme's -1 isn't used for it because -1 turns the key list off.
         if (stats_ && std::getenv("DSD_NET_NO_APPLY_KEYS") == nullptr) {
             std::string kfam = assoc_family(protocol_hint_label(hint));
             if (kfam == "auto") kfam.clear();                 // not known yet -> all families
-            const std::string csv = stats_->assoc().keys_csv_family(kfam);
+            const std::string csv = stats_->assoc().keys_csv_stream(kfam, stored_ep);
             if (csv.size() > sizeof("KEY ID,KEY\n") - 1) {    // more than just the header
                 std::string tmpl = (std::filesystem::temp_directory_path() / "dsd_klist_XXXXXX").string();
                 std::vector<char> path(tmpl.begin(), tmpl.end());
@@ -1687,7 +1748,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         if (stats_ && stats_id_) {
             auto st = stats_;
             const std::uint64_t sid = stats_id_;
-            const bool keyed = key_type_enum != KeyType::None || have_key_list || stored_bp != 0;
+            const bool keyed = key_type_enum != KeyType::None || have_key_list || stored_bp != 0 || !stored_forced.first.empty();
             dcfg.on_slot_audio = [st, sid, keyed](int slot, const int16_t* pcm, std::size_t n) {
                 st->assoc().audio(sid, slot, pcm, n, keyed);
             };

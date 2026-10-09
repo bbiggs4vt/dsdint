@@ -78,9 +78,9 @@ From top to bottom:
 | **Import…** | Adds saved exports (e.g. from another receiver) to the live view. |
 | **Open…** | Views saved exports offline, read-only (several files are merged). You can also drop files onto the page. |
 | **?** (Help) | Opens this manual (PDF) in a new tab. It is built into the server, so it matches the server's version and needs no internet. |
-| **Protocol tabs** | One per protocol with traffic (e.g. `DMR 62 radios · 1 live`), or with a client connected for it (even before any traffic). A dot marks a protocol with a decode stream connected: **green** while one is decoding (anything decoded in the last 10 s), **hollow** when connected but quiet. Hover for the streams. Protocols are never mixed: a DMR radio 1234 and a P25 radio 1234 are unrelated. |
+| **Protocol tabs** | One per protocol with traffic (e.g. `DMR 62 radios · 1 live`), or with a client connected for it (even before any traffic). A dot marks a protocol with a decode stream connected: **green** while one is decoding (anything decoded in the last 10 s), **hollow** when connected but quiet. Hover for the streams. The busiest protocol comes first when the page loads; after that the tabs keep their places (a protocol that appears later goes at the end), so they don't swap while counts are close. Reload to re-sort. Protocols are never mixed: a DMR radio 1234 and a P25 radio 1234 are unrelated. |
 | **Connections** | At the end of the tabs row: `● 3 clients · 2 streams` — clients connected to the server and the decode streams they run (green dot while any decodes), or `No clients connected`. Hover for each stream's protocol, frequency, and when it last decoded something. |
-| **Stat cards** | Networks, Sites, Talkgroups, Radios, Calls (recent), **Streams** (this protocol's connected decode streams, green while one decodes; hover for each; not in a file view) and Live calls — for the current protocol, network filter and search (not **With audio only** or **Hide signalling**, which only shorten the Calls list). The protocol tab's "N live" counts all of its networks, so with a network filter or a search the two can differ. |
+| **Stat cards** | Networks, Sites, Talkgroups, Radios, Calls (recent), **Streams** (this protocol's connected decode streams, green while one decodes; hover for each; not in a file view) and Live calls — for the current protocol, network filter and search (not **With audio only** or **Hide signaling**, which only shorten the Calls list). The protocol tab's "N live" counts all of its networks, so with a network filter or a search the two can differ. |
 | **Filters** | Everything that narrows the page, in one section under the stat cards (§9). Collapsed (the default) it is one row: **▸ Filters**, a [chip](#appendix-c-glossary) for each filter in force (click one to drop it) and **Clear all**; with none it says *none — showing everything*. Click **▸ Filters** to open it: a row each for networks (one chip per network, with its call count), talkgroups and radios (each with a box to type ids into), and the search. The browser remembers whether it is open. |
 | **View tabs** | Calls · Talkgroups · Radios · Graph · Map · Links · Networks. |
 | **Details panel** | On the right (or a drawer on smaller screens): everything tied to the radio, talkgroup or network you click. |
@@ -125,7 +125,7 @@ own line under the row.
 **Calls toolbar** (above the list):
 
 - **With audio only** — lists only calls with recorded voice.
-- **Hide signalling** — hides **SIGNALING** calls (announced, but no voice or data
+- **Hide signaling** — hides **SIGNALING** calls (announced, but no voice or data
   heard here). Appears only when there are any. Like **With audio only**, it only
   shortens the Calls list; the stat cards still count every call.
 - **Transcribe on play**, the language and model lists — see
@@ -407,10 +407,67 @@ tablet or phone the details are a drawer: **Close** or Esc.
     the DMR Keys tab, each with **Clear**. Because BP has no key id, a decoder
     applies **one** BP key per channel; dsd-fme applies it only to a call
     flagged encrypted that has no key id, so clear and key-id (EP/AES) calls
-    are unaffected. Set it on channels you know use BP. The number isn't
+    are unaffected. Set it on channels you know use BP. BP works alongside
+    the key list and Enhanced Privacy keys on the same channel with the
+    dsd-fme this server ships (it carries a small fix for that; a dsd-fme you
+    build yourself needs the same patch — see the README). The number isn't
     secret (the keys themselves
     are well known). As with the key list, a change takes effect when a stream
     next starts, or now with **↻ Apply to live streams**.
+  - **Motorola Enhanced Privacy (DMR), any key id.** An EP (ARC4) key normally goes in
+    with its key id like any other key (algorithm **RC4 (EP)**). When you have
+    a network's EP key but not its key id, choose **Motorola Enhanced Privacy
+    (any key id)** in the same form: the key-id box greys out and the value is the
+    **40-bit key, up to 10 hex digits**. It is stored per network and, matched
+    to the network's **frequency** when a stream starts, handed to the
+    server's own decoder as the key for **every** key id (00–FF) in its key
+    list; a key you stored for a specific key id still wins for that id.
+    Clear calls are unaffected, but an encrypted call on that channel whose
+    key id has no key of its own is tried with the EP key, so set it only on
+    channels you know use EP. Unlike a BP number it **is** secret: it is kept
+    with the keyring and never shown again — the networks that have one
+    appear in a **Motorola Enhanced Privacy** list on the DMR Keys tab, each
+    with **Clear**. It is not included in a network's key-list download. A
+    change takes effect when a stream next starts, or now with **↻ Apply to
+    live streams**.
+  - **TYT Enhanced Privacy (DMR).** TYT radios (MD-380 / MD-UV380 and kin)
+    and the Baofeng DM-1701 call their AES-128 privacy "EP" too, but it is a
+    different scheme: a **32-hex-digit key** such as
+    `00000000000000000000000000012345`, with **no key id and no encryption
+    flag** in the call. Choose **TYT Enhanced Privacy (AES, 32 hex)** in the same
+    form; the key-id box greys out and the value takes the key (shorter keys
+    are zero-padded, spaces are ignored). It is stored per network and,
+    matched to the network's **frequency** when a stream starts, applied to
+    the server's own decoder with dsd-fme's `-5`. Because nothing in the call
+    says it is encrypted, the decoder applies it to **every** voice frame on
+    that channel: a clear call there is garbled, so set it only on channels
+    where all traffic uses this key. It works alongside BP, Motorola EP and
+    the key list. Like Motorola EP it is secret — kept with the keyring,
+    never shown again, listed in a **TYT Enhanced Privacy** list with
+    **Clear** — and it takes effect when a stream next starts, or now with
+    **↻ Apply to live streams**.
+  - **TYT / Anytone Basic Privacy and TYT / Baofeng / Retevis Advanced
+    Privacy (DMR).** More keys for radios that send no key id or encryption flag,
+    set the same way from the form's algorithm list:
+
+    | Option | Key | Radios | dsd-fme |
+    |---|---|---|---|
+    | **TYT Basic Privacy** | 16 bits, up to 4 hex digits | TYT MD-380 / MD-UV380 | `-2` |
+    | **Anytone Basic Privacy** | 16 bits, up to 4 hex digits | Anytone AT-D878 / D578 | `-A` |
+    | **TYT Advanced Privacy** (PC4) | 128 or 256 bits: up to 32, or exactly 64, hex digits | TYT MD-UV380 / 390 | `-!` |
+    | **Baofeng Advanced Privacy** (PC5) | 128 or 256 bits, as above | Baofeng DM-1701, DM-32 | `-+` |
+    | **Retevis Advanced Privacy** (RC2) | 128 or 256 bits, as above | Retevis RT3S / RT90 | `-@` |
+
+    Like TYT EP, each is stored per network, applied to **every** voice frame
+    on the network's frequency (a clear call there is garbled), kept secret,
+    and listed under its own heading on the DMR Keys tab with **Clear**. A
+    channel can have only **one** of these "all voice" keys (TYT EP, TYT or
+    Anytone BP, or an Advanced Privacy key) — two can't both be right — so setting one
+    replaces any other on that network. Basic Privacy and Motorola EP are
+    separate and stay as they are. TYT BP, like DMR Basic Privacy, needs the
+    small dsd-fme fix the server's dsd-fme carries to keep working after the
+    first call when other keys are stored (see the README for a dsd-fme you
+    build yourself).
 
 ## 9. Searching, filtering and sorting
 

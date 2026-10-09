@@ -1,0 +1,84 @@
+diff --git a/include/dsd.h b/include/dsd.h
+index 9ee0696..139ce5e 100644
+--- a/include/dsd.h
++++ b/include/dsd.h
+@@ -632,6 +632,8 @@ typedef struct
+   unsigned long long int payload_miP;
+   int p25vc;
+   unsigned long long int K;
++  unsigned long long int K_cli; //-b BP key from the command line, kept across calls (dsd-server patch)
++  unsigned long long int H_cli; //-2 TYT BP key from the command line, kept across calls (dsd-server patch)
+   unsigned long long int K1;
+   unsigned long long int K2;
+   unsigned long long int K3;
+diff --git a/src/dsd_main.c b/src/dsd_main.c
+index b4e2357..ca8f5d0 100644
+--- a/src/dsd_main.c
++++ b/src/dsd_main.c
+@@ -432,7 +432,7 @@
+    {
+      state->R = 0; //NXDN, or RC4 (slot 1)
+      state->RR = 0; //RC4 (slot 2)
+-     state->K = 0; //BP
++     state->K = state->K_cli; //BP (a -b key is kept: dsd-server patch)
+      state->K1 = 0; //tera 10/32/64 char BP
+      state->K2 = 0;
+      state->K3 = 0;
+@@ -442,7 +442,7 @@
+      memset (state->A3, 0, sizeof(state->A3));
+      memset (state->A4, 0, sizeof(state->A4));
+      memset (state->aes_key_loaded, 0, sizeof (state->aes_key_loaded));
+-     state->H = 0; //shim for above
++     state->H = state->H_cli; //shim for above (a -2 TYT BP key is kept: dsd-server patch)
+    }
+  
+    //forcing key application will re-enable this at the time of voice tx
+@@ -1030,6 +1030,8 @@
+    state->voice_counter[1] = 0;
+  
+    state->K = 0;
++   state->K_cli = 0;
++   state->H_cli = 0;
+    state->R = 0;
+    state->RR = 0;
+    state->H = 0;
+@@ -1980,6 +1982,7 @@
+            state.tyt_bp = 1;
+            sscanf (optarg, "%llX", &state.H);
+            state.H = state.H & 0xFFFF; //truncate to 16-bits
++           state.H_cli = state.H; //keep it across calls when the keyloader (-K) is on (dsd-server patch)
+            fprintf (stderr,"DMR TYT Basic 16-bit Key 0x%llX with Forced Application\n", state.H);
+            break;
+ 
+@@ -2213,6 +2216,7 @@
+            {
+             state.K = 256;
+            }
++           state.K_cli = state.K; //keep it across calls when the keyloader (-K) is on (dsd-server patch)
+            opts.dmr_mute_encL = 0;
+            opts.dmr_mute_encR = 0;
+            if (state.K == 0)
+diff --git a/src/dsd_mbe.c b/src/dsd_mbe.c
+index 658cf8c..245f075 100644
+--- a/src/dsd_mbe.c
++++ b/src/dsd_mbe.c
+@@ -582,7 +582,8 @@ processMbeFrame (dsd_opts * opts, dsd_state * state, char imbe_fr[8][23], char a
+       //EXPERIMENTAL!!
+       //load basic privacy key number from array by the tg value (if not forced)
+       //currently only Moto BP and Hytera 10 Char BP
+-      if (state->forced_alg_id == 0 && state->payload_algid == 0)
++      //(dsd-server patch: a -b / -2 key from the command line wins over this lookup)
++      if (state->forced_alg_id == 0 && state->payload_algid == 0 && state->K_cli == 0 && state->H_cli == 0)
+       {
+         //see if we need to hash a value larger than 16-bits
+         hash = state->lasttg & 0xFFFFFF;
+@@ -1049,7 +1050,8 @@ processMbeFrame (dsd_opts * opts, dsd_state * state, char imbe_fr[8][23], char a
+       //EXPERIMENTAL!!
+       //load basic privacy key number from array by the tg value (if not forced)
+       //currently only Moto BP and Hytera 10 Char BP
+-      if (state->forced_alg_id == 0 && state->payload_algidR == 0)
++      //(dsd-server patch: a -b / -2 key from the command line wins over this lookup)
++      if (state->forced_alg_id == 0 && state->payload_algidR == 0 && state->K_cli == 0 && state->H_cli == 0)
+       {
+         //see if we need to hash a value larger than 16-bits
+         hash = state->lasttgR & 0xFFFFFF;

@@ -153,6 +153,160 @@ int main() {
         fs::remove(kf);
     }
 
+    // ---- DMR Enhanced Privacy (a secret hex key per network, any key id) ----
+    {
+        AssocModel m;
+        check(m.set_net_key("ep", "dmr", "cc:1@440425000", "1a2b3c4d5e"), "ep: a 10-hex-digit key is set");
+        check(m.set_net_key("ep", "dmr", "cc:2@451000000", "abc") && m.net_key_for_freq("ep", "dmr", 451000000) == "0000000ABC",
+              "ep: a shorter key is zero-padded to 40 bits");
+        check(!m.set_net_key("ep", "dmr", "cc:1@440425000", "") && !m.set_net_key("ep", "dmr", "cc:1@440425000", "0000") &&
+                  !m.set_net_key("ep", "dmr", "cc:1@440425000", "123456789AB") && !m.set_net_key("ep", "dmr", "cc:1@440425000", "xyz") &&
+                  !m.set_net_key("ep", "dmr", "", "01"),
+              "ep: empty / zero / over 40-bit / non-hex keys and an empty network are rejected");
+        const std::string js = m.to_json(2000);
+        check(js.find("\"ep\":{\"dmr\":[\"cc:1@440425000\",\"cc:2@451000000\"]}") != std::string::npos &&
+                  js.find("1A2B3C4D5E") == std::string::npos,
+              "ep: /net.json lists the networks but never the key value");
+        check(m.net_key_for_freq("ep", "dmr", 440425000) == "1A2B3C4D5E", "ep: matched by the network's frequency");
+        check(m.net_key_for_freq("ep", "dmr", 460175000).empty() && m.net_key_for_freq("ep", "p25", 440425000).empty() &&
+                  m.net_key_for_freq("ep", "dmr", 0).empty(),
+              "ep: no match for another frequency / family / no frequency");
+
+        // The stream's -K list: the EP key for every 8-bit key id, then the
+        // keyring (so a key-id key overrides EP for its own id).
+        m.set_key("dmr", "cc:1@440425000", "05", "24", "00112233445566778899AABBCCDDEEFF");
+        const std::string csv = m.keys_csv_stream("dmr", "1A2B3C4D5E");
+        check(csv.rfind("KEY ID,KEY\n00,1A2B3C4D5E\n", 0) == 0 && csv.find("\nFF,1A2B3C4D5E\n") != std::string::npos &&
+                  csv.find("KEY ID") == csv.rfind("KEY ID"),
+              "ep: the stream key list has the EP key for ids 00-FF and one header");
+        check(csv.find("\nFF,1A2B3C4D5E\n05,0011223344556677,8899AABBCCDDEEFF\n") != std::string::npos,
+              "ep: keyring keys follow the EP rows (later rows win in dsd-fme)");
+        check(m.keys_csv_stream("dmr", "") == m.keys_csv_family("dmr"), "ep: no EP key -> the plain family list");
+
+        check(m.remove_net_key("ep", "dmr", "cc:1@440425000") && m.net_key_for_freq("ep", "dmr", 440425000).empty() &&
+                  !m.remove_net_key("ep", "dmr", "cc:1@440425000"),
+              "ep: remove clears it, and removing again is false");
+
+        namespace fs = std::filesystem;
+        const std::string kf = (fs::temp_directory_path() / ("dsd_ep_keys_" + std::to_string(::getpid()) + ".json")).string();
+        fs::remove(kf);
+        AssocModel w;
+        w.use_keys_file(kf);
+        w.set_net_key("ep", "dmr", "cc:5@451237500", "0102030405");
+        w.set_bp("dmr", "cc:5@451237500", 9);
+        AssocModel r;
+        check(r.use_keys_file(kf) && r.net_key_for_freq("ep", "dmr", 451237500) == "0102030405" &&
+                  r.bp_for_freq("dmr", 451237500) == 9,
+              "ep: it is kept in the keys file (beside BP) and comes back on load");
+        fs::remove(kf);
+    }
+
+    // ---- TYT-style Enhanced Privacy (AES-128, 32 hex digits, per network) ----
+    {
+        AssocModel m;
+        check(m.set_net_key("tytep", "dmr", "cc:1@440425000", "00000000000000000000000000012345") &&
+                  m.net_key_for_freq("tytep", "dmr", 440425000) == "00000000000000000000000000012345",
+              "tytep: a 32-hex-digit key is set and matched by frequency");
+        check(m.set_net_key("tytep", "dmr", "cc:2@451000000", "12345") &&
+                  m.net_key_for_freq("tytep", "dmr", 451000000) == "00000000000000000000000000012345",
+              "tytep: a shorter key is zero-padded to 128 bits");
+        check(m.set_net_key("tytep", "dmr", "cc:3@452000000", "736B9A9C5645288B 243AD5CB8701EF8A") &&
+                  m.net_key_for_freq("tytep", "dmr", 452000000) == "736B9A9C5645288B243AD5CB8701EF8A",
+              "tytep: dsd-fme's space-separated form is accepted");
+        check(!m.set_net_key("tytep", "dmr", "cc:1@440425000", std::string(33, '1')) &&
+                  !m.set_net_key("tytep", "dmr", "cc:1@440425000", "0") && !m.set_net_key("tytep", "dmr", "cc:1@440425000", "g1") &&
+                  !m.set_net_key("tytep", "dmr", "", "1"),
+              "tytep: over 128-bit / zero / non-hex keys and an empty network are rejected");
+        check(m.net_key_for_freq("ep", "dmr", 440425000).empty() && m.net_key_for_freq("tytep", "dmr", 460175000).empty() &&
+                  m.net_key_for_freq("tytep", "p25", 440425000).empty(),
+              "tytep: kept apart from Motorola EP; no match for another frequency / family");
+        const std::string js = m.to_json(2000);
+        check(js.find("\"tytep\":{\"dmr\":[\"cc:1@440425000\",\"cc:2@451000000\",\"cc:3@452000000\"]}") != std::string::npos &&
+                  js.find("12345") == std::string::npos && js.find("736B9A9C") == std::string::npos,
+              "tytep: /net.json lists the networks but never the key value");
+        check(m.remove_net_key("tytep", "dmr", "cc:1@440425000") && m.net_key_for_freq("tytep", "dmr", 440425000).empty() &&
+                  !m.remove_net_key("tytep", "dmr", "cc:1@440425000"),
+              "tytep: remove clears it, and removing again is false");
+
+        namespace fs = std::filesystem;
+        const std::string kf = (fs::temp_directory_path() / ("dsd_tytep_keys_" + std::to_string(::getpid()) + ".json")).string();
+        fs::remove(kf);
+        AssocModel w;
+        w.use_keys_file(kf);
+        w.set_net_key("tytep", "dmr", "cc:5@451237500", "00000000000000000000000000012345");
+        w.set_net_key("ep", "dmr", "cc:5@451237500", "0102030405");
+        AssocModel r;
+        check(r.use_keys_file(kf) && r.net_key_for_freq("tytep", "dmr", 451237500) == "00000000000000000000000000012345" &&
+                  r.net_key_for_freq("ep", "dmr", 451237500) == "0102030405",
+              "tytep: it is kept in the keys file (beside EP) and comes back on load");
+        fs::remove(kf);
+    }
+
+    // ---- Anytone BP and TYT / Baofeng / Retevis AP (forced per-network keys) ----
+    {
+        AssocModel m;
+        check(m.set_net_key("anybp", "dmr", "cc:1@440425000", "1a2") &&
+                  m.net_key_for_freq("anybp", "dmr", 440425000) == "01A2",
+              "anybp: a 16-bit key is set and zero-padded to 4 digits");
+        check(!m.set_net_key("anybp", "dmr", "cc:1@440425000", "12345") && !m.set_net_key("anybp", "dmr", "cc:1@440425000", "0"),
+              "anybp: over 16 bits / zero are rejected");
+        {
+            AssocModel t;
+            check(t.set_net_key("tytbp", "dmr", "cc:9@453000000", "a1") && t.net_key_for_freq("tytbp", "dmr", 453000000) == "00A1" &&
+                      !t.set_net_key("tytbp", "dmr", "cc:9@453000000", "1FFFF"),
+                  "tytbp: a 16-bit key is set and padded; over 16 bits is rejected");
+            check(t.set_net_key("anybp", "dmr", "cc:9@453000000", "BEEF") && t.net_key_for_freq("tytbp", "dmr", 453000000).empty(),
+                  "tytbp: it is a forced kind (setting Anytone BP replaces it)");
+        }
+        const std::string k128 = "736B9A9C5645288B243AD5CB8701EF8A";
+        const std::string k256 = "1122334455667788" "99AABBCCDDEEFF11" "1122334455667788" "99AABBCCDDEEFF11";
+        for (const char* kind : {"tytap", "bfap", "rtap"}) {
+            const std::string K = kind;
+            AssocModel a;
+            check(a.set_net_key(K, "dmr", "cc:2@451000000", "736B9A9C5645288B 243AD5CB8701EF8A") &&
+                      a.net_key_for_freq(K, "dmr", 451000000) == k128,
+                  K + ": a 128-bit key (dsd-fme's spaced form) is set");
+            check(a.set_net_key(K, "dmr", "cc:2@451000000", k256) && a.net_key_for_freq(K, "dmr", 451000000) == k256,
+                  K + ": a 256-bit key (64 digits) is set");
+            check(a.set_net_key(K, "dmr", "cc:2@451000000", "ABC") &&
+                      a.net_key_for_freq(K, "dmr", 451000000) == std::string(29, '0') + "ABC",
+                  K + ": a short key is zero-padded to 128 bits");
+            check(!a.set_net_key(K, "dmr", "cc:2@451000000", std::string(40, '1')) &&
+                      !a.set_net_key(K, "dmr", "cc:2@451000000", std::string(65, '1')),
+                  K + ": 33-63 or over 64 digits are rejected (128 or 256 bits only)");
+        }
+        check(!m.set_net_key("nope", "dmr", "cc:1@440425000", "12") && !AssocModel::net_key_kind("bp"),
+              "kinds: an unknown kind is rejected (BP has its own store)");
+
+        // One forced kind per network: setting another replaces it; Motorola
+        // EP (not forced) is unaffected.
+        check(m.set_net_key("ep", "dmr", "cc:1@440425000", "0102030405") &&
+                  m.set_net_key("tytap", "dmr", "cc:1@440425000", k128) &&
+                  m.net_key_for_freq("anybp", "dmr", 440425000).empty() &&
+                  m.net_key_for_freq("ep", "dmr", 440425000) == "0102030405",
+              "forced: setting TYT AP clears the network's Anytone BP, keeps its Motorola EP");
+        const auto fk = m.forced_net_key_for_freq("dmr", 440425000);
+        check(fk.first == "tytap" && fk.second == k128 && m.forced_net_key_for_freq("dmr", 460175000).first.empty(),
+              "forced: the stream's forced key is found by frequency");
+        const std::string js = m.to_json(2000);
+        check(js.find("\"tytap\":{\"dmr\":[\"cc:1@440425000\"]}") != std::string::npos &&
+                  js.find("\"anybp\":{}") != std::string::npos && js.find("736B9A9C") == std::string::npos,
+              "forced: /net.json lists networks per kind, never values");
+
+        namespace fs = std::filesystem;
+        const std::string kf = (fs::temp_directory_path() / ("dsd_fk_keys_" + std::to_string(::getpid()) + ".json")).string();
+        fs::remove(kf);
+        AssocModel w;
+        w.use_keys_file(kf);
+        w.set_net_key("bfap", "dmr", "cc:5@451237500", k256);
+        w.set_net_key("anybp", "dmr", "cc:6@452000000", "BEEF");
+        AssocModel r;
+        check(r.use_keys_file(kf) && r.net_key_for_freq("bfap", "dmr", 451237500) == k256 &&
+                  r.net_key_for_freq("anybp", "dmr", 452000000) == "BEEF",
+              "forced: kept in the keys file and back on load");
+        fs::remove(kf);
+    }
+
     if (g_failures == 0) { std::printf("\nALL KEYRING TESTS PASSED\n"); return 0; }
     std::printf("\n%d KEYRING TEST(S) FAILED\n", g_failures);
     return 1;

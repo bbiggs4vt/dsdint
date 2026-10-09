@@ -578,7 +578,7 @@ inline std::string render_net_page_html() {
         <div class="panel" id="v-calls">
           <div class="callbar">
             <label class="audctl" title="List only calls whose voice was recorded"><input type="checkbox" id="audonly"> With audio only</label>
-            <label class="sigctl" id="nosigctl" title="Hide signalling-only calls: a call was announced (source / target) but no voice or data was heard here, so there is no audio"><input type="checkbox" id="nosig"> Hide signalling</label>
+            <label class="sigctl" id="nosigctl" title="Hide signaling-only calls: a call was announced (source / target) but no voice or data was heard here, so there is no audio"><input type="checkbox" id="nosig"> Hide signaling</label>
             <span class="grow"></span>
             <label class="audctl live-only" id="asrctl" title="Turn each call's speech into text when you play it (runs in this browser)"><input type="checkbox" id="asron"> Transcribe on play</label>
             <select id="asrlang" class="audctl live-only" aria-label="Spoken language" title="Spoken language"></select>
@@ -1123,7 +1123,7 @@ function qm() {
 // Calls-list option; the stat cards count every call).
 function fCalls(list, allAudio) {
   var aud = S.audOnly && (!S.file || !fAll(FILEAUDIO)) && !allAudio;
-  var sig = S.noSig && !allAudio;                    // hide signalling-only calls (list option, not the stat counts)
+  var sig = S.noSig && !allAudio;                    // hide signaling-only calls (list option, not the stat counts)
   return (list || IX.calls).filter(function (c) {
     return (netAll() || netOk(c.net)) && callTgOk(c) && callROk(c) && (!aud || hasAudio(c)) &&
       (!sig || c.voice || c.data) &&
@@ -1379,6 +1379,81 @@ function bpSection(cont) {
   });
   cont.appendChild(h('div', { class: 'keynet' }, [ul]));   // same .9rem inset as the key-id network blocks
 }
+// Secret per-network DMR keys with no key id, one kind per entry (the
+// server's AssocModel::net_key_kinds): Motorola Enhanced Privacy (a 40-bit
+// ARC4 key for every EP call on the network, whatever key id it announces),
+// and the "forced" kinds -- TYT EP, TYT BP, Anytone BP, TYT / Baofeng /
+// Retevis AP --
+// keys for radios that send no key id or encryption flag, which dsd-fme
+// applies to every voice frame on the channel (one forced kind per network;
+// setting one replaces another). `ap` kinds take 128 or 256 bits. /net.json
+// says only which networks have one: S.d[kind] is {fam:[net,...]}.
+var NETKEY = {
+  ep:    { path: '/net/ep/', digits: 10, name: 'Motorola Enhanced Privacy', short: 'EP',
+           opt: 'Motorola Enhanced Privacy (any key id)', list: 'EP key set (any key id)', eg: '0102030405' },
+  tytep: { path: '/net/tytep/', digits: 32, name: 'TYT Enhanced Privacy', short: 'TYT EP',
+           opt: 'TYT Enhanced Privacy (AES, 32 hex)', list: 'TYT EP key set (all voice on the channel)',
+           eg: '00000000000000000000000000012345', forced: true },
+  tytbp: { path: '/net/tytbp/', digits: 4, name: 'TYT Basic Privacy', short: 'TYT BP',
+           opt: 'TYT Basic Privacy (16-bit, 4 hex)', list: 'TYT BP key set (all voice on the channel)',
+           eg: '1A2B', forced: true },
+  anybp: { path: '/net/anybp/', digits: 4, name: 'Anytone Basic Privacy', short: 'Anytone BP',
+           opt: 'Anytone Basic Privacy (16-bit, 4 hex)', list: 'Anytone BP key set (all voice on the channel)',
+           eg: '1A2B', forced: true },
+  tytap: { path: '/net/tytap/', digits: 32, ap: true, name: 'TYT Advanced Privacy', short: 'TYT AP',
+           opt: 'TYT Advanced Privacy (PC4, 32 or 64 hex)', list: 'TYT AP key set (all voice on the channel)',
+           eg: '736B9A9C5645288B243AD5CB8701EF8A', forced: true },
+  bfap:  { path: '/net/bfap/', digits: 32, ap: true, name: 'Baofeng Advanced Privacy', short: 'Baofeng AP',
+           opt: 'Baofeng Advanced Privacy (PC5, 32 or 64 hex)', list: 'Baofeng AP key set (all voice on the channel)',
+           eg: '736B9A9C5645288B243AD5CB8701EF8A', forced: true },
+  rtap:  { path: '/net/rtap/', digits: 32, ap: true, name: 'Retevis Advanced Privacy', short: 'Retevis AP',
+           opt: 'Retevis Advanced Privacy (RC2, 32 or 64 hex)', list: 'Retevis AP key set (all voice on the channel)',
+           eg: '736B9A9C5645288B243AD5CB8701EF8A', forced: true }
+};
+// A forced kind replaces any other forced kind on the network (server side);
+// mirror that locally so the lists update at once.
+function nkDigitsText(K) { return K.ap ? 'up to 32 hex digits, or 64 for 256 bits' : 'up to ' + K.digits + ' hex digits'; }
+function netKeyNets(kind) { return (S.d && S.d[kind] && S.d[kind][S.fam]) || []; }
+function markNetKey(kind, net, on) {
+  if (!S.d) return;
+  S.d[kind] = S.d[kind] || {};
+  var L = (S.d[kind][S.fam] || []).filter(function (x) { return x !== net; });
+  if (on) L.push(net);
+  S.d[kind][S.fam] = L;
+}
+function setNetKey(kind, net, val, done) {
+  var K = NETKEY[kind];
+  fetch(K.path + 'set', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ fam: S.fam, net: net, key: val }) })
+    .then(function (r) { return r.json().then(function (j) { return r.ok && j.ok; }, function () { return false; }); })
+    .then(function (ok) {
+      if (ok && K.forced) Object.keys(NETKEY).forEach(function (o) { if (o !== kind && NETKEY[o].forced) markNetKey(o, net, false); });
+      if (ok) { markNetKey(kind, net, true); toast(K.name + ' key set for ' + (netLabel(net) || net) + '.'); if (S.d) render(); }
+      else toast('That ' + K.short + ' key wasn’t accepted (' + nkDigitsText(K) + ', not all zero).');
+      if (done) done(ok);
+    }).catch(function () { toast('Could not reach the server to set the ' + K.short + ' key.'); });
+}
+function removeNetKey(kind, net) {
+  var K = NETKEY[kind];
+  fetch(K.path + 'remove?fam=' + encodeURIComponent(S.fam) + '&net=' + encodeURIComponent(net), { cache: 'no-store' })
+    .then(function (r) { return r.json(); }).then(function (j) {
+      if (j.ok) { markNetKey(kind, net, false); toast(K.name + ' key removed.'); if (S.d) render(); }
+    }).catch(function () { toast('Could not reach the server to remove the ' + K.short + ' key.'); });
+}
+// The list for one kind (DMR only), like the Basic Privacy one: the networks
+// with a key set, each with Clear (the value is never shown).
+function netKeySection(cont, kind) {
+  var K = NETKEY[kind], nets = netKeyNets(kind).slice();
+  if (!nets.length) return;
+  cont.appendChild(h('div', { class: 'section', style: 'margin-top:1rem', text: K.name + ' (DMR)' }));
+  var ul = h('ul', { class: 'lst keylst' });
+  nets.sort().forEach(function (net) {
+    ul.appendChild(h('li', null, [h('div', { class: 'keyhdr' }, [
+      netc(net), h('span', { class: 'mono', text: K.list }),
+      h('span', { class: 'c' }, S.file ? '' : h('a', { class: 'keyrm', onclick: function () { removeNetKey(kind, net); } }, 'Clear'))])]));
+  });
+  cont.appendChild(h('div', { class: 'keynet' }, [ul]));
+}
 // "Encryption keys seen": each key id the entity's encrypted calls named, how
 // many calls, and whether a decryption key is loaded. On a network's panel
 // (live view) a key can be added / removed and the key list downloaded.
@@ -1576,7 +1651,8 @@ function viewKeys() {
     });
   }
   // DMR Basic Privacy (a key number per network, no key id) -- its own section.
-  if (S.fam === 'dmr') bpSection(cont);
+  // DMR Enhanced Privacy keys set without a key id -- likewise.
+  if (S.fam === 'dmr') { bpSection(cont); Object.keys(NETKEY).forEach(function (k) { netKeySection(cont, k); }); }
 }
 // The manual "Add a key" form (Keys tab): pick a network, type a key id, pick
 // the algorithm (optional) and enter the hex value. Its state (S.keyAdd)
@@ -1584,7 +1660,8 @@ function viewKeys() {
 // One "Add a key" form for both a key-id key and DMR Basic Privacy: picking
 // the "Basic Privacy" algorithm greys out the key id (BP has none) and turns
 // the value field into the 1-255 key number. S.keyAdd.alg === 'bp' is the BP
-// mode marker (not a real algorithm id).
+// mode marker (not a real algorithm id). 'ep' / 'tytep' likewise pick a
+// NETKEY kind (no key id; a hex key of that kind's length).
 function keyAddForm() {
   var isDmr = S.fam === 'dmr';
   var wrap = h('div', { class: 'keyadd' });
@@ -1614,20 +1691,26 @@ function keyAddForm() {
     var bo = h('option', { value: 'bp' }, 'DMR Basic Privacy (key number)');
     if (S.keyAdd.alg === 'bp') bo.selected = true;
     algSel.appendChild(bo);
+    Object.keys(NETKEY).forEach(function (kind) {
+      var eo = h('option', { value: kind }, NETKEY[kind].opt);
+      if (S.keyAdd.alg === kind) eo.selected = true;
+      algSel.appendChild(eo);
+    });
   }
   var valInp = h('input', { class: 'ki', type: 'text', spellcheck: 'false', autocomplete: 'off', value: S.keyAdd.val,
                             placeholder: 'key (hex)', 'aria-label': 'Key value' });
   valInp.addEventListener('input', function () { S.keyAdd.val = valInp.value; });
   var kidLab = lab('Key id', kidInp), valLab = lab('Key value', valInp);
-  // Reflect the selected algorithm: BP has no key id and takes a 1-255 number.
+  // Reflect the selected algorithm: BP has no key id and takes a 1-255 number;
+  // a NETKEY kind (EP, TYT EP) has no key id and takes a hex key of its length.
   var applyMode = function () {
-    var bp = S.keyAdd.alg === 'bp';
-    kidInp.disabled = bp;
-    kidInp.placeholder = bp ? 'n/a for Basic Privacy' : 'e.g. 1 or 666A';
-    kidLab.el.classList.toggle('off', bp);
-    valLab.span.textContent = bp ? 'BP key number' : 'Key value';
-    valInp.placeholder = bp ? '1–255' : 'key (hex)';
-    valInp.setAttribute('aria-label', bp ? 'BP key number' : 'Key value (hex)');
+    var bp = S.keyAdd.alg === 'bp', nk = isDmr ? NETKEY[S.keyAdd.alg] : null;
+    kidInp.disabled = bp || !!nk;
+    kidInp.placeholder = bp ? 'n/a for Basic Privacy' : nk ? 'n/a (no key id)' : 'e.g. 1 or 666A';
+    kidLab.el.classList.toggle('off', bp || !!nk);
+    valLab.span.textContent = bp ? 'BP key number' : nk ? nk.short + ' key (hex)' : 'Key value';
+    valInp.placeholder = bp ? '1–255' : nk ? (nk.ap ? '32 or 64' : nk.digits) + ' hex digits, e.g. ' + nk.eg : 'key (hex)';
+    valInp.setAttribute('aria-label', bp ? 'BP key number' : nk ? nk.short + ' key (hex)' : 'Key value (hex)');
   };
   algSel.addEventListener('change', function () { S.keyAdd.alg = algSel.value; applyMode(); });
   var save = function () {
@@ -1637,6 +1720,14 @@ function keyAddForm() {
       var num = parseInt(val, 10);
       if (!(num >= 1 && num <= 255)) { toast('Enter a BP key number (1–255).'); valInp.focus(); return; }
       setBp(net, num, function (ok) { if (ok) S.keyAdd = null; if (S.view === 'keys') viewKeys(); });
+      return;
+    }
+    if (isDmr && NETKEY[alg]) {
+      var nk = NETKEY[alg], hx = val.replace(/\s+/g, '');
+      if (!/^[0-9A-Fa-f]+$/.test(hx) || (hx.length > nk.digits && !(nk.ap && hx.length === 64)) || /^0+$/.test(hx)) {
+        toast('Enter the ' + nk.short + ' key: ' + nkDigitsText(nk) + '.'); valInp.focus(); return;
+      }
+      setNetKey(alg, net, hx, function (ok) { if (ok) S.keyAdd = null; if (S.view === 'keys') viewKeys(); });
       return;
     }
     if (!kid) { toast('Enter a key id.'); kidInp.focus(); return; }
@@ -1649,14 +1740,14 @@ function keyAddForm() {
   wrap.appendChild(h('div', { class: 'keyact' }, [
     h('button', { class: 'btn sm', type: 'button', onclick: save }, 'Save key'),
     h('button', { class: 'btn sm', type: 'button', onclick: function () { S.keyAdd = null; viewKeys(); } }, 'Cancel')]));
-  wrap.appendChild(h('div', { class: 'kh', text: 'A hex key (up to 64 digits), matched by the key id a call announces' + (isDmr ? '; or DMR Basic Privacy, a key number 1–255 with no key id' : '') + '. Stored on the server; never shown again. Only enter keys for systems you are authorized to monitor.' }));
+  wrap.appendChild(h('div', { class: 'kh', text: 'A hex key (up to 64 digits), matched by the key id a call announces' + (isDmr ? '; or DMR Basic Privacy, a key number 1–255 with no key id; or a Motorola Enhanced Privacy key (10 hex digits) applied to every EP call on the network whatever its key id; or a TYT EP, TYT BP, Anytone BP or TYT / Baofeng / Retevis AP key, applied to ALL voice on the channel — clear calls there are garbled, so only for channels that always use it (one of these per network)' : '') + '. Stored on the server; never shown again. Only enter keys for systems you are authorized to monitor.' }));
   applyMode();
   return wrap;
 }
 function typeBadges(c) {
   var rx = 'Heard by ' + c.streams + ' receivers (one call, deduplicated)';
   var et = c.kid ? 'Encrypted: ' + keyText(c.alg, c.kid) : 'Encrypted (its key id wasn\u2019t decoded)';
-  var sig = 'Signalling only \u2014 a call was announced (source / target decoded) but no voice or data was heard on this channel, so there is no audio.';
+  var sig = 'Signaling only \u2014 a call was announced (source / target decoded) but no voice or data was heard on this channel, so there is no audio.';
   return h('span', null, [
     c.voice ? badge('b-voice', 'VOICE') : c.data ? badge('b-data', 'DATA')
             : h('span', { class: 'badge b-sig', title: sig, 'data-tip': sig }, 'SIGNALING'),
@@ -3344,7 +3435,8 @@ function addStreamFams(d) {
 // is on (a tab's "… streams connected …", which ticks) doesn't flicker as the
 // page refreshes. FT caches the elements; only their text / title / class
 // change, and a node is created or removed only when the set changes.
-var FT = { tab: {}, conn: null, imps: null };
+// FT.order: the protocol tabs' order, fixed once set (see famOrder).
+var FT = { tab: {}, conn: null, imps: null, order: null };
 function famTabEl(f) {
   var b = FT.tab[f];
   if (!b) {
@@ -3382,6 +3474,19 @@ function fillTab(b, f) {
   var lt = label + ' '; if (b._label.nodeValue !== lt) b._label.nodeValue = lt;
   if (b._count.textContent !== count) b._count.textContent = count;
 }
+// The protocol tabs' order. They are sorted by activity (calls + talkgroups +
+// radios) the first time there are any, and then keep their places: re-sorting
+// every poll made tabs with similar counts (DMR and P25 early in a session)
+// swap back and forth. A protocol that shows up later goes at the end (by
+// activity among the newcomers); one that goes away keeps its place for if it
+// comes back. A new view (live / an opened file) sorts afresh; so does a reload.
+function famOrder(fams) {
+  var byAct = function (a, b) { return famTotals(b) - famTotals(a); };
+  if (!FT.order) FT.order = [];
+  var fresh = fams.filter(function (f) { return FT.order.indexOf(f) < 0; }).sort(byAct);
+  FT.order = FT.order.concat(fresh);
+  return FT.order.filter(function (f) { return fams.indexOf(f) >= 0; });
+}
 function renderFamtabs(fams) {
   var ft = $('famtabs');
   Object.keys(FT.tab).forEach(function (f) {         // families gone: drop their tabs
@@ -3406,9 +3511,9 @@ function renderAll() {
   // (identified, or with traffic) -- or a decode stream connected to it now
   // (receiving, nothing identified yet). A protocol with only bare
   // "Unidentified · <freq>" buckets and no live stream is dropped with them.
-  var fams = Object.keys(S.d.families).filter(function (f) {
+  var fams = famOrder(Object.keys(S.d.families).filter(function (f) {
     return streamsOf(f).length || S.d.families[f].networks.some(netShown);
-  }).sort(function (a, b) { return famTotals(b) - famTotals(a); });
+  }));
   $('empty').hidden = fams.length > 0;
   $('main').hidden = !fams.length;
   if (fams.length && fams.indexOf(S.fam) < 0) { S.fam = fams[0]; S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; }
@@ -3504,6 +3609,7 @@ function openData(d, name, report) {
   if (d.format === 'dsd-net-export' && d.format_version > 1)
     alert('This export uses a newer format (v' + d.format_version + '); some details may not show.');
   S.file = { name: name, exported: d.exported || d.now, source: d.name || d.source || '' };
+  FT.order = null;                                    // a new view: sort its tabs afresh
   S.d = { version: -Date.now(), now: d.now || d.exported, families: d.families, rec: {}, merges: d.merges || {} };
   applyMerges(S.d);
   S.fam = null; S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; S.q = ''; $('q').value = ''; GR.sig = ''; GR.fitted = false; GR.userView = false;
@@ -3630,6 +3736,7 @@ function backToLive() {
   if (PLAYER.a && PLAYER.name && S.file) { PLAYER.a.pause(); PLAYER.name = null; }
   clearFileAudio();
   S.file = null; S.d = null; IX = null; S.fam = load('fam'); S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; GR.sig = ''; GR.fitted = false; GR.userView = false;
+  FT.order = null;
   document.body.classList.remove('filemode');
   $('filebar').hidden = true;
   $('live').textContent = 'connecting\u2026';
