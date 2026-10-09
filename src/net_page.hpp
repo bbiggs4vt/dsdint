@@ -1385,7 +1385,7 @@ var NETKEY = {
   ep:    { path: '/net/ep/', digits: 10, name: 'Motorola Enhanced Privacy', short: 'EP',
            opt: 'Motorola Enhanced Privacy (any key id)', list: 'EP key set (any key id)', eg: '0102030405' },
   tytep: { path: '/net/tytep/', digits: 32, name: 'TYT Enhanced Privacy', short: 'TYT EP',
-           opt: 'TYT / DM-1701 Enhanced Privacy (AES, 32 hex)', list: 'TYT EP key set (all voice on the channel)',
+           opt: 'TYT Enhanced Privacy (AES, 32 hex)', list: 'TYT EP key set (all voice on the channel)',
            eg: '00000000000000000000000000012345' }
 };
 function netKeyNets(kind) { return (S.d && S.d[kind] && S.d[kind][S.fam]) || []; }
@@ -1714,7 +1714,7 @@ function keyAddForm() {
   wrap.appendChild(h('div', { class: 'keyact' }, [
     h('button', { class: 'btn sm', type: 'button', onclick: save }, 'Save key'),
     h('button', { class: 'btn sm', type: 'button', onclick: function () { S.keyAdd = null; viewKeys(); } }, 'Cancel')]));
-  wrap.appendChild(h('div', { class: 'kh', text: 'A hex key (up to 64 digits), matched by the key id a call announces' + (isDmr ? '; or DMR Basic Privacy, a key number 1–255 with no key id; or a Motorola Enhanced Privacy key (10 hex digits) applied to every EP call on the network whatever its key id; or a TYT / DM-1701 Enhanced Privacy key (32 hex digits), applied to ALL voice on the channel — clear calls there are garbled, so only for channels that always use it' : '') + '. Stored on the server; never shown again. Only enter keys for systems you are authorized to monitor.' }));
+  wrap.appendChild(h('div', { class: 'kh', text: 'A hex key (up to 64 digits), matched by the key id a call announces' + (isDmr ? '; or DMR Basic Privacy, a key number 1–255 with no key id; or a Motorola Enhanced Privacy key (10 hex digits) applied to every EP call on the network whatever its key id; or a TYT Enhanced Privacy key (32 hex digits), applied to ALL voice on the channel — clear calls there are garbled, so only for channels that always use it' : '') + '. Stored on the server; never shown again. Only enter keys for systems you are authorized to monitor.' }));
   applyMode();
   return wrap;
 }
