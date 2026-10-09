@@ -347,9 +347,19 @@ int main() {
         line(m, 3, "17:30:46 Sync: +P25p1 NAC/CC: 295;  LDU1", 3000);
         line(m, 3, "P25 TGT: 00000300; SRC: 00012003; NAC: 295; ", 3100);
         line(m, 3, " HDU  ALG ID: 0x84 KEY ID: 0x0001 MI: 0x0123456789ABCDEF", 3110);
-        tone(m, 3, 0, 902, 3120, 160, true);
+        tone(m, 3, 0, 902, 3120, 2000, true);   // >= kMinAudioSamples, so only the encrypted path can discard it
         cs = calls(m, "p25", 3200);
         check(by_src(cs, "12003") && !by_src(cs, "12003")->audio.empty(), "encrypted: recorded when the session has the key");
+
+        // ... and that decrypted audio must SURVIVE the call closing -- the
+        // discard-for-encrypted at close_call must not throw away audio we
+        // decoded with the key.
+        const std::string dec_file = by_src(cs, "12003")->audio;
+        line(m, 3, "P25 TGT: 00000300; SRC: 00099999; NAC: 295; ", 3400);   // a new talker closes the call
+        cs = calls(m, "p25", 3500);
+        const C* dec = by_src(cs, "12003");
+        check(dec && dec->audio == dec_file && fs::exists(file("c", dec_file)),
+              "encrypted: a keyed (decrypted) call keeps its audio after it closes");
     }
 
     // ---- one call heard by two receivers: one recording ----

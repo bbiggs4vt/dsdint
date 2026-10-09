@@ -648,6 +648,9 @@ public:
             set_keep_locked(c.family, *k, false, now);
             return;
         }
+        // Past the gate: any audio recorded for an encrypted call from here is
+        // decoded with a key (dsd-fme applied it), so keep it at close_call.
+        if (keyed) k->keyed_audio = true;
         if (k->audio.empty()) {
             // Held audio: this slot's, and audio from before the decoder
             // knew the slot (slot 0, e.g. DMR direct mode until the first
@@ -1557,6 +1560,7 @@ private:
         std::uint64_t audio_samples = 0;                // its length (8 kHz samples)
         bool keep = false;                              // has audio: rolls off the list last (recorded)
         bool no_audio = false;                          // encrypted: never record
+        bool keyed_audio = false;                       // its recorded audio was decoded with a key (keep it even if encrypted)
         std::int64_t start_ms = 0, last_ms = 0;
         std::int64_t tx_end_ms = 0;                     // talker unkeyed (DMR terminator; 0 = talking)
         std::uint32_t frames = 0;
@@ -2260,9 +2264,10 @@ private:
             call_quality_.erase(qit);
         }
         if (!k.audio.empty()) {
-            // Flagged encrypted late, turned out to carry only data, or too
-            // short to be worth a file: delete.
-            if (k.encrypted || (k.data && !k.voice) || k.audio_samples < kMinAudioSamples) {
+            // Flagged encrypted (and NOT decoded with a key), turned out to
+            // carry only data, or too short to be worth a file: delete. A keyed
+            // encrypted call's audio is the decrypted clear voice -- keep it.
+            if ((k.encrypted && !k.keyed_audio) || (k.data && !k.voice) || k.audio_samples < kMinAudioSamples) {
                 audio_.discard(k.audio);
                 k.audio.clear();
                 k.audio_samples = 0;
