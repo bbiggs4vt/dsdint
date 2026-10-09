@@ -3337,14 +3337,14 @@ function renderAll() {
   $('c-calls').textContent = (S.noSig || (S.audOnly && (!S.file || !fAll(FILEAUDIO)))) ? fCalls().length : calls.length;   // the list's own rows
   $('c-tgs').textContent = tgs.length;
   $('c-radios').textContent = radios.length; $('c-nets').textContent = IX.nets.length;
-  // Keys tab: shown when this protocol has encryption key ids (seen or loaded)
-  // or any encrypted call -- so a key can be added by hand even before a key id
-  // is decoded.
+  // Keys tab: shown for any protocol that supports encryption keys (so a key
+  // can be added by hand before any key exchange is seen) -- or, in a file
+  // view (no manual add), when the export has key ids seen or loaded.
   var kn = keyNets();
-  var anyEnc = !S.file && IX.calls.some(function (c) { return c.enc; });
-  $('tab-keys').hidden = !(kn.length || anyEnc);
+  var keyable = !S.file && !!ENCALG[S.fam];     // DMR / P25 / NXDN; protocols without keys never show the tab
+  $('tab-keys').hidden = !(keyable || kn.length);
   $('c-keys').textContent = keyIdCount();
-  if (S.view === 'keys' && !(kn.length || anyEnc)) setView('calls');
+  if (S.view === 'keys' && !(keyable || kn.length)) setView('calls');
   renderView();
   renderDetail();
 }
