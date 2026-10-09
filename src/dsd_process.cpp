@@ -1032,7 +1032,7 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     static const std::regex ambe_re(R"(\bAMBE\s+([0-9A-Fa-f]+)\s+err\s*=\s*\[(\d+)\]\s*\[(\d+)\])",
                                     std::regex::icase);
     if (std::regex_search(line, m, ambe_re)) {
-        ev.voice_b0 = VoiceQuality::b0_of(m[1].str());
+        ev.voice_frame = VoiceQuality::frame_of(m[1].str());
         ev.voice_err = std::atoi(m[2].str().c_str()) + std::atoi(m[3].str().c_str());
     }
 

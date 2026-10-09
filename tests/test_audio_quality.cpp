@@ -1,7 +1,8 @@
-// VoiceQuality (audio_quality.hpp): the AMBE frame-type intelligibility
-// analyzer. Validates b0 classification on REAL codewords pulled from captured
-// DMR traffic, and the verdict thresholds on the real per-call frame-type
-// distributions measured for clear vs. encrypted calls (see
+// VoiceQuality (audio_quality.hpp): the AMBE frame-repetition intelligibility
+// analyzer. Clear digital voice repeats the standard comfort-noise codeword
+// during pauses; a cipher scrambles every frame so that codeword never appears
+// and frames never repeat. Verdict thresholds are validated on the real
+// per-call repetition stats measured for clear vs. encrypted calls (see
 // docs/AUDIO_QUALITY_CHECK.md "Calibration").
 #include <cstdio>
 #include <string>
@@ -16,83 +17,79 @@ static void check(bool c, const std::string& what) {
     if (!c) ++g_failures;
 }
 
-using F = VoiceQuality::Frame;
 using V = VoiceQuality::Verdict;
+static const std::uint64_t SIL = VoiceQuality::kSilenceFrame;
 
-// Feed `count` frames of a given b0 class into q (err 0).
-static void feed_class(VoiceQuality& q, F cls, int n) {
-    // A representative b0 in each class's range.
-    int b0 = cls == F::Erasure ? 121 : cls == F::Silence ? 124 : cls == F::Tone ? 127 : 86;
-    for (int i = 0; i < n; ++i) q.feed_frame(b0, 0);
+// Feed n distinct (never-repeating) frames starting at `base`.
+static void feed_unique(VoiceQuality& q, std::uint64_t base, int n) {
+    for (int i = 0; i < n; ++i) q.feed_frame(base + static_cast<std::uint64_t>(i) * 0x1111, 0);
 }
 
 int main() {
     std::printf("test_audio_quality\n");
 
-    // ---- b0 classification on REAL codewords from captured DMR ----
-    check(VoiceQuality::b0_of("F801A99F8CE080") == 124, "b0: real silence codeword -> 124");
-    check(VoiceQuality::b0_of("A937BA129E9200") == 86,  "b0: real speech codeword -> 86");
-    check(VoiceQuality::b0_of("F93685FFFFFF80") == 127, "b0: real tone codeword -> 127");
-    check(VoiceQuality::b0_of("F3F54A6689C980") == 121, "b0: real erasure codeword -> 121");
-    check(VoiceQuality::b0_of("") == -1 && VoiceQuality::b0_of("xyz") == -1, "b0: empty / non-hex -> -1");
-    check(VoiceQuality::classify_b0(124) == F::Silence && VoiceQuality::classify_b0(125) == F::Silence,
-          "classify: 124/125 -> silence");
-    check(VoiceQuality::classify_b0(120) == F::Erasure && VoiceQuality::classify_b0(123) == F::Erasure,
-          "classify: 120-123 -> erasure");
-    check(VoiceQuality::classify_b0(126) == F::Tone && VoiceQuality::classify_b0(127) == F::Tone,
-          "classify: 126/127 -> tone");
-    check(VoiceQuality::classify_b0(0) == F::Speech && VoiceQuality::classify_b0(119) == F::Speech,
-          "classify: < 120 -> speech");
+    // ---- codeword parsing on the real silence codeword ----
+    check(VoiceQuality::frame_of("F801A99F8CE080") == SIL, "frame_of: real silence codeword hex -> constant");
+    check(VoiceQuality::frame_of("A937BA129E9200") == 0xA937BA129E9200ULL, "frame_of: real speech codeword hex");
+    check(VoiceQuality::frame_of("") == 0 && VoiceQuality::frame_of("xyz") == 0, "frame_of: empty / non-hex -> 0");
 
-    // ---- real per-call distributions -> expected verdict ----
-    // Clear call (capture s=860): 252 frames, ~90% speech, ~10% silence, 0 junk.
+    // ---- clear speech: real comfort-noise frames present -> good ----
+    // Matches captures: silence-codeword ~6-20%, lots of repeats.
     {
         VoiceQuality q;
-        feed_class(q, F::Speech, 226); feed_class(q, F::Silence, 26);
+        feed_unique(q, 0xA00000000000, 200);       // speech
+        for (int i = 0; i < 20; ++i) q.feed_frame(SIL, 0);   // ~9% real silence frames
         auto s = q.summary();
-        check(s.verdict == V::Good, "clear call (10% silence, 0 junk) -> good");
-        check(s.sil > 0.09 && s.junk == 0.0, "clear call: silence/junk fractions");
+        check(s.sil > 0.08, "clear: silence-codeword fraction ~9%");
+        check(s.verdict == V::Good, "clear call (has comfort-noise) -> good");
     }
-    // Encrypted counting call (capture s=772): 234 frames, 85% speech, 0.4%
-    // silence, 9.4% erasure, 5.1% tone -> junk ~14.5%.
+
+    // ---- encrypted speech: no silence codeword, never repeats -> unusable ----
+    // Matches captures s=860/862/772: silence 0%, consecutive repeats ~0-2%.
     {
         VoiceQuality q;
-        feed_class(q, F::Speech, 199); feed_class(q, F::Silence, 1);
-        feed_class(q, F::Erasure, 22); feed_class(q, F::Tone, 12);
+        feed_unique(q, 0x123456789A00, 250);        // all unique, none == SIL
         auto s = q.summary();
-        check(s.junk > 0.13, "encrypted counting: junk ~14.5%");
-        check(s.verdict == V::Unusable, "encrypted counting call -> unusable");
+        check(s.sil == 0.0, "encrypted speech: 0% silence codeword");
+        check(s.rep < 0.03, "encrypted speech: ~0% repeats");
+        check(s.verdict == V::Unusable, "encrypted speech call -> unusable");
     }
-    // Encrypted continuous call (capture s=769): 258 frames, 99.6% speech,
-    // 0% silence, 0.4% junk -> no natural pauses.
+
+    // ---- encrypted silence: no real silence codeword, but a frame repeats ----
+    // Matches capture s=769: silence 0%, repeats ~8% (the encrypted-silence
+    // value repeats, but it is NOT the real comfort-noise codeword).
     {
         VoiceQuality q;
-        feed_class(q, F::Speech, 257); feed_class(q, F::Erasure, 1);
+        std::uint64_t encsil = 0xDEADBEEFCAFE01ULL;   // not SIL
+        for (int i = 0; i < 250; ++i) {
+            if (i % 12 == 0) q.feed_frame(encsil, 0); // repeats of a non-silence value
+            else if (i > 0 && (i % 12) == 1) q.feed_frame(encsil, 0);  // some consecutive repeats
+            else q.feed_frame(0x1000 + static_cast<std::uint64_t>(i) * 7, 0);
+        }
         auto s = q.summary();
-        check(s.junk < VoiceQuality::kJunkMarginal && s.sil <= VoiceQuality::kSilenceLow,
-              "encrypted continuous: low junk but ~0% silence");
-        check(s.verdict == V::Marginal, "encrypted continuous call -> marginal (no pauses)");
+        check(s.sil == 0.0, "encrypted silence: 0% real silence codeword");
+        check(s.rep >= 0.03, "encrypted silence: some consecutive repeats");
+        check(s.verdict == V::Marginal, "encrypted silence call -> marginal");
     }
 
     // ---- threshold boundaries ----
-    check(VoiceQuality::classify(49, 0.0, 0.1) == V::Unknown, "verdict: < kMinFrames -> unknown");
-    check(VoiceQuality::classify(100, 0.05, 0.1) == V::Unusable, "verdict: junk >= 4% -> unusable");
-    check(VoiceQuality::classify(100, 0.03, 0.1) == V::Marginal, "verdict: junk 2-4% -> marginal");
-    check(VoiceQuality::classify(100, 0.0, 0.0) == V::Marginal, "verdict: 0% silence -> marginal");
-    check(VoiceQuality::classify(100, 0.0, 0.1) == V::Good, "verdict: low junk + healthy silence -> good");
+    check(VoiceQuality::classify(49, 0.0, 0.0) == V::Unknown, "verdict: < kMinFrames -> unknown");
+    check(VoiceQuality::classify(100, 0.03, 0.0) == V::Good, "verdict: silence >= 2% -> good");
+    check(VoiceQuality::classify(100, 0.0, 0.0) == V::Unusable, "verdict: no silence, no repeats -> unusable");
+    check(VoiceQuality::classify(100, 0.0, 0.10) == V::Marginal, "verdict: no silence but repetitive -> marginal");
 
     // ---- err accumulation (RF signal, diagnostic only) ----
     {
         VoiceQuality q;
-        for (int i = 0; i < 100; ++i) q.feed_frame(86, 3);   // 3 errors/frame
+        for (int i = 0; i < 100; ++i) q.feed_frame(0x2000 + static_cast<std::uint64_t>(i), 2);
         auto s = q.summary();
-        check(s.err_per_frame > 2.9 && s.err_per_frame < 3.1, "err: per-frame mean accumulated");
+        check(s.err_per_frame > 1.9 && s.err_per_frame < 2.1, "err: per-frame mean accumulated");
     }
 
     // ---- reset ----
     {
         VoiceQuality q;
-        feed_class(q, F::Speech, 100);
+        feed_unique(q, 1, 100);
         q.reset();
         auto s = q.summary();
         check(s.frames == 0 && s.verdict == V::Unknown, "reset: cleared");

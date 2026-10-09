@@ -1664,18 +1664,20 @@ function typeBadges(c) {
     c.streams > 1 ? h('span', { class: 'badge b-group', title: rx, 'data-tip': rx }, c.streams + ' RX') : null]);
 }
 // A quality badge, only for audio that may not be usable (marginal / unusable);
-// "good" is the norm and shows nothing. Built from the AMBE frame-type stats:
-// junk = erasure+tone frames (garble), sil = silence frames (natural pauses).
-// Signal-quality only -- it never names a cause (a weak signal, a bad decode,
-// and encryption all read the same). See docs/AUDIO_QUALITY_CHECK.md.
+// "good" is the norm and shows nothing. Built from AMBE frame repetition: clear
+// digital voice repeats the standard comfort-noise frame during pauses, so
+// "silence" = real comfort-noise frames and "repeats" = frame-to-frame repeats;
+// a cipher scrambles both to ~0. Signal-quality only -- it never names a cause
+// (a weak signal, a bad decode, and encryption all read the same). See
+// docs/AUDIO_QUALITY_CHECK.md.
 function qualBadge(c) {
   if (c.q !== 'unusable' && c.q !== 'marginal') return null;
   var pct = function (x) { return x != null ? (100 * x).toFixed(0) + '%' : '?'; };
-  var how = 'garbled frames ' + pct(c.qj) + ', silence ' + pct(c.qs) +
+  var how = 'silence frames ' + pct(c.qs) + ', repeats ' + pct(c.qr) +
             (c.qn ? ', ' + c.qn + ' frames' : '');
   var tip = (c.q === 'unusable'
-             ? 'Audio quality: likely unusable \u2014 the decoded voice is largely garbled (' + how + ').'
-             : 'Audio quality: marginal \u2014 part garbled, or no natural speech pauses (' + how + ').') +
+             ? 'Audio quality: likely unusable \u2014 the decoded voice has no natural pauses and never repeats, like scrambled audio (' + how + ').'
+             : 'Audio quality: marginal \u2014 no natural speech pauses (' + how + ').') +
             ' Signal quality only; the cause is not determined (a weak signal, a bad decode, or encryption all look the same). Provisional \u2014 thresholds calibrated on a small sample.';
   return h('span', { class: 'badge ' + (c.q === 'unusable' ? 'b-qlow' : 'b-qmarg'), title: tip, 'data-tip': tip },
            c.q === 'unusable' ? 'LOW QUALITY' : 'MARGINAL');

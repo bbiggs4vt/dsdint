@@ -13,41 +13,55 @@ Status: **Layer 2 built** on branch `claude/audio-quality-check`. Layer 1
   0.141/0.193 -- fully overlapping. An encrypted call read "good". Dead end;
   the signal is destroyed by the vocoder before the PCM exists.
 
-- **Built — AMBE frame-type analysis (`src/audio_quality.hpp`).** Works from
-  the vocoder's per-frame AMBE codewords, BEFORE synthesis, which dsd-fme
-  emits with `-Z` as ` AMBE <hex> err = [a] [b]` lines (already parsed into
-  voice events; `-Z` is on by default for short-data decode). The codeword's
-  `b0` pitch index classifies each frame: `<120` speech, `124/125` silence,
-  `120-123` erasure, `126/127` tone. The verdict uses the junk fraction
-  (erasure+tone) and the silence fraction; the per-frame `err` counts are
-  accumulated as the FEC/RF signal (diagnostic only for now).
-  - Wired into `AssocModel`: fed from the **event stream** in `ingest()`
-    (not the PCM), so it runs whenever voice is decoded, independent of
-    recording (`DSD_NET_QUALITY=0` disables). Per-call analyzers in
-    `call_quality_`, finalized onto `Call::qual` in `close_call`; open calls
-    get a live running verdict in the snapshot.
-  - `/net.json` per call: `q` (verdict), `qj` (junk frac), `qs` (silence
+- **Abandoned (2nd attempt) — b0 pitch-class frame types.** Classifying each
+  AMBE frame by its `b0` pitch index (speech/silence/erasure/tone) ALSO fails:
+  the b0 of an encrypted frame is pseudo-random (content XOR keystream), so it
+  lands anywhere. A real encrypted call on 440.425 showed 18% "silence" by b0
+  and read "good". The b0 class is not robust to encryption.
+
+- **Built — AMBE frame REPETITION (`src/audio_quality.hpp`).** Works from the
+  vocoder's per-frame AMBE codewords, which dsd-fme emits with `-Z` as
+  ` AMBE <hex> err = [a] [b]` lines (already parsed into voice events; `-Z` on
+  by default). The robust signal is repetition, not frame class:
+  - Clear digital voice repeats the EXACT standard comfort-noise codeword
+    (`F801A99F8CE080`) during natural pauses, and repeats sustained phonemes
+    frame-to-frame.
+  - A cipher XORs each frame, so the exact comfort-noise codeword NEVER appears
+    in encrypted audio, and scrambled speech never repeats frame-to-frame.
+  The analyzer tracks the silence-codeword fraction (`sil`), the
+  consecutive-repeat fraction (`rep`), and the per-frame `err` counts (FEC/RF,
+  diagnostic only). Verdict: `sil >= 2%` -> good; else `rep < 3%` -> unusable
+  (no pauses, never repeats = scrambled speech); else -> marginal (no real
+  comfort-noise but repetitive: encrypted silence, or an unusually continuous
+  talker). Min 50 frames or "unknown".
+  - Wired into `AssocModel`: fed from the **event stream** in `ingest()` (not
+    the PCM), so it runs whenever voice is decoded, independent of recording
+    (`DSD_NET_QUALITY=0` disables). Per-call analyzers in `call_quality_`,
+    finalized onto `Call::qual` in `close_call`; open calls get a live running
+    verdict in the snapshot.
+  - `/net.json` per call: `q` (verdict), `qs` (silence frac), `qr` (repeat
     frac), `qe` (err/frame), `qn` (frames); round-trips through export/import;
     merges in `fold_call`. Explorer shows LOW QUALITY / MARGINAL (good shows
-    nothing), tooltip gives the numbers and states cause is not determined.
-  - Tests: `tests/test_audio_quality.cpp` (real codewords + real-call
-    distributions), `tests/test_dsd_fme_parse.cpp` (AMBE line parse),
-    `tests/test_assoc_model.cpp` integration (clear->good, 15% junk->unusable,
-    no-silence->marginal, via the JSON).
+    nothing); tooltip gives the numbers and states cause is not determined.
+  - Tests: `tests/test_audio_quality.cpp`, `tests/test_dsd_fme_parse.cpp`,
+    `tests/test_assoc_model.cpp` integration -- all keyed to the real stats.
   - Scope: AMBE+2 only (DMR / NXDN / P25 Phase 2). P25 Phase 1 uses IMBE
     (different marker), so those calls get no frames -> verdict "unknown".
 
-- **Calibration (done, small sample).** On the real captures:
-  | call | silence | junk (eras+tone) | verdict |
+- **Calibration (on real captures, incl. a mixed clear+encrypted recording).**
+  | call | silence codeword | consecutive repeats | verdict |
   |---|---|---|---|
-  | clear speech | 4-24% | ~0% | good |
-  | encrypted (counting) | 0% | ~15% | unusable |
-  | encrypted (continuous) | 0% | ~0.4% | marginal (no pauses) |
-  Thresholds: junk >= 4% -> unusable; junk >= 2% OR silence <= 2% -> marginal;
-  else good; min 50 frames or "unknown". Sample is small (a handful of calls,
-  one radio/codec); widen it before fully trusting the cut points. The
-  continuous-encrypted case (b0 looks like speech, just no pauses) is the
-  weakest -- it lands at "marginal", honestly low-confidence.
+  | clear speech (9+ calls) | 4-25% | 5-24% | good |
+  | encrypted speech (440.425) | 0% | 0-2% | unusable |
+  | encrypted silence | 0% | ~8% | marginal |
+  Validated end-to-end by replaying a real recording: both 440.425 encrypted
+  calls read unusable, all clear 460.x calls read good (no false positives).
+  Caveats to widen the sample against: a truly continuous clear talker (no
+  pauses) could drop `sil` below 2% -> would land at marginal (not unusable,
+  since clear voice still repeats sustained frames). A radio using a
+  non-standard comfort-noise frame would read 0% silence -> false flag; the
+  codeword is the AMBE+2 standard so this is unlikely but unverified across
+  radios. Encrypted silence lands at marginal (low content, honest).
 
 - **To do — Layer 1 (RF error rate) as a verdict input.** The `err` counts
   are parsed and exposed but don't yet gate the verdict (no weak-signal

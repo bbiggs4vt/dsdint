@@ -26,23 +26,22 @@ void check(bool cond, const std::string& what) {
 int main() {
     std::printf("test_dsd_fme_parse: classify_dsd_fme_line on real DMR + NXDN lines\n");
 
-    // ---- AMBE voice-frame payload line (-Z): b0 pitch class + err counts ----
+    // ---- AMBE voice-frame payload line (-Z): codeword + err counts ----
     {
-        // Real silence codeword (b0=124) from captured DMR.
+        // Real silence (comfort-noise) codeword from captured DMR.
         DsdEvent e = classify_dsd_fme_line(" AMBE F801A99F8CE080 err = [0] [0] ");
         check(e.kind == "voice", "AMBE line: kind voice");
-        check(e.voice_b0 == 124, "AMBE line: b0 pitch index parsed (124 = silence)");
+        check(e.voice_frame == 0xF801A99F8CE080ULL, "AMBE line: 56-bit codeword parsed");
         check(e.voice_err == 0, "AMBE line: err counts summed (0)");
     }
     {
-        // Real erasure codeword (b0=121) with nonzero errors.
         DsdEvent e = classify_dsd_fme_line(" AMBE F3F54A6689C980 err = [2] [3] ");
-        check(e.voice_b0 == 121, "AMBE line: erasure b0 121");
+        check(e.voice_frame == 0xF3F54A6689C980ULL, "AMBE line: codeword parsed");
         check(e.voice_err == 5, "AMBE line: err [2]+[3] = 5");
     }
     {
         DsdEvent e = classify_dsd_fme_line(" SLOT 2 TGT=19535 SRC=2222223 Group Call  ");
-        check(e.voice_b0 == -1 && e.voice_err == -1, "non-AMBE line: no voice-frame fields");
+        check(e.voice_frame == 0 && e.voice_err == -1, "non-AMBE line: no voice-frame fields");
     }
 
     // ---- DMR (must not regress) ----

@@ -126,12 +126,16 @@ static void line(AssocModel& m, std::uint64_t sid, const std::string& l, std::in
 }
 static J snap(const AssocModel& m, std::int64_t t, bool* ok = nullptr) { return parse(m.to_json(t), ok); }
 
-// Feed `n` AMBE voice frames of a given b0 pitch class into an open call on
-// slot "1" of session `sid`, one per ms from `t`. b0: 86 speech, 124 silence,
-// 121 erasure, 127 tone (real codeword classes).
-static void feed_frames(AssocModel& m, std::uint64_t sid, int b0, int n, std::int64_t t) {
-    DsdEvent vf; vf.kind = "voice"; vf.slot = "1"; vf.voice_b0 = b0; vf.voice_err = 0;
-    for (int i = 0; i < n; ++i) m.ingest(sid, vf, t + i);
+// Feed `n` AMBE voice frames into an open call on slot "1" of session `sid`,
+// one per ms from `t`. If `unique`, each frame gets a distinct codeword
+// (scrambled/encrypted); otherwise the given fixed `frame` codeword repeats.
+static void feed_frames(AssocModel& m, std::uint64_t sid, std::uint64_t frame, bool unique,
+                        int n, std::int64_t t) {
+    for (int i = 0; i < n; ++i) {
+        DsdEvent vf; vf.kind = "voice"; vf.slot = "1"; vf.voice_err = 0;
+        vf.voice_frame = unique ? frame + static_cast<std::uint64_t>(i) * 0x1111 : frame;
+        m.ingest(sid, vf, t + i);
+    }
 }
 
 int main() {
@@ -1093,43 +1097,40 @@ int main() {
 
     // ---- voice quality: the AMBE-frame verdict reaches a call's JSON ----
     // From the event stream, so it runs with no recording (quality_on_ default
-    // on). Distributions match the real captures (docs/AUDIO_QUALITY_CHECK.md).
-    // Clear: ~90% speech + ~10% silence -> good.
+    // on). Repetition stats match the real captures (docs/AUDIO_QUALITY_CHECK.md).
+    const std::uint64_t SILF = VoiceQuality::kSilenceFrame;
+    // Clear: real comfort-noise frames present -> good.
     {
         AssocModel m;
         m.begin_stream(1, "dmr", 0);
         line(m, 1, " SLOT 1 TGT=9 SRC=3112 Group Call ", 1000);
-        feed_frames(m, 1, 86, 226, 1001);                 // speech
-        feed_frames(m, 1, 124, 26, 1230);                 // silence
+        feed_frames(m, 1, 0xA00000000000ULL, true, 200, 1001);   // varied speech
+        feed_frames(m, 1, SILF, false, 24, 1201);                // real silence codeword
         J j = snap(m, 1300);
         const J& c = j["families"]["dmr"]["calls"].at(0);
-        check(c["q"].s == "good", "quality: clear call (10% silence, 0 junk) -> good");
-        check(c.has("qj") && c.has("qs") && c.has("qn"), "quality: junk/silence/frame diagnostics present");
+        check(c["q"].s == "good", "quality: clear call (has comfort-noise) -> good");
+        check(c.has("qs") && c.has("qr") && c.has("qn"), "quality: silence/repeat/frame diagnostics present");
     }
-    // Encrypted counting call: ~85% speech, ~0% silence, ~15% junk -> unusable.
+    // Encrypted speech: no silence codeword, never repeats -> unusable.
     {
         AssocModel m;
         m.begin_stream(1, "dmr", 0);
         line(m, 1, " SLOT 1 TGT=9 SRC=3112 Group Call ", 1000);
-        feed_frames(m, 1, 86, 199, 1001);                 // speech
-        feed_frames(m, 1, 121, 22, 1201);                 // erasure
-        feed_frames(m, 1, 127, 12, 1224);                 // tone
-        feed_frames(m, 1, 124, 1, 1237);                  // one silence
+        feed_frames(m, 1, 0x123456789A00ULL, true, 250, 1001);   // all unique, no silence frame
         J j = snap(m, 1300);
         const J& c = j["families"]["dmr"]["calls"].at(0);
-        check(c["q"].s == "unusable", "quality: encrypted/garbled call (15% junk) -> unusable");
-        check(c["qj"].n > 0.13, "quality: junk fraction ~0.15 in JSON");
+        check(c["q"].s == "unusable", "quality: encrypted speech (no silence, no repeats) -> unusable");
+        check(c["qs"].n == 0.0, "quality: 0% silence codeword in JSON");
     }
-    // Encrypted continuous call: low junk but ~0% silence -> marginal.
+    // Encrypted silence: a non-silence frame repeats -> marginal.
     {
         AssocModel m;
         m.begin_stream(1, "dmr", 0);
         line(m, 1, " SLOT 1 TGT=9 SRC=3112 Group Call ", 1000);
-        feed_frames(m, 1, 86, 257, 1001);                 // all speech, no pauses
-        feed_frames(m, 1, 121, 1, 1259);                  // 1 erasure (junk ~0.4%)
+        feed_frames(m, 1, 0xDEADBEEFCAFEULL, false, 250, 1001);  // a non-silence value repeats
         J j = snap(m, 1300);
         const J& c = j["families"]["dmr"]["calls"].at(0);
-        check(c["q"].s == "marginal", "quality: continuous (no silence) call -> marginal");
+        check(c["q"].s == "marginal", "quality: encrypted silence (repeats, no real silence) -> marginal");
     }
 
     if (g_failures == 0) {

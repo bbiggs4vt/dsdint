@@ -391,8 +391,8 @@ struct DsCall {
     // "good" | "marginal" | "unusable", or "" when not computed / too short to
     // judge. Signal quality only -- never a cause (see docs/AUDIO_QUALITY_CHECK.md).
     std::string qual;
-    double qjunk = 0.0;                          // erasure+tone frame fraction (hover diagnostic)
-    double qsil = 0.0;                           // silence frame fraction (hover diagnostic)
+    double qsil = 0.0;                           // silence-codeword frame fraction (hover diagnostic)
+    double qrep = 0.0;                           // consecutive-repeat frame fraction (hover diagnostic)
     double qerr = 0.0;                           // mean FEC errors/frame (hover diagnostic)
     std::uint32_t qframes = 0;                   // AMBE frames measured (hover diagnostic)
 };
@@ -550,7 +550,7 @@ inline std::string families_json(const Dataset& d) {
             if (!k.svc.empty()) o << ",\"svc\":" << q(k.svc);
             if (!k.pos.empty()) o << ",\"pos\":" << q(k.pos);
             if (!k.kid.empty()) o << ",\"alg\":" << q(k.alg) << ",\"kid\":" << q(k.kid);
-            if (!k.qual.empty()) o << ",\"q\":" << q(k.qual) << ",\"qj\":" << k.qjunk << ",\"qs\":" << k.qsil
+            if (!k.qual.empty()) o << ",\"q\":" << q(k.qual) << ",\"qs\":" << k.qsil << ",\"qr\":" << k.qrep
                                    << ",\"qe\":" << k.qerr << ",\"qn\":" << k.qframes;
             o << "}";
         }
@@ -750,7 +750,7 @@ inline bool dataset_from_export(const mjson::V& root, const std::string& label, 
                 c.priv = e.boolean("priv"); c.voice = e.boolean("voice"); c.data = e.boolean("data");
                 c.emerg = e.boolean("emerg"); c.enc = e.boolean("enc");
                 c.alg = e.str("alg"); c.kid = e.str("kid");
-                c.qual = e.str("q"); c.qjunk = e.num("qj"); c.qsil = e.num("qs");
+                c.qual = e.str("q"); c.qsil = e.num("qs"); c.qrep = e.num("qr");
                 c.qerr = e.num("qe"); c.qframes = static_cast<std::uint32_t>(u(e, "qn"));
                 c.open = false;                                  // history, not live
                 c.start = i64(e, "start"); c.last = i64(e, "last"); c.freq = i64(e, "freq");
@@ -912,7 +912,7 @@ inline void fold_call(DsCall& twin, const DsCall& dup) {
     if (twin.audio.empty()) { twin.audio = dup.audio; twin.audio_ms = dup.audio_ms; }
     // Keep the better-supported voice-quality verdict (more frames measured).
     if (!dup.qual.empty() && (twin.qual.empty() || dup.qframes > twin.qframes)) {
-        twin.qual = dup.qual; twin.qjunk = dup.qjunk; twin.qsil = dup.qsil;
+        twin.qual = dup.qual; twin.qsil = dup.qsil; twin.qrep = dup.qrep;
         twin.qerr = dup.qerr; twin.qframes = dup.qframes;
     }
     twin.start = std::min(twin.start, dup.start);

@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 namespace dsdsrv {
@@ -24,10 +25,11 @@ struct DsdEvent {
     std::string message;       // DMR short-data / SMS text (free text) if present, else ""
     std::string extra;         // any other parsed detail, free-form ("; "-joined key=value tokens)
     // AMBE voice-frame detail from dsd-fme's "-Z" " AMBE <hex> err = [a] [b] "
-    // lines, for the voice-quality analyzer. voice_b0 is the codeword's b0 pitch
-    // index (-1 = not an AMBE voice-frame line); voice_err is the summed FEC
-    // error count for the frame (-1 = none seen). See audio_quality.hpp.
-    int voice_b0 = -1;
+    // lines, for the voice-quality analyzer. voice_frame is the 56-bit AMBE
+    // codeword (0 if this is not an AMBE voice-frame line); voice_err is the
+    // summed FEC error count for the frame (-1 = not an AMBE line). Gate on
+    // voice_err >= 0 to know a frame was present. See audio_quality.hpp.
+    std::uint64_t voice_frame = 0;
     int voice_err = -1;
 };
 

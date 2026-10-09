@@ -455,11 +455,11 @@ public:
             cur->voice = true;
             cur->tx_end_ms = 0;                  // talking again (re-keyed in the hang time)
         }
-        // Voice-quality: feed this AMBE frame (its b0 pitch class + FEC errors)
-        // to the call's analyzer. From the event stream, so it runs whenever
-        // voice is decoded -- independent of recording. DSD_NET_QUALITY=0 off.
-        if (ev.voice_b0 >= 0 && quality_on_.load(std::memory_order_relaxed))
-            call_quality_[cur->id].feed_frame(ev.voice_b0, ev.voice_err);
+        // Voice-quality: feed this AMBE frame (its codeword + FEC errors) to
+        // the call's analyzer. From the event stream, so it runs whenever voice
+        // is decoded -- independent of recording. DSD_NET_QUALITY=0 off.
+        if (ev.voice_err >= 0 && quality_on_.load(std::memory_order_relaxed))
+            call_quality_[cur->id].feed_frame(ev.voice_frame, ev.voice_err);
         if (data) cur->data = true;
         note_service(F, *cur, extra, now);
         if (emerg) cur->emergency = true;
@@ -1191,8 +1191,8 @@ private:
                             s = qit->second.summary();
                     if (s.verdict != VoiceQuality::Verdict::Unknown) {
                         c.qual = VoiceQuality::verdict_str(s.verdict);
-                        c.qjunk = s.junk;
                         c.qsil = s.sil;
+                        c.qrep = s.rep;
                         c.qerr = s.err_per_frame;
                         c.qframes = s.frames;
                     }
