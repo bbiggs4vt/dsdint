@@ -398,14 +398,17 @@ tablet or phone the details are a drawer: **Close** or Esc.
     your decoder pick it up the same way.
   - **Basic Privacy (DMR).** DMR Basic Privacy is different from the keys
     above: its "key" is a **number, 1–255**, that selects a well-known key,
-    and it carries **no key id**. The DMR Keys tab has a **Basic Privacy**
-    section — **+ Set a Basic Privacy key**, pick the **network** and enter
-    the **number** — stored per network and applied to the server's own
-    decoder with dsd-fme's `-b`, matched to the network's **frequency** when a
-    stream starts. Because BP has no key id, a decoder applies **one** BP key
-    per channel; dsd-fme applies it only to a call flagged encrypted that has
-    no key id, so clear and key-id (EP/AES) calls are unaffected. Set it on
-    channels you know use BP. The number isn't secret (the keys themselves
+    and it carries **no key id**. Set it through the same **+ Add a key
+    manually** form: choose **DMR Basic Privacy** as the algorithm and the
+    key-id box greys out while the value box becomes the **1–255 number**.
+    It is stored per network and applied to the server's own decoder with
+    dsd-fme's `-b`, matched to the network's **frequency** when a stream
+    starts; the networks that have one appear in a **Basic Privacy** list on
+    the DMR Keys tab, each with **Clear**. Because BP has no key id, a decoder
+    applies **one** BP key per channel; dsd-fme applies it only to a call
+    flagged encrypted that has no key id, so clear and key-id (EP/AES) calls
+    are unaffected. Set it on channels you know use BP. The number isn't
+    secret (the keys themselves
     are well known). As with the key list, a change takes effect when a stream
     next starts, or now with **↻ Apply to live streams**.
 
