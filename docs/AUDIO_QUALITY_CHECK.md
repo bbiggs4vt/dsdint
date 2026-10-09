@@ -97,19 +97,61 @@ encrypted call genuinely is not usable to the listener. But:
   is consistently marginal")?
 - Purely additive; touches nothing in the key/BP paths.
 
-## Calibration — the real blocker
+## Calibration
 
-Thresholds need real captures across a **gradient** of conditions, not just
-clear-vs-garbled:
-- one clean / full-quieting call,
-- one marginal call,
-- one actively dropping-out call,
-- (for Layer 2) one known-encrypted strong-signal call.
+Thresholds need a **gradient** of signal conditions, not just
+clear-vs-garbled. The cheap, repeatable way to get that gradient is to
+**synthesize it from a clean capture by injecting AWGN**, rather than
+collecting field captures.
 
-Without the gradient the badge is a guess with a confident color on it.
-Captures should include dsd-fme's verbose logs plus the usual IQ/audio
-capture so Layer 1's log format and Layer 2's PCM features can both be
-calibrated in one pass.
+### AWGN synthesis (primary approach)
+
+We already log raw baseband IQ (BLUE/CF files from `open_iq_log`). Take one
+clean call's IQ, add **complex additive white Gaussian noise** (independent
+Gaussian on I and Q) at a swept set of levels, and replay each degraded
+version through the same FM demod + dsd-fme. As noise rises, the decoder's
+FEC correction counts climb monotonically to total failure — a controlled
+gradient on demand.
+
+What it calibrates, and the limits:
+
+- **Layer 1 (RF/link quality): ideal use.** No absolute SNR figure needed —
+  sweep the noise amplitude and let the *measured error rate itself* be the
+  calibrated axis for good/marginal/unusable.
+- **Noise goes in the IQ/RF domain, never the PCM.** Noise added to decoded
+  audio only degrades it cosmetically and never exercises the FEC; bit errors
+  only arise upstream of the demod/symbol slicer.
+- **Bandwidth / processing gain.** Captures are wideband (e.g. 2 MHz) with
+  the signal in a 12.5 kHz channel. The physically correct model is wideband
+  AWGN that the channel filter then narrows, so "IQ SNR" != "in-channel SNR"
+  by the bandwidth ratio. Simplest honest approach: sweep empirically and map
+  to *measured error rate*, not an absolute dB number.
+- **AWGN is not fading.** This synthesizes the *static weak-signal* gradient.
+  Real mobile fading/flutter produces *burst* errors that differ from AWGN's
+  uniform errors — a gap to note, not cover, in the first pass.
+- **AWGN does NOT synthesize the encrypted case.** AWGN gives
+  structureless-*from-noise*; encryption gives structureless-*from-a-clean-
+  link*. They likely land in a similar region of the Layer 2 acoustic feature
+  space (both lack speech structure), so a Layer 2 metric tuned on
+  AWGN-garble will very probably also flag encrypted — but to *confirm* that,
+  use one real known-encrypted strong-signal capture (the TYT EP ones already
+  exist). Stays within the guardrail: confirming the quality metric flags
+  unusable audio, not building an encryption detector.
+
+### Plumbing needed for AWGN synthesis
+
+No turnkey IQ replay exists: `assoc_replay.hpp` replays the event log, not IQ.
+But `FmDemod::process(const cf32* in, ...)` can be driven straight from a
+buffer, and BLUE/CF IQ read/write already exists (`blue_writer.hpp`,
+`tools/make_test_bluefile.py`). So build a small standalone calibration
+harness tool: read capture -> add complex AWGN at a swept level -> drive
+`FmDemod::process` -> dsd-fme -> record error rate + acoustic features per
+level.
+
+### Still worth one real capture each
+
+- One real known-encrypted strong-signal call (confirm Layer 2 flags it).
+- Optionally one real fading/dropping-out call (the gap AWGN leaves).
 
 ## Open questions to settle before building
 
