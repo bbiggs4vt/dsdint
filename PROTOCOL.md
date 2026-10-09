@@ -5,7 +5,7 @@ accepts — with exact shapes, when each occurs, and real captured
 examples. The single source of truth for what goes on the wire is
 `session.cpp` (`handle_text_message`, `start_pipeline`, and the event
 serializer in it); this document is generated from reading that code and
-from running the verified test suite against real dsd-fme and real DSDcc
+from running the verified test suite against the real dsd-fme
 decoding a real DMR capture, so the examples below are genuine wire
 frames, not invented ones.
 
@@ -53,34 +53,34 @@ which decode mode to run instead of relying on auto-detection; for `tetra` /
 (see [TETRA](#tetra-protocoltetra--protocoltetrakit) below). It is forgiving —
 case-insensitive, and spaces/underscores/hyphens are ignored:
 
-| value | selects | chain | dsd-fme | DSDcc |
-|---|---|---|---|---|
-| `""` / absent | server default (**DMR**) — no change for existing clients | FM + DSD | `-fs` | DMR |
-| `dmr` | DMR | FM + DSD | `-fs` | DMR |
-| `nxdn48` (or `nxdn`, `idas`) | NXDN48 / IDAS (6.25 kHz) | FM + DSD | `-fi` | NXDN48 |
-| `nxdn96` | NXDN96 (12.5 kHz) | FM + DSD | `-fn` | NXDN96 |
-| `p25` (or `p25p1`) | P25 Phase 1 | FM + DSD | `-f1` | P25p1 (mode only, no fields) |
-| `p25p2` | P25 Phase 2 (6000 sps TDMA) | FM + DSD | `-f2` | P25p1 (mode only, no fields) |
-| `dpmr` | dPMR (6.25 kHz FDMA) | FM + DSD | `-fm` | dPMR |
-| `dstar` (or `d-star`) | D-STAR | FM + DSD | `-fd` | D-STAR |
-| `ysf` (or `fusion`, `c4fm`) | Yaesu System Fusion | FM + DSD | `-fy` | YSF |
-| `provoice` (or `pv`) | EDACS ProVoice digital voice | FM + DSD | `-fp` | — (auto) |
-| `edacs` (or `edacs_std`, `edacs_net`) | EDACS Standard/NET + ProVoice | FM + DSD | `-fh` | — (auto) |
-| `edacs_esk` | EDACS Standard/NET + ProVoice, 0xA0 ESK mask | FM + DSD | `-fH` | — (auto) |
-| `edacs_ea` | EDACS Extended Addressing + ProVoice | FM + DSD | `-fe` | — (auto) |
-| `edacs_ea_esk` | EDACS EA + ProVoice, 0xA0 ESK mask | FM + DSD | `-fE` | — (auto) |
-| `x2tdma` (or `x2`) | Motorola X2-TDMA (legacy) | FM + DSD | `-fx` | — (auto) |
-| `auto` / `unknown` / `not sure` / anything else | auto-detect | FM + DSD | `-fa` | auto |
-| `tetra` (or `osmo_tetra`) | **TETRA** via osmo `tetra-rx` | π/4-DQPSK + TETRA | — | — |
-| `tetrakit` | **TETRA** via tetra-kit `decoder` | π/4-DQPSK + TETRA | — | — |
-| `pager-auto` (or `pager_auto`, `pager`, `paging`) | **Paging**: POCSAG 512/1200/2400 + FLEX at once | FM + multimon-ng | — | — |
-| `pocsag` | POCSAG, all three rates | FM + multimon-ng | — | — |
-| `pocsag512` / `pocsag1200` / `pocsag2400` | POCSAG at one rate | FM + multimon-ng | — | — |
-| `flex` | FLEX (1600/3200/6400 bps, 2/4-level) | FM + multimon-ng | — | — |
+| value | selects | chain | dsd-fme |
+|---|---|---|---|
+| `""` / absent | server default (**DMR**) — no change for existing clients | FM + DSD | `-fs` |
+| `dmr` | DMR | FM + DSD | `-fs` |
+| `nxdn48` (or `nxdn`, `idas`) | NXDN48 / IDAS (6.25 kHz) | FM + DSD | `-fi` |
+| `nxdn96` | NXDN96 (12.5 kHz) | FM + DSD | `-fn` |
+| `p25` (or `p25p1`) | P25 Phase 1 | FM + DSD | `-f1` |
+| `p25p2` | P25 Phase 2 (6000 sps TDMA) | FM + DSD | `-f2` |
+| `dpmr` | dPMR (6.25 kHz FDMA) | FM + DSD | `-fm` |
+| `dstar` (or `d-star`) | D-STAR | FM + DSD | `-fd` |
+| `ysf` (or `fusion`, `c4fm`) | Yaesu System Fusion | FM + DSD | `-fy` |
+| `provoice` (or `pv`) | EDACS ProVoice digital voice | FM + DSD | `-fp` |
+| `edacs` (or `edacs_std`, `edacs_net`) | EDACS Standard/NET + ProVoice | FM + DSD | `-fh` |
+| `edacs_esk` | EDACS Standard/NET + ProVoice, 0xA0 ESK mask | FM + DSD | `-fH` |
+| `edacs_ea` | EDACS Extended Addressing + ProVoice | FM + DSD | `-fe` |
+| `edacs_ea_esk` | EDACS EA + ProVoice, 0xA0 ESK mask | FM + DSD | `-fE` |
+| `x2tdma` (or `x2`) | Motorola X2-TDMA (legacy) | FM + DSD | `-fx` |
+| `auto` / `unknown` / `not sure` / anything else | auto-detect | FM + DSD | `-fa` |
+| `tetra` (or `osmo_tetra`) | **TETRA** via osmo `tetra-rx` | π/4-DQPSK + TETRA | — |
+| `tetrakit` | **TETRA** via tetra-kit `decoder` | π/4-DQPSK + TETRA | — |
+| `pager-auto` (or `pager_auto`, `pager`, `paging`) | **Paging**: POCSAG 512/1200/2400 + FLEX at once | FM + multimon-ng | — |
+| `pocsag` | POCSAG, all three rates | FM + multimon-ng | — |
+| `pocsag512` / `pocsag1200` / `pocsag2400` | POCSAG at one rate | FM + multimon-ng | — |
+| `flex` | FLEX (1600/3200/6400 bps, 2/4-level) | FM + multimon-ng | — |
 
 `tetra` / `tetrakit` are not FM modes: they replace the FM discriminator with
 the π/4-DQPSK modem and the DSD backend with a TETRA subprocess decoder, so
-the dsd-fme/DSDcc columns don't apply (`—`). Their IQ-rate and `event`-field
+the dsd-fme column doesn't apply (`—`). Their IQ-rate and `event`-field
 differences are detailed in the [TETRA section](#tetra-protocoltetra--protocoltetrakit).
 
 The paging hints likewise run their own chain (an FM discriminator tuned for
@@ -89,25 +89,17 @@ multimon-ng + a multimon-ng subprocess) and emit `kind:"page"` events; see the
 remains the **DSD** auto-detect — paging is selected only by these explicit
 hints.
 
-`provoice` / `edacs*` / `x2tdma` are **dsd-fme-backend only** — DSDcc has no
-decoder for them, so on the `dsd-server-dsdcc` build they fall back to
-auto-detect (`— (auto)`) rather than mis-decoding as DMR; use the default
-subprocess build for these. EDACS identifiers ride in the usual fields
+EDACS identifiers ride in the usual fields
 (`Group`→`talkgroup`, `Source`/`Caller`→`source_id`, `Callee`/`Target`→
 `talkgroup`) with `lcn`/`afs`/`lid`/`system_id` in `extra`; that mapping is
 pinned to dsd-fme's own print formats and unit-tested, but not yet validated
 against a live EDACS/ProVoice signal.
 
 For the FM/DSD hints the choice only steers mode selection; it does not change
-the wire format or the `event` shape. Note the two backends differ in NXDN
-capability:
-the subprocess **dsd-fme backend decodes NXDN reliably** (it applies the
-matching input matched-filter per mode and was verified against a real
-off-air NXDN48 capture — recovering source, talkgroup, RAN, site/system
-codes and adjacent-site info). The in-process **DSDcc backend's NXDN
-support is fragile on real signals** — it locks on clean/synthetic input
-but drops sync on real captures — so prefer the dsd-fme backend for
-anything but DMR.
+the wire format or the `event` shape. NXDN is decoded reliably: dsd-fme applies
+the matching input matched-filter per mode and was verified against a real
+off-air NXDN48 capture — recovering source, talkgroup, RAN, site/system codes
+and adjacent-site info.
 
 `key_type` / `key`: an **optional decryption key**. `key_type` names the
 scheme and `key` is its value; both absent/`""` (the default) means no key
@@ -118,31 +110,27 @@ is not started. A valid `key` is decimal or hex digits (AES/Hytera keys
 may contain the spaces that separate dsd-fme's 64-bit hex words); no other
 characters are accepted.
 
-| `key_type` | scheme | value format | dsd-fme | DSDcc |
-|---|---|---|---|---|
-| `bp` (or `basic_privacy`) | DMR Basic Privacy | key **number**, decimal `1`–`255` | `-b` | ✅ `setDMRBasicPrivacyKey` |
-| `rc4` | RC4 (DMR/P25/NXDN) | hex | `-1` | — |
-| `des` | DES | hex | `-1` | — |
-| `aes` (or `aes128`/`aes256`) | AES-128 / AES-256 | hex (space-separated 64-bit words) | `-H` | — |
-| `hytera` | Hytera Basic Privacy | hex | `-H` | — |
-| `scrambler` (or `nxdn_scrambler`, `dpmr_scrambler`) | NXDN/dPMR EHR scrambler | decimal | `-R` | — |
+| `key_type` | scheme | value format | dsd-fme flag |
+|---|---|---|---|
+| `bp` (or `basic_privacy`) | DMR Basic Privacy | key **number**, decimal `1`–`255` | `-b` |
+| `rc4` | RC4 (DMR/P25/NXDN) | hex | `-1` |
+| `des` | DES | hex | `-1` |
+| `aes` (or `aes128`/`aes256`) | AES-128 / AES-256 | hex (space-separated 64-bit words) | `-H` |
+| `hytera` | Hytera Basic Privacy | hex | `-H` |
+| `scrambler` (or `nxdn_scrambler`, `dpmr_scrambler`) | NXDN/dPMR EHR scrambler | decimal | `-R` |
 
-**Capability gap — read before relying on this.** Only **DMR Basic
-Privacy** decrypts on **both** backends; every other scheme is
-**dsd-fme-backend only** (the in-process DSDcc library has no
-RC4/AES/DES/scrambler support — its sole decryption is the BP key table).
-On the DSDcc backend a non-`bp` `key_type` is ignored (logged to stderr)
-and the stream decodes without a key. DMR Basic Privacy is not an
-arbitrary key: the number selects one of DSDcc's / dsd-fme's built-in
-well-known BP keys. Because BP carries no reliable in-band "encrypted"
-flag, a BP key is XOR-applied to **every** DMR voice frame — so setting
-one on an *unencrypted* channel garbles the audio; only set it when the
-channel actually uses BP. The BP path is verified end-to-end on the DSDcc
-backend (`tests/test_bp_key_dsdcc.cpp`); the dsd-fme key flags are
+DMR Basic Privacy is not an arbitrary key: the number selects one of
+dsd-fme's built-in well-known BP keys, and BP carries no key id. dsd-fme
+applies a BP key only to a call flagged encrypted that has no key id, so it
+does not disturb clear or key-id (EP/AES) calls. The key value is passed to
+dsd-fme as a separate argv token (never a shell string). The key flags are
 verified against dsd-fme's own `-h`/source and confirmed accepted by the
 real binary, but — lacking an encrypted capture with a known key — actual
-decryption of a live encrypted signal is not asserted here. The key value
-is passed to dsd-fme as a separate argv token (never a shell string).
+decryption of a live encrypted signal is not asserted here.
+
+(The explorer also manages keys per network and feeds them to the server's
+own dsd-fme as a `-K` list; see the Network Explorer endpoints and
+`NET_EXPLORER.md`.)
 
 `afc`: when `true`, the demod continuously measures the residual carrier
 offset in its own discriminator output and steers the NCO to remove it —
@@ -185,7 +173,6 @@ TETRA is π/4-DQPSK, not an FM mode, so it needs its own front end. It is
 same `dsd-server` that decodes DMR/NXDN/… also decodes TETRA when a session
 starts with `protocol":"tetra"` or `protocol":"tetrakit"`, switching that
 session's whole signal chain to the π/4 modem + a TETRA subprocess backend.
-(The FM/DSD *backend* choice — dsd-fme vs DSDcc — is still build
 time; the TETRA *decoder* choice is this runtime hint.) The two TETRA hints
 share the identical π/4 front end and wire protocol, differing only in the
 external decoder they drive:
@@ -245,7 +232,7 @@ is what surfaced the decoder's 1024-byte UDP read limit (now respected via
 driven end to end on the same capture: it returns 158 `kind:"sync"` events
 (`NETINFO1`/`FREQINFO1`, ColorCode 17, MCC/MNC 234/78, DLF 393.5125 MHz), and
 its TETMON `func`→`kind` mapping is pinned against that real output. Still
-open: the **call-control** mapping (`DSETUPDEC` etc. on both backends) needs a
+open: the **call-control** mapping (`DSETUPDEC` etc.) needs a
 capture with a live call, and **voice PCM** is not emitted yet
 (see [`TETRA_VOICE.md`](TETRA_VOICE.md)). The demod is streaming (timing,
 differential, CFO and AGC state carry across IQ frames), so decoding is
@@ -400,16 +387,8 @@ protocol it's about to request.
 | `type` | string | `"capabilities"` |
 | `protocols` | string | `"; "`-joined `protocol` hint values this build actually decodes. |
 | `audio` | string | Decoded-audio wire shape, currently always `"pcm_s16le_8000_mono"` (see the audio section below). |
-| `event_kinds` | string | `"; "`-joined `event` `kind` values (`voice; sync; call; message; burst; page; unknown`). |
+| `event_kinds` | string | `"; "`-joined `event` `kind` values (`voice; sync; call; message; page; unknown`). |
 | `extra_keys_<family>` | string | `"; "`-joined `extra` token keys this build can emit for that protocol family (`dmr`, `p25`, `nxdn`, `dstar`, `ysf`, `edacs`, `tetra`, `pager`). Present only when non-empty. See the `extra` token vocabulary above for each token's meaning. |
-
-The example above is from the dsd-fme build. The DSDcc build's frame is the
-same shape but narrower: `protocols` drops the dsd-fme-only entries
-(`p25`/`p25p2`/`provoice`/`edacs*`/`x2tdma`), `extra_keys_p25` /
-`extra_keys_edacs` are absent, `extra_keys_dmr` is
-`"unit_target; burst; sync_type"`, and `extra_keys_dstar` additionally
-carries `gps`. A client keys off the advertised fields themselves rather
-than needing to know which backend produced them.
 
 A client that reads the first frame expecting `started` should first
 consume (or skip past) this `capabilities` greeting — it is self-
@@ -429,7 +408,7 @@ strand and therefore run after it).
 | field | type | meaning |
 |---|---|---|
 | `type` | string | `"started"` |
-| `udp_audio_port` | number | The **server-internal** UDP port this session's dsd-fme child streams decoded audio to (allocated per session from 40000–59000, collision-free across concurrent sessions). Purely informational/diagnostic — the client never talks to this port; audio arrives over the WebSocket. In the DSDcc backend build (`dsd-server-dsdcc`) there is no subprocess and no UDP, so this is `0`, meaning "not applicable", not "failed". |
+| `udp_audio_port` | number | The **server-internal** UDP port this session's dsd-fme child streams decoded audio to (allocated per session from 40000–59000, collision-free across concurrent sessions). Purely informational/diagnostic — the client never talks to this port; audio arrives over the WebSocket. A TETRA session binds its own port internally, so this is `0` there, meaning "not applicable", not "failed". |
 | `iq_log_file` | string | Present **only** when the `start` had `iq_log:true` and the capture file opened. The server-side path of the MIDAS BLUE file this session's raw IQ is being written to. Absent when IQ logging was off or the file could not be opened. |
 
 ### IQ capture (`iq_log`)
@@ -499,7 +478,7 @@ message is affected. Exactly nine message texts exist:
 | `binary frame length not a multiple of 8 bytes` | Malformed binary IQ frame received after `start`. The frame is dropped. |
 | `invalid or missing key for key_type '...' ...` | A `start` named a `key_type` (bp/rc4/des/aes/hytera/scrambler) but its `key` was empty or not decimal/hex digits. The key is validated before any backend is launched, so no pipeline starts; retry `start` with a valid key. |
 | `failed to start TETRA backend` | A `start` with `protocol` `tetra`/`tetrakit` couldn't bring up the TETRA decoder subprocess (usually: no `tetra-rx` / `tetra-kit` on the server's PATH). No pipeline is running after this; a corrected `start` may be retried. |
-| `failed to start DSD backend` | `start` couldn't bring up the decoder — for the subprocess backend, the fork/exec of dsd-fme failed (usually: no `dsd-fme` on the server's PATH); for the DSDcc backend, an unsupported config (e.g. a non-48 kHz internal rate). No pipeline is running after this; a corrected `start` may be retried. |
+| `failed to start DSD backend` | `start` couldn't bring up the decoder — the fork/exec of dsd-fme failed (usually: no `dsd-fme` on the server's PATH). No pipeline is running after this; a corrected `start` may be retried. |
 | `failed to start pager backend` | A paging `start` couldn't spawn multimon-ng (not on `PATH` / `$MULTIMON_NG`). No pipeline is running; a corrected `start` may be retried. |
 | `pager decoder exited unexpectedly` | multimon-ng died mid-session — typically a too-old build (1.3.0) rejecting `--json`. Sent once; send `start` again once fixed. |
 | `unknown pocsag_mode: ...` | A paging `start` with a `pocsag_mode` other than `auto`/`alpha`/`numeric`/`skyper`. No pipeline starts. |
@@ -509,9 +488,8 @@ kind; treat the remainder as free text.
 
 ### `event` — decoder activity
 
-One frame per line the DSD backend reports (subprocess backend: one per
-line dsd-fme writes to its log, post-cleanup; DSDcc backend: one per
-detected state change). All thirteen data fields are always present; empty
+One frame per line the DSD backend (dsd-fme) writes to its log,
+post-cleanup. All thirteen data fields are always present; empty
 string means "not present in this event".
 
 ```json
@@ -521,19 +499,19 @@ string means "not present in this event".
 | field | type | meaning |
 |---|---|---|
 | `type` | string | `"event"` |
-| `kind` | string | Best-effort classification: `"voice"`, `"sync"`, `"call"`, `"message"` (a decoded DMR short-data/SMS body, dsd-fme backend), `"burst"` (DSDcc backend only), `"page"` (a decoded pager message — paging hints only, see the [Paging section](#paging-protocolpager-auto--pocsag--flex)), or `"unknown"`. See the per-backend notes below for exactly when each occurs. **On the subprocess backend, `unknown` events are suppressed by default** — dsd-fme prints a large startup banner / version / device-config block that all classifies as `unknown` noise, so it isn't forwarded (server-side `DsdProcessConfig::forward_unknown`; set it true to forward unrecognized lines for classifier debugging). Recognized events (`voice`/`sync`/`call`/`burst`) are always forwarded. |
+| `kind` | string | Best-effort classification: `"voice"`, `"sync"`, `"call"`, `"message"` (a decoded DMR short-data/SMS body), `"page"` (a decoded pager message — paging hints only, see the [Paging section](#paging-protocolpager-auto--pocsag--flex)), or `"unknown"`. See the notes below for exactly when each occurs. **`unknown` events are suppressed by default** — dsd-fme prints a large startup banner / version / device-config block that all classifies as `unknown` noise, so it isn't forwarded (server-side `DsdProcessConfig::forward_unknown`; set it true to forward unrecognized lines for classifier debugging). Recognized events (`voice`/`sync`/`call`) are always forwarded. |
 | `talkgroup` | string | Decimal talkgroup / group-call target ID, or `""`. Kept as a string because IDs can exceed what a client might assume about integer width, and `""` is the natural "absent". |
 | `source_id` | string | Decimal source radio ID, or `""`. |
-| `slot` | string | TDMA slot, `"1"` or `"2"`, or `""` when the event isn't slot-specific. On the dsd-fme backend the physical slot is printed only on each burst's `Sync:` line (`[slot1]`/`[SLOT2]`); the server carries that slot forward onto the CSBK/call/voice/message lines dsd-fme prints for the *same* burst (they arrive with no marker of their own), so those events get the right `slot` without the client having to track it. Only traffic kinds (`voice`/`call`/`message`/`burst`) inherit it; channel-wide/`unknown` lines stay `""`, and any line that carries its own `[slotN]` overrides it. The DSDcc backend tags voice/call/burst events with their slot natively. |
-| `color_code` | string | DMR color code as bare decimal (`"4"`, not `"04"` — both backends normalize away leading zeros), or `""` when the event doesn't carry one. Which event kinds carry it differs by backend: dsd-fme prints it on its per-burst sync lines, DSDcc's slot status text carries it on `voice`/`call` events. |
+| `slot` | string | TDMA slot, `"1"` or `"2"`, or `""` when the event isn't slot-specific. On the dsd-fme backend the physical slot is printed only on each burst's `Sync:` line (`[slot1]`/`[SLOT2]`); the server carries that slot forward onto the CSBK/call/voice/message lines dsd-fme prints for the *same* burst (they arrive with no marker of their own), so those events get the right `slot` without the client having to track it. Only traffic kinds (`voice`/`call`/`message`) inherit it; channel-wide/`unknown` lines stay `""`, and any line that carries its own `[slotN]` overrides it. |
+| `color_code` | string | DMR color code as bare decimal (`"4"`, not `"04"` — leading zeros normalized away), or `""` when the event doesn't carry one. dsd-fme prints it on its per-burst sync lines. |
 | `ran` | string | NXDN Radio Access Number as bare decimal (`"2"`, not `"02"`), or `""`. The NXDN analog of `color_code` — a repeater-access/filter code — surfaced by the dsd-fme backend on NXDN sync lines that carry `RAN NN`. DMR events leave it `""`, NXDN events leave `color_code` `""`. |
 | `nac` | string | P25 Network Access Code as uppercase hex without `0x` (`"293"`), or `""`. The P25 analog of `color_code`/`ran`. dsd-fme backend only. |
 | `emergency` | string | `"1"` when the line flags the call as an emergency (high-priority traffic), else `""`. dsd-fme backend only. |
 | `alias` | string | DMR talker-alias text (the operator's over-the-air alias) when dsd-fme has assembled and printed it, else `""`. Free text. dsd-fme backend only. |
-| `crc_error` | string | `"1"` when the decoder itself marked this line/burst as failing an FEC/CRC check, else `"0"`. This is the one flag reported as a definite `0`/`1` rather than `""`, so it always reads as a boolean; but `"0"` means "not flagged as an error", **not** "verified to have passed a CRC" — many lines carry no CRC status at all. Subprocess backend: `"1"` when the cleaned dsd-fme line carries a `CRC ERR`, `FEC ERR`, or `EMB ERR` marker. DSDcc backend: `"1"` on `burst` events whose slot-type PDU failed its Golay(20,8) FEC (`burst=UNK`). Treat a flagged event's other fields (especially `color_code`) as unreliable; note the reverse does not hold — a marginal burst can decode "cleanly" to a wrong value without being flagged. |
-| `message` | string | Decoded **DMR short-data / SMS** text, else `""`. dsd-fme backend only: lifted from its `UTF8`/`UTF16`/`ISO7`/`ISO8 Text:` renderings of short-data (SDS) and UDT message PDUs. Free text — it may contain spaces, `;`, and `=`, which is why it has its own field rather than an `extra` token. Trailing decoder padding (`_` for null bytes, `-`/spaces for other non-printables) is trimmed. A UDT message shares its line with the sender/recipient, so `source_id`/`talkgroup` are set too; a short-data body arrives on its own line with just the text. **A body from a CRC/FEC-failed frame is dropped** — dsd-fme prints its garbage decode with a `(CRC ERR)`/`(FEC ERR)` marker; the event still carries `crc_error:"1"`, but `message` stays `""` rather than surfacing untrustworthy text. Encrypted or segmented (multi-block) messages may arrive partial or garbled; the codec cannot recover encrypted bodies. DSDcc backend does not decode the DMR data plane, so it never sets this. |
-| `extra` | string | Backend-specific detail that doesn't fit the fields above, or `""`. **Format: zero or more `key=value` tokens joined by `"; "`.** DSDcc backend tokens: `unit_target=<id>` (unit-to-unit call target — not a talkgroup, so kept out of `talkgroup`), `burst=<type>` on `burst` events (three-letter slot burst type: `IDL` idle, `CSB` CSBK control, `VLC`/`TLC` voice/terminator link control, `VOX` voice, `UNK` unknown, …), `sync_type=<flavor>` on sync-acquisition events (see below). dsd-fme backend NXDN trunking tokens: `site_code=<n>`, `system_code=<n>`, `location_id=<hex>`, `category=<name>` (e.g. `Global`). Because the same label can mean different things per line (a `Site Code` is the home site on a Site ID line but an adjacent site on an Adjacent Information line), read the accompanying `raw` for context. |
-| `raw` | string | The underlying decoder output this event was parsed from, so nothing is lost to the classification: the cleaned log line (subprocess backend) or a synthesized description (DSDcc backend). Free text; formats below are examples from real decodes, and they **vary across dsd-fme versions/forks** — parse the structured fields, fall back to `raw` only for display/debugging. |
+| `crc_error` | string | `"1"` when the decoder itself marked this line/burst as failing an FEC/CRC check, else `"0"`. This is the one flag reported as a definite `0`/`1` rather than `""`, so it always reads as a boolean; but `"0"` means "not flagged as an error", **not** "verified to have passed a CRC" — many lines carry no CRC status at all. `"1"` when the cleaned dsd-fme line carries a `CRC ERR`, `FEC ERR`, or `EMB ERR` marker. Treat a flagged event's other fields (especially `color_code`) as unreliable; note the reverse does not hold — a marginal burst can decode "cleanly" to a wrong value without being flagged. |
+| `message` | string | Decoded **DMR short-data / SMS** text, else `""`.lifted from its `UTF8`/`UTF16`/`ISO7`/`ISO8 Text:` renderings of short-data (SDS) and UDT message PDUs. Free text — it may contain spaces, `;`, and `=`, which is why it has its own field rather than an `extra` token. Trailing decoder padding (`_` for null bytes, `-`/spaces for other non-printables) is trimmed. A UDT message shares its line with the sender/recipient, so `source_id`/`talkgroup` are set too; a short-data body arrives on its own line with just the text. **A body from a CRC/FEC-failed frame is dropped** — dsd-fme prints its garbage decode with a `(CRC ERR)`/`(FEC ERR)` marker; the event still carries `crc_error:"1"`, but `message` stays `""` rather than surfacing untrustworthy text. Encrypted or segmented (multi-block) messages may arrive partial or garbled; the codec cannot recover encrypted bodies. |
+| `extra` | string | Detail that doesn't fit the fields above, or `""`. **Format: zero or more `key=value` tokens joined by `"; "`.** NXDN trunking tokens: `site_code=<n>`, `system_code=<n>`, `location_id=<hex>`, `category=<name>` (e.g. `Global`). Because the same label can mean different things per line (a `Site Code` is the home site on a Site ID line but an adjacent site on an Adjacent Information line), read the accompanying `raw` for context. |
+| `raw` | string | The underlying decoder output this event was parsed from, so nothing is lost to the classification: the cleaned log line. Free text; formats below are examples from real decodes, and they **vary across dsd-fme versions/forks** — parse the structured fields, fall back to `raw` only for display/debugging. |
 
 #### Which fields each protocol populates
 
@@ -545,7 +523,7 @@ the field stays `""` for that protocol — not that it is omitted.
 | field | DMR | NXDN | P25 | dPMR | D-STAR | YSF | TETRA | notes |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|---|
 | `type` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | always `"event"` |
-| `kind` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | `burst` is DSDcc/DMR-only; NXDN/P25 control messages are `unknown`. TETRA: `sync`/`call`/`unknown` (osmo), plus `voice` on the tetra-kit backend |
+| `kind` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | NXDN/P25 control messages are `unknown`. TETRA: `sync`/`call`/`unknown` (osmo), plus `voice` on the tetra-kit backend |
 | `talkgroup` | ✓ | ✓ | ✓ | ✓ | ‡ | ‡ | † | DMR `TGT=`; NXDN `Dst/TG=`; P25 `TGT:`; dPMR `TG=` (zero-padding stripped). ‡ D-STAR/YSF: a **callsign** (the destination — e.g. `CQCQCQ`), not a numeric id. † TETRA: the called group SSI on call-control PDUs — **osmo backend only** (tetra-kit associates the caller SSI later by usage marker and leaves this `""`) |
 | `source_id` | ✓ | ✓ | ✓ | ✓ | ‡ | ‡ | ✓ | `Src=` / `SRC:` (zero-padding stripped). ‡ D-STAR/YSF: the transmitting station's **callsign**. TETRA: the party SSI |
 | `slot` | ✓ | — | — | — | — | — | — | DMR TDMA slot `1`/`2` |
@@ -554,8 +532,8 @@ the field stays `""` for that protocol — not that it is omitted.
 | `nac` | — | — | ✓* | — | — | — | — | P25 Network Access Code (hex); *dsd-fme backend only |
 | `emergency` | ✓* | ✓* | ✓* | ✓* | — | — | — | emergency flag; *dsd-fme backend only |
 | `alias` | ✓* | — | — | — | — | — | — | DMR talker alias; *dsd-fme backend only |
-| `crc_error` | ✓ | ✓ | ✓ | ✓ | ✓* | ✓* | — | FEC/CRC-failure flag (dsd-fme, and DSDcc for DMR/NXDN); *D-STAR/YSF: dsd-fme only. TETRA: the external decoder discards failing PDUs itself, so surviving events aren't CRC-flagged |
-| `message` | ✓* | — | — | — | — | — | — | DMR short-data / SMS text; *dsd-fme backend only (DSDcc doesn't decode the DMR data plane) |
+| `crc_error` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | FEC/CRC-failure flag. TETRA: the external decoder discards failing PDUs itself, so surviving events aren't CRC-flagged |
+| `message` | ✓ | — | — | — | — | — | — | DMR short-data / SMS text |
 
 Paging (not a column above): `talkgroup` (capcode), `message` (page text),
 `emergency` (FLEX priority), `crc_error` (FLEX checksum), `extra` and `raw`
@@ -573,13 +551,10 @@ callsign text instead of numbers, and the repeater/routing detail rides in
 backend surfaces it; the network identity — MCC/MNC/LA and the up/downlink
 frequencies — rides in `extra` rather than in dedicated fields.)
 
-`extra` token vocabulary by protocol/backend:
+`extra` token vocabulary by protocol (the DSD tokens come from dsd-fme; TETRA names its two decoders):
 
 | token | protocol | backend | meaning |
 |---|---|---|---|
-| `unit_target=<id>` | DMR | DSDcc | private-call target (not a talkgroup) |
-| `burst=<type>` | DMR | DSDcc | slot burst type (`IDL`/`CSB`/`VLC`/`TLC`/`VOX`/`UNK`) |
-| `sync_type=<flavor>` | DMR | DSDcc | `dmr_bs_data` / `dmr_ms_voice` / … |
 | `network_type=<con+\|cap+>` | DMR | dsd-fme | Motorola trunking flavor (Connect Plus / Capacity Plus) |
 | `network_id=<n>` | DMR | dsd-fme | trunked network ID (Tier III / Con+ / Cap+) |
 | `site_id=<n>` | DMR | dsd-fme | trunked site ID (may be `N.M` form) |
@@ -593,19 +568,18 @@ frequencies — rides in `extra` rather than in dedicated fields.)
 | `wacn=<hex>` | P25 | dsd-fme | Wide Area Communications Network id |
 | `alg_id=<hex>` | P25, DMR, NXDN | dsd-fme | encryption algorithm id, as the protocol numbers it -- P25: `80`=clear, `81`=DES-OFB, `84`=AES-256, `85`=AES-128, `AA`=ADP, …; DMR: `21`=RC4 (EP), `22`=DES, `24`=AES-128, `25`=AES-256; NXDN: the cipher type `1`=scrambler, `2`=DES, `3`=AES |
 | `key_id=<hex>` | P25, DMR, NXDN | dsd-fme | encryption key id, as printed (`0000`=unencrypted; NXDN's decimal key id is given in hex) |
-| `site_code=<n>` | NXDN | both | site code (home or adjacent — see `raw`) |
-| `system_code=<n>` | NXDN | both | trunked system code |
-| `location_id=<hex>` | NXDN | both | site location ID |
+| `site_code=<n>` | NXDN | dsd-fme | site code (home or adjacent — see `raw`) |
+| `system_code=<n>` | NXDN | dsd-fme | trunked system code |
+| `location_id=<hex>` | NXDN | dsd-fme | site location ID |
 | `category=<name>` | NXDN | dsd-fme | system scope, e.g. `Global` |
-| `rpt1=<call>` | D-STAR | both | uplink repeater callsign (RPT1) |
-| `rpt2=<call>` | D-STAR | both | gateway/link repeater callsign (RPT2) |
-| `radio_text=<text>` | D-STAR | both | slow-data message text (free text) |
-| `gps=<locator>` | D-STAR | DSDcc | Maidenhead locator from slow-data GPS |
-| `uplink=<call>` | YSF | both | repeater uplink callsign (U/L) |
-| `downlink=<call>` | YSF | both | repeater downlink callsign (D/L) |
-| `call_mode=<mode>` | YSF | both | FICH call mode: `group_cq` / `radio_id` / `individual` |
-| `data_type=<type>` | YSF | both | FICH data type: `vd1` / `vd2` / `voice_full` / `data_full` |
-| `src_rid=<n>` / `dst_rid=<n>` | YSF | both | numeric DSQ radio IDs (Radio ID call mode) |
+| `rpt1=<call>` | D-STAR | dsd-fme | uplink repeater callsign (RPT1) |
+| `rpt2=<call>` | D-STAR | dsd-fme | gateway/link repeater callsign (RPT2) |
+| `radio_text=<text>` | D-STAR | dsd-fme | slow-data message text (free text) |
+| `uplink=<call>` | YSF | dsd-fme | repeater uplink callsign (U/L) |
+| `downlink=<call>` | YSF | dsd-fme | repeater downlink callsign (D/L) |
+| `call_mode=<mode>` | YSF | dsd-fme | FICH call mode: `group_cq` / `radio_id` / `individual` |
+| `data_type=<type>` | YSF | dsd-fme | FICH data type: `vd1` / `vd2` / `voice_full` / `data_full` |
+| `src_rid=<n>` / `dst_rid=<n>` | YSF | dsd-fme | numeric DSQ radio IDs (Radio ID call mode) |
 | `lcn=<n>` | EDACS/ProVoice | dsd-fme | logical channel number (control or working channel) |
 | `afs=<n>` | EDACS/ProVoice | dsd-fme | EDACS Agency-Fleet-Subfleet group id (decimal) |
 | `lid=<n>` | EDACS/ProVoice | dsd-fme | EDACS logical (unit) id, on login/regroup lines |
@@ -621,67 +595,39 @@ frequencies — rides in `extra` rather than in dedicated fields.)
 | `usage_marker=<n>` / `dl_usage_marker=<n>` | TETRA | tetra-kit | uplink / downlink usage marker — associates speech frames with a call |
 | `encr=<mode>` | TETRA | tetra-kit | encryption mode reported for the PDU |
 
-Both backends emit the NXDN fields (`ran`, `source_id`, `talkgroup`, and
-the `site_code`/`system_code`/`location_id` tokens) with the same shape,
-so a client sees a consistent structure regardless of which backend
-decoded. The DSDcc backend derives `system_code`/`site_code` from the
-high/low 12 bits of its decoded location ID (the same split dsd-fme
-prints); it does not currently surface `category`.
+The NXDN fields (`ran`, `source_id`, `talkgroup`, and the
+`site_code`/`system_code`/`location_id` tokens) are decoded by dsd-fme.
 
 The DMR trunking / LC fields (`emergency`, `alias`, and the
 `network_type` / `network_id` / `site_id` / `rest_channel` / `lcn` / `svc` /
-`alg_id` / `key_id` / `gps` tokens) are **dsd-fme backend only**: they come from DMR CSBK, data, and
-talker-alias layers that the DSDcc backend does not decode (DSDcc's DMR
-decoder handles voice, slot type / color code, and source/target from
-the embedded LC, but not the CSBK payload). On the DSDcc backend these
-stay `""`. Because the project has no Con+/Cap+/Tier-III capture to drive
-them, these patterns are verified against lwvmobile/dsd-fme's own printf
-formats (pinned in `tests/test_dsd_fme_parse.cpp`) rather than a live
+`alg_id` / `key_id` / `gps` tokens) come from DMR CSBK, data, and
+talker-alias layers. Because the project has no Con+/Cap+/Tier-III capture
+to drive them, these patterns are verified against lwvmobile/dsd-fme's own
+printf formats (pinned in `tests/test_dsd_fme_parse.cpp`) rather than a live
 decode; like all `raw`-derived parsing they may vary across dsd-fme
 versions.
 
 **P25** (`nac`, `rfss`/`site_id`/`system_id`/`wacn`, `alg_id`/`key_id`,
-plus the shared `talkgroup`/`source_id`/`emergency`) is **dsd-fme backend
-only**. dsd-fme has full P25 Phase 1/2 + trunking decode; the DSDcc
-backend has a P25 Phase 1 *decoder* but this wrapper does not yet read
-its metadata, so on the DSDcc backend a P25 stream produces sync events
-only and these fields stay `""`. The P25 patterns are verified against a
-real P25 Phase 1 control-channel capture (`nac`, `rfss`, `site_id`,
-`system_id`, `wacn` all confirmed live end to end); the encryption
-`alg_id`/`key_id` and `emergency` shapes, which that capture did not
-exercise, are pinned against dsd-fme's source formats in
-`tests/test_dsd_fme_parse.cpp`.
+plus the shared `talkgroup`/`source_id`/`emergency`): dsd-fme has full P25
+Phase 1/2 + trunking decode. The P25 patterns are verified against a real
+P25 Phase 1 control-channel capture (`nac`, `rfss`, `site_id`, `system_id`,
+`wacn` all confirmed live end to end); the encryption `alg_id`/`key_id` and
+`emergency` shapes, which that capture did not exercise, are pinned against
+dsd-fme's source formats in `tests/test_dsd_fme_parse.cpp`.
 
-Protocol vs. backend: **DMR** decodes on both the dsd-fme and DSDcc
-backends. **NXDN** parses on both, but is only *reliable* on the dsd-fme
-backend — the DSDcc backend's NXDN symbol recovery drops sync on real
-off-air signals (it decodes clean/synthetic input fine), so prefer
-dsd-fme for real NXDN (see the `protocol` field note above). **P25** is
-dsd-fme only (above). **dPMR** decodes on both backends (both verified
-against DSDcc's bundled `samples/dpmr.dis`): the dsd-fme backend reports
-`talkgroup`/`source_id`/`color_code` (the dPMR channel code, from
-`Channel Code=NN`), the DSDcc backend reports `talkgroup`/`source_id`
-from its own/called ids (its channel-code accessor is unreliable, so it
-omits `color_code`). As with DMR, the two backends can report different
-ids for the same call (they read different frame fields).
+**dPMR** reports `talkgroup`/`source_id`/`color_code` (the dPMR channel
+code, from `Channel Code=NN`).
 
-**D-STAR** and **YSF** decode on both backends (both verified live against
-DSDcc's bundled `samples/dstar_f1zil_1.dis` and `samples/ysf_f5zoo.dis`,
-and the dsd-fme parsing pinned against real lines from the same captures
-in `tests/test_dsd_fme_parse.cpp`). These are amateur protocols keyed on
-**callsigns**, so `source_id`/`talkgroup` carry callsign text and the
-numeric access codes stay `""`. D-STAR surfaces the transmitting callsign
-(`source_id`), the "your call" destination (`talkgroup`, e.g. `CQCQCQ`),
-the repeater path (`rpt1`/`rpt2`), slow-data `radio_text`, and — DSDcc
-only — a Maidenhead `gps` locator. YSF surfaces `source_id`/`talkgroup`
-callsigns, the repeater `uplink`/`downlink`, and the FICH `call_mode` /
-`data_type`; in Radio-ID call mode the numeric `src_rid`/`dst_rid` DSQ ids
-appear instead of callsigns. Two backend-shape differences worth noting:
-the DSDcc backend emits one consolidated `call` event per state change,
-while dsd-fme emits a separate event per frame (source on one, repeater on
-the next, …) because its metadata arrives on separate log lines; and the
-two decoders can disagree on a repeater's module letter or a partly-copied
-callsign, the same cross-backend caveat as the numeric protocols.
+**D-STAR** and **YSF** are amateur protocols keyed on **callsigns**, so
+`source_id`/`talkgroup` carry callsign text and the numeric access codes
+stay `""`. D-STAR surfaces the transmitting callsign (`source_id`), the
+"your call" destination (`talkgroup`, e.g. `CQCQCQ`), the repeater path
+(`rpt1`/`rpt2`) and slow-data `radio_text`. YSF surfaces
+`source_id`/`talkgroup` callsigns, the repeater `uplink`/`downlink`, and
+the FICH `call_mode` / `data_type`; in Radio-ID call mode the numeric
+`src_rid`/`dst_rid` DSQ ids appear instead of callsigns. dsd-fme emits a
+separate event per frame (source on one, repeater on the next, …) because
+its metadata arrives on separate log lines.
 
 Anything else auto-detects into `raw` under `kind:"unknown"`.
 
@@ -744,9 +690,9 @@ verified — see the backend note above). `raw` is illustrative:
   forms `Emergency: <timer>` / `Emergency = <n>` do **not** trip it).
 - `alias` is the talker-alias text once dsd-fme assembles it.
 - `network_type`/`network_id`/`site_id`/`rest_channel`/`lcn` ride in
-  `extra`; DSDcc leaves all of these empty (it doesn't decode CSBK).
+  `extra`.
 
-##### DMR short data / SMS (dsd-fme backend)
+##### DMR short data / SMS
 
 DMR CSBK and data-header lines name the destination `Target: N` rather than
 `TGT`/`TG` (`Preamble CSBK - Group Data - Source: 123 - Target: 1`, `Slot 1
@@ -822,25 +768,19 @@ shapes:
   `alg_id=aa` Motorola ADP, etc. (values as dsd-fme reports).
 - Zero-padded IDs (`TGT: 00000100`) are normalized (`talkgroup:"100"`).
 
-##### dPMR (`protocol:"dpmr"`) — real, both backends
+##### dPMR (`protocol:"dpmr"`) — real
 
 Real frames from decoding `samples/dpmr.dis`. dsd-fme reports the dPMR
-channel code in `color_code`; both backends report talkgroup/source
-(from different frame fields, so the ids can differ):
+channel code in `color_code` and talkgroup/source:
 
 ```json
 {"type":"event","kind":"call","talkgroup":"10011","source_id":"243","slot":"","color_code":"31","ran":"","nac":"","emergency":"","alias":"","crc_error":"0","message":"","extra":"","raw":" TG=0010011 Src=0000243 Channel Code=31"}
 {"type":"event","kind":"unknown","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"1","message":"","extra":"","raw":" TG=(CRC ERR) Src=(CRC ERR) Channel Code =(CRC ERR)"}
-{"type":"event","kind":"call","talkgroup":"14653","source_id":"302","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"0","message":"","extra":"","raw":"(dsdcc dpmr) own 302 called 14653"}
 ```
 
-The first two are the dsd-fme backend (note `color_code:"31"` and the
-CRC-flagged bad frame); the third is the DSDcc backend (own/called ids,
-no channel code). Both are from the same file — the id disagreement
-(10011/243 vs 14653/302) is the usual cross-backend decode-layer
-difference.
+Note `color_code:"31"` and the second line's CRC-flagged bad frame.
 
-##### D-STAR (`protocol:"dstar"`) — real, both backends
+##### D-STAR (`protocol:"dstar"`) — real
 
 Real frames from decoding `samples/dstar_f1zil_1.dis` (F1NSR calling CQ
 through the F1ZIL repeater). `source_id`/`talkgroup` carry **callsigns**;
@@ -848,33 +788,26 @@ the numeric access codes stay `""`:
 
 ```json
 {"type":"event","kind":"call","talkgroup":"CQCQCQ","source_id":"F1NSR ID51","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"0","message":"","extra":"rpt1=F1ZIL B; rpt2=F1ZIL G","raw":"18:27:55 Sync: -DSTAR VOICE   RPT 2: F1ZIL  G RPT 1: F1ZIL  B DST: CQCQCQ   SRC: F1NSR   ID51 REPEATER"}
-{"type":"event","kind":"call","talkgroup":"CQCQCQ","source_id":"F1NSR /ID51","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"0","message":"","extra":"rpt1=F1ZIL B; rpt2=F1ZIL B; radio_text=YANNICK ST RAPHAEL","raw":"(dsdcc dstar) my F1NSR /ID51 ur CQCQCQ"}
 ```
 
-The first is the dsd-fme backend (the call info shares its reprinted sync
-line); the second is the DSDcc backend, which consolidates the callsigns,
-repeater path, and the assembled slow-data `radio_text` into one event.
-(The two decoders copy the repeater module letter differently — `F1ZIL G`
-vs `F1ZIL B` — the same cross-backend caveat as the numeric protocols.)
+The call info shares dsd-fme's reprinted sync line; the repeater path
+rides in `extra` (`rpt1`/`rpt2`).
 
-##### YSF / System Fusion (`protocol:"ysf"`) — real, both backends
+##### YSF / System Fusion (`protocol:"ysf"`) — real
 
 Real frames from decoding `samples/ysf_f5zoo.dis` (F1SER/F6FCE via the
 F5ZOO-R1 repeater, group CQ, V/D type 2). dsd-fme's metadata arrives on
 separate frame lines (source, then uplink/downlink), so it emits one event
-each; the DSDcc backend consolidates:
+each:
 
 ```json
 {"type":"event","kind":"call","talkgroup":"","source_id":"F1SER","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"0","message":"","extra":"call_mode=group_cq; data_type=vd2","raw":"18:28:18 Sync: +YSF  V/D2 Group/CQ -Simplex CC FN: 2/7 SRC: F1SER     "}
 {"type":"event","kind":"call","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"0","message":"","extra":"call_mode=group_cq; data_type=vd2; uplink=F5ZOO-R1","raw":"18:28:18 Sync: +YSF  V/D2 Group/CQ -Simplex CC FN: 3/7 U/L: F5ZOO-R1  "}
-{"type":"event","kind":"call","talkgroup":"","source_id":"F1SER","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"0","message":"","extra":"call_mode=group_cq; data_type=vd2; uplink=F5ZOO-R1; downlink=F5ZOO-R1","raw":"(dsdcc ysf) src F1SER dst "}
 ```
 
-The first two are the dsd-fme backend (source on one frame, uplink on the
-next); the third is the DSDcc backend, carrying source, repeater
-uplink/downlink, and the FICH call mode / data type together. The masked
-group-CQ destination (`**********`) is normalized to an empty `talkgroup`
-rather than an invented id.
+Source arrives on one frame, uplink on the next. The masked group-CQ
+destination (`**********`) is normalized to an empty `talkgroup` rather
+than an invented id.
 
 ##### NXDN / IDAS (subprocess backend with `protocol:"nxdn48"`)
 
@@ -896,69 +829,8 @@ control channel (the same signal used to verify the `protocol` hint):
   Information, Service Information) carry no call IDs, so they stay
   `kind:"unknown"` with their structured detail in `extra` and the full
   text in `raw`.
-- Reminder (see the `protocol` field above): this is the **dsd-fme
-  backend**, which decodes NXDN reliably. The DSDcc backend emits the
-  same NXDN fields (see its section below) but only decodes NXDN on
-  clean signals, not real off-air captures.
-
-#### DSDcc backend (`dsd-server-dsdcc`) — real examples
-
-Captured from DSDcc 1.9.0 decoding the same call
-(`session_dsdcc_test`):
-
-```json
-{"type":"event","kind":"sync","talkgroup":"","source_id":"","slot":"","color_code":"","ran":"","nac":"","emergency":"","alias":"","crc_error":"0","message":"","extra":"sync_type=dmr_bs_data","raw":"(dsdcc: sync acquired, dmr_bs_data)"}
-{"type":"event","kind":"burst","talkgroup":"","source_id":"","slot":"1","color_code":"4","ran":"","nac":"","emergency":"","alias":"","crc_error":"0","message":"","extra":"burst=IDL","raw":"(dsdcc slot1) .04 IDL                   "}
-{"type":"event","kind":"voice","talkgroup":"150607","source_id":"2222223","slot":"2","color_code":"4","ran":"","nac":"","emergency":"","alias":"","crc_error":"0","message":"","extra":"","raw":"(dsdcc slot2) *04 VOX 02222223>G00150607"}
-```
-
-- `kind:"sync"` — sync acquisition/loss transitions only, not
-  per-burst like dsd-fme — expect far fewer of these. On acquisition,
-  `extra` carries the sync flavor as `"sync_type=<flavor>"`, the DSDcc
-  equivalent of dsd-fme's `+DMR MS/DM` detail: `dmr_bs_data`,
-  `dmr_bs_voice` (base station / repeater), `dmr_ms_data`,
-  `dmr_ms_voice` (mobile station — also what direct/simplex mode
-  shows), `other` (non-DMR sync in auto mode). Only the acquiring
-  burst's flavor is reported; within a held sync the flavor alternates
-  per burst (voice on one slot, data on the other) and is deliberately
-  not re-reported. On loss, `extra` is `""` and `raw` is
-  `"(dsdcc: sync lost)"`.
-- `kind:"voice"` / `kind:"call"` — a change in a slot's call state,
-  `voice` while that slot's voice channel is active, `call` otherwise.
-  `raw` is `"(dsdcc slot<n>) "` followed by DSDcc's 26-character slot
-  status text (activity flag, color code, burst type, `source>G|Utarget`).
-- `kind:"burst"` — a change in a slot's burst type or color code
-  **before/without call addresses** (DSDcc only learns addresses from
-  voice embedded signalling). `extra` is `"burst=<type>"`, and
-  `color_code` is filled once the slot-type PDU decodes. This is all
-  the visibility DSDcc has into control-only traffic — e.g. a capture
-  of CSBK signalling produces `burst=CSB` events with the color code,
-  where dsd-fme would additionally decode the CSBK payload (source /
-  target / opcode). Idle slots show as `burst=IDL`.
-- For **unit-to-unit** (private) calls, `talkgroup` stays `""` and the
-  target lands in `extra` as `"unit_target=<id>"`.
-- `kind:"unknown"` is not currently produced by this backend.
-
-In NXDN mode (`protocol:"nxdn48"`/`"nxdn96"`) this backend emits the same
-NXDN fields as the dsd-fme backend, read from DSDcc's NXDN decoder — a
-`kind:"call"` event carrying `ran`, `source_id`, `talkgroup` (group
-target) or `extra: unit_target=<id>` (private), and, on site messages,
-`extra: system_code=<n>; site_code=<n>; location_id=<hex>`:
-
-```json
-{"type":"event","kind":"call","talkgroup":"200","source_id":"100","slot":"","color_code":"","ran":"9","nac":"","emergency":"","alias":"","crc_error":"0","message":"","extra":"","raw":"(dsdcc nxdn) RAN 9 src 100 dst 200 group"}
-```
-
-Remember the reliability caveat: DSDcc decodes NXDN only on clean signals
-(the example is from the repo's synthetic sample); on real off-air NXDN
-it drops sync where dsd-fme succeeds.
-
-Note the two backends can legitimately disagree on metadata for the
-same signal — they decode different link-control layers (for the
-bundled test capture, dsd-fme reports talkgroup 19535 from the voice
-LC while DSDcc reports 150607 from the embedded LC; the transmission
-genuinely carries both). Don't treat the values as interchangeable
-across backends.
+- NXDN is decoded reliably here (dsd-fme applies the matching input
+  matched-filter per mode).
 
 #### TETRA (`protocol":"tetra"` / `"tetrakit"`) — real examples
 
@@ -1036,14 +908,10 @@ the same way regardless of which one answered:
   stereo modes (auto `-fa`, P25 Phase 2, X2-TDMA) are handled the same
   way; the single-channel modes (P25 Phase 1, NXDN, dPMR, D-STAR, YSF,
   EDACS/ProVoice) already emit mono and are relayed unchanged.
-- **`dsd-server-dsdcc`**: **8000 Hz mono** natively, one frame per decoded
-  voice burst (typically tag + 320 bytes = 20 ms). It likewise follows one
-  slot's voice, so two concurrent DMR calls don't interleave into one
-  garbled stream; single-slot and non-TDMA audio is never withheld.
 
-In both cases, when both TDMA slots carry voice at once only the followed
-slot is streamed — correlate with `event` frames (their `slot` field) if
-you need to know which slot the audio belongs to.
+When both TDMA slots carry voice at once only the followed slot is
+streamed — correlate with `event` frames (their `slot` field) if you need
+to know which slot the audio belongs to.
 
 There is no end-of-audio marker; audio frames simply stop when the
 transmission ends or the pipeline is stopped.
@@ -1105,7 +973,7 @@ over HTTP and the connection closed:
 | `GET /net/keys/remove?fam=&net=&kid=` | remove that key; returns `{"ok":true\|false}` |
 | `GET /net/keys/list?fam=&net=` | `text/csv` attachment — the network's keys as a **dsd-fme hex key list** (`-K`): a header row then `keyid,key[,key…]` (a key over 64 bits split into 64-bit columns). This is the one response that carries key **values**, for feeding the operator's own decoder |
 | `GET /net/keys/reload` | restart every running decoder so it re-reads the keyring now (keys are handed to the server's own dsd-fme as a `-K` list at stream start, so an edit otherwise waits for the next start). Causes a brief audio gap per stream; the decode client's audio port is kept. Returns `{"ok":true,"restarted":N}` |
-| `POST /net/bp/set` | body `{"net","key"[,"fam"]}` — set a **DMR Basic Privacy** key *number* (`key` decimal 1–255) for a network (`fam` defaults to `dmr`); `400` if out of range. BP has no key id, so it is kept apart from the keyring and applied with dsd-fme's `-b` (DSDcc's BP key), matched to the network's frequency at stream start. The number is not secret and appears in `/net.json` `bp` |
+| `POST /net/bp/set` | body `{"net","key"[,"fam"]}` — set a **DMR Basic Privacy** key *number* (`key` decimal 1–255) for a network (`fam` defaults to `dmr`); `400` if out of range. BP has no key id, so it is kept apart from the keyring and applied with dsd-fme's `-b`, matched to the network's frequency at stream start. The number is not secret and appears in `/net.json` `bp` |
 | `GET /net/bp/remove?net=[&fam=]` | remove that network's BP key; `{"ok":true\|false}` |
 | `GET /net/export.json` | `application/json` attachment `net_export_<UTC>.json` — the explorer export (below) |
 | `GET /net/export.graphml` | `application/graphml+xml` attachment — the association graph for graph tools |
@@ -1262,13 +1130,13 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
   passed as a dsd-fme `-K` key list, so a call whose announced key id matches a
   stored key is decoded in the clear (keys added later apply when the stream
   next starts; `DSD_NET_NO_APPLY_KEYS=1` disables this and keeps them for
-  download only; the DSDcc backend takes no key list). They can also be
+  download only). They can also be
   downloaded as a dsd-fme key list (`/net/keys/list`) for a decoder the
   operator runs separately. Key values are never put in `/net.json` or an
   export.
 - `bp` is the DMR Basic Privacy key *numbers* set per network
   (`{"dmr": {"cc:1@440425000": 7}}`) — set via `/net/bp/set`, applied to the
-  server's own decoder by frequency with dsd-fme's `-b` (and the DSDcc BP key).
+  server's own decoder by frequency with dsd-fme's `-b`.
   BP numbers select well-known keys and are not secret, so unlike the keyring
   they do appear here.
 - `clients` is how many clients are connected (any session, decoding or not);
@@ -1413,7 +1281,7 @@ same merge, `src/assoc_merge.hpp`):
 
 ## Testing a client against a fake server
 
-A client project does **not** need the real server (Boost/DSDcc/dsd-fme/
+A client project does **not** need the real server (Boost/dsd-fme/
 real IQ) to unit-test its code against this protocol. `tools/fake_dsd_server.hpp`
 is a single, dependency-free (C++17 + POSIX sockets + `std::thread`) header
 that speaks the exact wire protocol above but does no DSP. Drop it into a

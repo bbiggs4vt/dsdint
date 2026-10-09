@@ -3,9 +3,8 @@
 # Produces a runtime image containing the server variants plus the real
 # decoders they spawn, so any backend runs from the same image:
 #
-#   dsd-server          subprocess backend (spawns the bundled dsd-fme per
-#                       session; the image's default command)
-#   dsd-server-dsdcc    in-process DSDcc backend (no subprocess)
+#   dsd-server          spawns the bundled dsd-fme per session; the image's
+#                       default command
 #
 # TETRA is NOT a separate executable: every variant decodes it at run time from
 # the client's "protocol" hint — "tetra" (via the bundled osmo tetra-rx) or
@@ -24,11 +23,11 @@
 # built from upstream source because Debian's 1.3.0 package lacks the --json
 # output and FLEX_NEXT decoder the server needs).
 #
-# The DSP dependencies that Debian doesn't package — mbelib, DSDcc, dsd-fme,
-# osmo tetra-rx, tetra-kit and multimon-ng — are built from source, pinned to exact commits
-# (the DSD ones to the commits this project's backends were verified against —
-# see the notes in src/dsd_process.cpp and src/dsdcc_decoder.cpp; bump those
-# pins only in step with re-running the real-binary tests).
+# The DSP dependencies that Debian doesn't package — mbelib, dsd-fme,
+# osmo tetra-rx, tetra-kit and multimon-ng — are built from source, pinned to
+# exact commits (dsd-fme to the commit this project's backend was verified
+# against — see the notes in src/dsd_process.cpp; bump that pin only in step
+# with re-running the real-binary tests).
 #
 # Build:            docker build -t dsd-server .
 # Build + run the
@@ -37,7 +36,7 @@
 #                   and a real DMR capture; the build FAILS if any test
 #                   fails, so this doubles as CI)
 # Run:              docker run --rm -p 22600:22600 dsd-server
-#                   docker run --rm -p 22600:22600 dsd-server dsd-server-dsdcc 0.0.0.0 22600 4
+#                   docker run --rm -p 22600:22600 dsd-server dsd-server 0.0.0.0 22600 4
 # Capacity test:    docker build --target loadtest -t dsd-server-loadtest .
 #                   docker run --rm dsd-server-loadtest
 #                   (measures N concurrent realtime streams ON THIS
@@ -67,7 +66,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         rapidjson-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# mbelib — AMBE vocoder, needed by both DSDcc and dsd-fme.
+# mbelib — AMBE vocoder, needed by dsd-fme.
 ARG MBELIB_COMMIT=9a04ed5c78176a9965f3d43f7aa1b1f5330e771f
 RUN git clone https://github.com/szechyjs/mbelib /opt/src/mbelib \
     && git -C /opt/src/mbelib checkout ${MBELIB_COMMIT} \
@@ -76,17 +75,12 @@ RUN git clone https://github.com/szechyjs/mbelib /opt/src/mbelib \
     && cmake --install /opt/src/mbelib/build \
     && ldconfig
 
-# DSDcc — the in-process decoder backend. Its source tree also carries
-# the real DMR capture (samples/dmr_it_8.dis) that arms the test stage.
-ARG DSDCC_COMMIT=f27b32d2df131ae3a376fe72d3fb880ae1f9ede1
-RUN git clone https://github.com/f4exb/dsdcc /opt/src/dsdcc \
-    && git -C /opt/src/dsdcc checkout ${DSDCC_COMMIT} \
-    && cmake -S /opt/src/dsdcc -B /opt/src/dsdcc/build -DCMAKE_BUILD_TYPE=Release -DUSE_MBELIB=ON \
-    && cmake --build /opt/src/dsdcc/build -j"$(nproc)" \
-    && cmake --install /opt/src/dsdcc/build \
-    && ldconfig
+# The real DMR capture (samples/dmr_it_8.dis) that arms the real-fme test
+# stage ships in the DSDcc source tree. Shallow-clone it for that one sample
+# only -- the DSDcc decoder backend itself is no longer built.
+RUN git clone --depth 1 https://github.com/f4exb/dsdcc /opt/src/dsd-samples
 
-# dsd-fme — the subprocess backend's decoder binary.
+# dsd-fme — the decoder binary the server spawns per session.
 ARG DSDFME_COMMIT=198f0eacb5ef3873fab23186640c90789152894c
 RUN git clone https://github.com/lwvmobile/dsd-fme /opt/src/dsd-fme \
     && git -C /opt/src/dsd-fme checkout ${DSDFME_COMMIT} \
@@ -130,8 +124,6 @@ RUN git clone https://github.com/EliasOenal/multimon-ng /opt/src/multimon-ng \
 COPY CMakeLists.txt /opt/dsd-server/
 COPY src /opt/dsd-server/src
 COPY tests /opt/dsd-server/tests
-# tools/ carries nxdn_make_sample.cpp, which the NXDN DSDcc test builds to
-# generate its input sample (see CMakeLists). Stdlib-only, no build cost.
 COPY tools /opt/dsd-server/tools
 # Real off-air paging captures (X-Midas BLUE) used by test_session_pager.
 COPY samples /opt/dsd-server/samples
@@ -153,19 +145,18 @@ RUN CODEC_ARGS=""; \
     cmake -S /opt/dsd-server -B /opt/dsd-server/build \
         -DCMAKE_BUILD_TYPE=Release \
         -DDSD_FME_BIN=/usr/local/bin/dsd-fme \
-        -DDSDCC_SAMPLES_DIR=/opt/src/dsdcc/samples \
+        -DDSD_SAMPLES_DIR=/opt/src/dsd-samples/samples \
         -DMULTIMON_NG_BIN=/usr/local/bin/multimon-ng \
         -DPAGER_FIXTURES_DIR=/opt/dsd-server/build/pager_fixtures \
         $CODEC_ARGS \
     && cmake --build /opt/dsd-server/build -j"$(nproc)" --target \
-        dsd-server dsd-server-dsdcc
+        dsd-server
 
 # ----------------------------------------------------------------- test
 # Optional gate: `docker build --target test .` builds every test binary
 # and runs the full ctest suite inside the image — including the
-# real-capture tests against the real dsd-fme and DSDcc just built
-# above. Not part of the default build path, so plain `docker build .`
-# stays fast.
+# real-capture tests against the real dsd-fme built above. Not part of the
+# default build path, so plain `docker build .` stays fast.
 #
 # On slow hardware, slow the full-stack tests' IQ feed down to match:
 # the two session tests stream the capture at ~8.5x realtime by default
@@ -190,8 +181,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends sox \
     && /opt/dsd-server/tools/make_pager_fixtures.sh /opt/src/multimon-ng /opt/dsd-server/build/pager_fixtures
 RUN cmake --build /opt/dsd-server/build -j"$(nproc)" --target \
         test-fake-dsd-fme test_session test_session_concurrency \
-        test_dsdcc_decoder test_session_dsdcc test_nxdn_dsdcc test_dpmr_dsdcc \
-        test_dstar_ysf_dsdcc test_bp_key_dsdcc \
         test_dsd_process test_session_real_fme \
         test_dsd_fme_parse \
         test_fake_dsd_server fake_dsd_server \
@@ -230,7 +219,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --system --user-group --no-create-home dsd
 
 COPY --from=build /usr/local/lib/libmbe.so* /usr/local/lib/
-COPY --from=build /usr/local/lib/libdsdcc.so* /usr/local/lib/
 COPY --from=build /usr/local/bin/dsd-fme /usr/local/bin/
 # TETRA: the two external decoders and libosmocore (tetra-rx's only non-system
 # dependency; libtalloc/libsctp/libmnl come from apt above). The soname is
@@ -243,7 +231,6 @@ COPY --from=build /usr/local/bin/decoder /usr/local/bin/
 # coreutils' stdbuf (in the base image) to line-buffer its JSON output.
 COPY --from=build /usr/local/bin/multimon-ng /usr/local/bin/
 COPY --from=build /opt/dsd-server/build/dsd-server /usr/local/bin/
-COPY --from=build /opt/dsd-server/build/dsd-server-dsdcc /usr/local/bin/
 RUN ldconfig
 
 # Make IQ capture work out of the box. The runtime sets no WORKDIR, so the
@@ -262,7 +249,7 @@ USER dsd
 EXPOSE 22600
 
 # args after the image name replace CMD: address, port, io threads —
-# or name a different binary entirely (dsd-server-dsdcc ...).
+# (e.g. a different address/port).
 ENTRYPOINT ["tini", "--"]
 CMD ["dsd-server", "0.0.0.0", "22600", "4"]
 
@@ -276,7 +263,7 @@ CMD ["dsd-server", "0.0.0.0", "22600", "4"]
 #
 #   docker build --target loadtest -t dsd-server-loadtest .
 #   docker run --rm dsd-server-loadtest
-#     -> 8 realtime streams against the DSDcc backend, prints measured
+#     -> 8 realtime streams, prints measured
 #        CPU-ms per stream-second and a streams-per-box estimate for
 #        the machine the container is running on
 #
@@ -285,13 +272,13 @@ CMD ["dsd-server", "0.0.0.0", "22600", "4"]
 #   docker run --rm dsd-server-loadtest \
 #       /usr/local/bin/dsd-server /opt/dsd-server/testdata/dmr_32k.tmp 8
 #   docker run --rm -v $PWD/mycapture.tmp:/data/c.tmp dsd-server-loadtest \
-#       /usr/local/bin/dsd-server-dsdcc /data/c.tmp 16
+#       /usr/local/bin/dsd-server /data/c.tmp 16
 #
 # To measure at a different IQ sample rate, pass the baked-in raw
 # discriminator capture plus --rate; test IQ at that rate is generated
 # inside the container before the run:
 #
-#   docker run --rm dsd-server-loadtest /usr/local/bin/dsd-server-dsdcc \
+#   docker run --rm dsd-server-loadtest /usr/local/bin/dsd-server \
 #       /opt/dsd-server/testdata/dmr_it_8.dis 8 --rate 64000
 #
 # Run it on the DEPLOYMENT machine -- the numbers describe wherever the
@@ -303,13 +290,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 \
     && rm -rf /var/lib/apt/lists/*
 COPY tools/ /opt/dsd-server/tools/
-COPY --from=build /opt/src/dsdcc/samples/dmr_it_8.dis /opt/dsd-server/testdata/
+COPY --from=build /opt/src/dsd-samples/samples/dmr_it_8.dis /opt/dsd-server/testdata/
 RUN python3 /opt/dsd-server/tools/make_test_bluefile.py \
         /opt/dsd-server/testdata/dmr_it_8.dis \
         /opt/dsd-server/testdata/dmr_32k.tmp --rate 32000
 USER dsd
 ENTRYPOINT ["tini", "--", "python3", "/opt/dsd-server/tools/stream_load_test.py"]
-CMD ["/usr/local/bin/dsd-server-dsdcc", "/opt/dsd-server/testdata/dmr_32k.tmp", "8"]
+CMD ["/usr/local/bin/dsd-server", "/opt/dsd-server/testdata/dmr_32k.tmp", "8"]
 
 # -------------------------------------------------------------- default
 # Docker builds the LAST stage when no --target is given, and loadtest

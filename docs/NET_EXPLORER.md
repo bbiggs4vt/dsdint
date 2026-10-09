@@ -366,8 +366,7 @@ tablet or phone the details are a drawer: **Close** or Esc.
     running take effect the next time that stream starts; to apply them to the
     streams running now, use **↻ Apply to live streams** in the Keys tab (it
     restarts each running decoder, so its audio glitches briefly — the decode
-    client stays on the same audio port). The in-process DSDcc backend can
-    only use DMR Basic Privacy keys, so there the key list is not applied. To
+    client stays on the same audio port). To
     decrypt in a
     dsd-fme you run yourself instead, **⬇ Download key list** gives the
     network's keys as a dsd-fme hex key list (`keyid,key`) to point your own
@@ -402,14 +401,13 @@ tablet or phone the details are a drawer: **Close** or Esc.
     and it carries **no key id**. The DMR Keys tab has a **Basic Privacy**
     section — **+ Set a Basic Privacy key**, pick the **network** and enter
     the **number** — stored per network and applied to the server's own
-    decoder with dsd-fme's `-b` (and the in-process DSDcc backend's BP key),
-    matched to the network's **frequency** when a stream starts. It works on
-    **both** backends. Because BP has no key id, a decoder applies **one** BP
-    key per channel, so set it only on channels you know use BP: on the DSDcc
-    backend a BP key is applied to every voice frame, which garbles a clear
-    channel. The number isn't secret (the keys themselves are well known). As
-    with the key list, a change takes effect when a stream next starts, or now
-    with **↻ Apply to live streams**.
+    decoder with dsd-fme's `-b`, matched to the network's **frequency** when a
+    stream starts. Because BP has no key id, a decoder applies **one** BP key
+    per channel; dsd-fme applies it only to a call flagged encrypted that has
+    no key id, so clear and key-id (EP/AES) calls are unaffected. Set it on
+    channels you know use BP. The number isn't secret (the keys themselves
+    are well known). As with the key list, a change takes effect when a stream
+    next starts, or now with **↻ Apply to live streams**.
 
 ## 9. Searching, filtering and sorting
 
@@ -670,7 +668,7 @@ covers the differences.
 ### A.1 Inputs
 
 Each decode session is a **stream**: one receiver channel decoding one
-protocol. The decoder (dsd-fme, DSDcc or the TETRA decoder) prints lines for
+protocol. The decoder (dsd-fme or the TETRA decoder) prints lines for
 sync bursts, call headers, voice frames, talker aliases, SMS, and system
 broadcasts. dsd-server parses each line into an event — its kind (sync,
 call, voice, data, message …), slot, source id, target id, alias, text, and

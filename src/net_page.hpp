@@ -1370,7 +1370,7 @@ function bpSection(cont) {
     cont.appendChild(bar);
   }
   if (!S.file && S.bpAdd) cont.appendChild(bpAddForm());
-  cont.appendChild(h('div', { class: 'note', style: 'margin-top:0', text: 'Basic Privacy is a key number (1–255) that selects a well-known key — not a hex key, and it carries no key id, so a decoder applies one BP key per channel. It is applied to this network’s frequency on both backends. Set it only on channels you know use BP (on the in-process DSDcc backend a BP key is applied to every voice frame). Takes effect when a stream next starts — use “Apply to live streams” above to apply now.' }));
+  cont.appendChild(h('div', { class: 'note', style: 'margin-top:0', text: 'Basic Privacy is a key number (1–255) that selects a well-known key — not a hex key, and it carries no key id, so a decoder applies one BP key per channel (dsd-fme applies it only to a call flagged encrypted that has no key id). It is applied to this network’s frequency. Set it only on channels you know use BP. Takes effect when a stream next starts — use “Apply to live streams” above to apply now.' }));
   if (!nets.length) { cont.appendChild(h('div', { class: 'note', text: 'No Basic Privacy key set on DMR.' })); return; }
   var ul = h('ul', { class: 'lst keylst' });
   nets.sort().forEach(function (net) {

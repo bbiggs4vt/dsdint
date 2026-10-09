@@ -410,204 +410,6 @@ target_link_libraries(test_afc PRIVATE m)
 target_compile_options(test_afc PRIVATE -Wall -Wextra)
 
 
-# --- DSDcc variant, for A/B testing the in-process decoder backend ---
-# against the subprocess (dsd-fme/classic DSD) backend. Skipped with a
-# message (not an error) if DSDcc isn't found, so the default build still
-# works without it.
-#
-# STATUS: verified against DSDcc 1.9.0 built from source with mbelib.
-# dsdcc_decoder.cpp's API calls were checked against the real headers
-# and dsdccx's own integration loop, and test_dsdcc_decoder (below)
-# runs the wrapper on DSDcc's bundled real DMR capture and asserts the
-# decoded audio and talkgroup/source metadata match what upstream's
-# dsdccx extracts from the same file. The earlier LOW CONFIDENCE
-# warning that used to live here (the file was originally written
-# without access to DSDcc) no longer applies.
-option(DSD_BUILD_DSDCC_VARIANT "Also build dsd-server-dsdcc (in-process DSDcc backend) for testing" ON)
-
-if(DSD_BUILD_DSDCC_VARIANT)
-  find_path(DSDCC_INCLUDE_DIR NAMES dsdcc/dsd_decoder.h dsd_decoder.h)
-  find_library(DSDCC_LIBRARY NAMES dsdcc)
-  find_library(MBE_LIBRARY NAMES mbe) # DSDcc needs mbelib for voice synthesis
-
-  if(DSDCC_INCLUDE_DIR AND DSDCC_LIBRARY)
-    message(STATUS "DSDcc found (${DSDCC_LIBRARY}) - building dsd-server-dsdcc")
-
-    add_executable(dsd-server-dsdcc
-      src/main.cpp
-      src/session.cpp
-      src/fm_demod.cpp       # DSDcc variant uses the same hand-rolled demod;
-      src/dsdcc_decoder.cpp  # this isolates the DSD backend as the one
-      ${RUNTIME_CHAIN_SOURCES} # variable changed from the dsd-fme baseline.
-    )
-    target_include_directories(dsd-server-dsdcc PRIVATE src ${Boost_INCLUDE_DIRS} ${DSDCC_INCLUDE_DIR})
-    target_link_libraries(dsd-server-dsdcc PRIVATE Boost::system Threads::Threads ${DSDCC_LIBRARY} ZLIB::ZLIB m)
-    if(MBE_LIBRARY)
-      target_link_libraries(dsd-server-dsdcc PRIVATE ${MBE_LIBRARY})
-    else()
-      message(STATUS "mbelib not found - dsd-server-dsdcc will build but "
-                      "DSDcc needs it for voice synthesis; install it "
-                      "before expecting decoded audio out of this variant.")
-    endif()
-    target_compile_definitions(dsd-server-dsdcc PRIVATE DSD_USE_DSDCC_BACKEND)
-    target_compile_options(dsd-server-dsdcc PRIVATE -Wall -Wextra)
-    dsd_enable_tetra_codec(dsd-server-dsdcc)
-
-    # Decoder-level test against a real DMR capture -- see
-    # test_dsdcc_decoder.cpp for what it asserts and the ground truth.
-    # (DSDCC_SAMPLES_DIR is declared near the top of this file, next to
-    # DSD_FME_BIN, since the dsd_process test uses the same capture.)
-
-    add_executable(test_dsdcc_decoder EXCLUDE_FROM_ALL
-      src/dsdcc_decoder.cpp
-      tests/test_dsdcc_decoder.cpp
-    )
-    target_include_directories(test_dsdcc_decoder PRIVATE src ${DSDCC_INCLUDE_DIR})
-    target_link_libraries(test_dsdcc_decoder PRIVATE ${DSDCC_LIBRARY})
-    if(MBE_LIBRARY)
-      target_link_libraries(test_dsdcc_decoder PRIVATE ${MBE_LIBRARY})
-    endif()
-    target_compile_options(test_dsdcc_decoder PRIVATE -Wall -Wextra)
-
-    if(DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
-      add_test(NAME dsdcc_decoder_test
-               COMMAND test_dsdcc_decoder "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
-      set_tests_properties(dsdcc_decoder_test PROPERTIES TIMEOUT 120)
-    endif()
-
-    # NXDN metadata path test. There's no off-air NXDN capture in the
-    # tree (and DSDcc can't decode the real one anyway), so generate a
-    # known-good NXDN48 sample with the repo's synthesizer at build time
-    # and feed it through DsdccDecoder in nxdn48 mode. No external inputs
-    # -- always runs.
-    add_executable(nxdn_make_sample EXCLUDE_FROM_ALL tools/nxdn_make_sample.cpp)
-    add_custom_command(
-      OUTPUT ${CMAKE_BINARY_DIR}/nxdn48_test.dis
-      COMMAND nxdn_make_sample --ran 9 --src 100 --dst 200 --frames 40
-              --out ${CMAKE_BINARY_DIR}/nxdn48_test.dis
-      DEPENDS nxdn_make_sample
-      COMMENT "Generating NXDN48 test sample")
-    add_custom_target(nxdn_test_sample DEPENDS ${CMAKE_BINARY_DIR}/nxdn48_test.dis)
-
-    add_executable(test_nxdn_dsdcc EXCLUDE_FROM_ALL
-      src/dsdcc_decoder.cpp
-      tests/test_nxdn_dsdcc.cpp
-    )
-    target_include_directories(test_nxdn_dsdcc PRIVATE src ${DSDCC_INCLUDE_DIR})
-    target_link_libraries(test_nxdn_dsdcc PRIVATE ${DSDCC_LIBRARY} Threads::Threads)
-    if(MBE_LIBRARY)
-      target_link_libraries(test_nxdn_dsdcc PRIVATE ${MBE_LIBRARY})
-    endif()
-    target_compile_options(test_nxdn_dsdcc PRIVATE -Wall -Wextra)
-    add_dependencies(test_nxdn_dsdcc nxdn_test_sample)
-    add_test(NAME nxdn_dsdcc_test
-             COMMAND test_nxdn_dsdcc ${CMAKE_BINARY_DIR}/nxdn48_test.dis)
-    set_tests_properties(nxdn_dsdcc_test PROPERTIES TIMEOUT 60)
-
-    # dPMR metadata path, against DSDcc's bundled real dPMR capture.
-    add_executable(test_dpmr_dsdcc EXCLUDE_FROM_ALL
-      src/dsdcc_decoder.cpp
-      tests/test_dpmr_dsdcc.cpp
-    )
-    target_include_directories(test_dpmr_dsdcc PRIVATE src ${DSDCC_INCLUDE_DIR})
-    target_link_libraries(test_dpmr_dsdcc PRIVATE ${DSDCC_LIBRARY} Threads::Threads)
-    if(MBE_LIBRARY)
-      target_link_libraries(test_dpmr_dsdcc PRIVATE ${MBE_LIBRARY})
-    endif()
-    target_compile_options(test_dpmr_dsdcc PRIVATE -Wall -Wextra)
-    if(DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dpmr.dis")
-      add_test(NAME dpmr_dsdcc_test
-               COMMAND test_dpmr_dsdcc "${DSDCC_SAMPLES_DIR}/dpmr.dis")
-      set_tests_properties(dpmr_dsdcc_test PROPERTIES TIMEOUT 60)
-    endif()
-
-    # DSDcc D-STAR + YSF metadata paths, against DSDcc's bundled real
-    # captures (dstar_f1zil_1.dis, ysf_f5zoo.dis). These are callsign-based
-    # amateur protocols, so the test asserts the real decoded callsigns
-    # (F1NSR/CQCQCQ/F1ZIL B for D-STAR; F1SER/F5ZOO-R1 for YSF).
-    add_executable(test_dstar_ysf_dsdcc EXCLUDE_FROM_ALL
-      src/dsdcc_decoder.cpp
-      tests/test_dstar_ysf_dsdcc.cpp
-    )
-    target_include_directories(test_dstar_ysf_dsdcc PRIVATE src ${DSDCC_INCLUDE_DIR})
-    target_link_libraries(test_dstar_ysf_dsdcc PRIVATE ${DSDCC_LIBRARY} Threads::Threads)
-    if(MBE_LIBRARY)
-      target_link_libraries(test_dstar_ysf_dsdcc PRIVATE ${MBE_LIBRARY})
-    endif()
-    target_compile_options(test_dstar_ysf_dsdcc PRIVATE -Wall -Wextra)
-    if(DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dstar_f1zil_1.dis"
-                        AND EXISTS "${DSDCC_SAMPLES_DIR}/ysf_f5zoo.dis")
-      add_test(NAME dstar_ysf_dsdcc_test
-               COMMAND test_dstar_ysf_dsdcc
-                       "${DSDCC_SAMPLES_DIR}/dstar_f1zil_1.dis"
-                       "${DSDCC_SAMPLES_DIR}/ysf_f5zoo.dis")
-      set_tests_properties(dstar_ysf_dsdcc_test PROPERTIES TIMEOUT 60)
-    endif()
-
-    # DSDcc DMR Basic Privacy key plumbing, against the bundled
-    # (unencrypted) DMR capture -- proves the key reaches the voice path.
-    add_executable(test_bp_key_dsdcc EXCLUDE_FROM_ALL
-      src/dsdcc_decoder.cpp
-      tests/test_bp_key_dsdcc.cpp
-    )
-    target_include_directories(test_bp_key_dsdcc PRIVATE src ${DSDCC_INCLUDE_DIR})
-    target_link_libraries(test_bp_key_dsdcc PRIVATE ${DSDCC_LIBRARY} Threads::Threads)
-    if(MBE_LIBRARY)
-      target_link_libraries(test_bp_key_dsdcc PRIVATE ${MBE_LIBRARY})
-    endif()
-    target_compile_options(test_bp_key_dsdcc PRIVATE -Wall -Wextra)
-    if(DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
-      add_test(NAME bp_key_dsdcc_test
-               COMMAND test_bp_key_dsdcc "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
-      set_tests_properties(bp_key_dsdcc_test PROPERTIES TIMEOUT 60)
-    endif()
-
-    # Full-stack test of the DSDcc server build: session.cpp compiled
-    # with DSD_USE_DSDCC_BACKEND (the dsd-server-dsdcc configuration),
-    # driven over a real WebSocket with FM-modulated IQ of the same DMR
-    # capture. See test_session_dsdcc.cpp. Needs Boost (like
-    # test_session) on top of DSDcc.
-    add_executable(test_session_dsdcc EXCLUDE_FROM_ALL
-      src/session.cpp
-      src/fm_demod.cpp
-      src/dsdcc_decoder.cpp
-      ${RUNTIME_CHAIN_SOURCES}
-      tests/test_session_dsdcc.cpp
-    )
-    target_include_directories(test_session_dsdcc PRIVATE src ${Boost_INCLUDE_DIRS} ${DSDCC_INCLUDE_DIR})
-    target_link_libraries(test_session_dsdcc PRIVATE Boost::system Threads::Threads ${DSDCC_LIBRARY} ZLIB::ZLIB m)
-    if(MBE_LIBRARY)
-      target_link_libraries(test_session_dsdcc PRIVATE ${MBE_LIBRARY})
-    endif()
-    target_compile_definitions(test_session_dsdcc PRIVATE DSD_USE_DSDCC_BACKEND)
-    target_compile_options(test_session_dsdcc PRIVATE -Wall -Wextra)
-
-    if(DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
-      add_test(NAME session_dsdcc_test
-               COMMAND test_session_dsdcc "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
-      # Streaming is deliberately paced (~10 ms per 85 ms block), so the
-      # send phase alone takes a few seconds; leave generous headroom.
-      set_tests_properties(session_dsdcc_test PROPERTIES TIMEOUT 180)
-    endif()
-
-    # Give the AFC test its real-capture rescue case (see test_afc.cpp).
-    target_sources(test_afc PRIVATE src/dsdcc_decoder.cpp)
-    target_include_directories(test_afc PRIVATE ${DSDCC_INCLUDE_DIR})
-    target_link_libraries(test_afc PRIVATE ${DSDCC_LIBRARY})
-    if(MBE_LIBRARY)
-      target_link_libraries(test_afc PRIVATE ${MBE_LIBRARY})
-    endif()
-    target_compile_definitions(test_afc PRIVATE DSD_AFC_TEST_HAVE_DSDCC)
-    if(DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
-      set(AFC_TEST_CAPTURE "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
-    endif()
-  else()
-    message(STATUS "DSDcc not found - skipping dsd-server-dsdcc. Build "
-                    "from https://github.com/f4exb/dsdcc to enable it, "
-                    "then re-run cmake.")
-  endif()
-endif()
-
 # TETRA is no longer a separate build-time variant: the single dsd-server
 # binary carries the π/4-DQPSK + TETRA-subprocess chain alongside the FM/DSD
 # chain and selects it at run time from the client's "protocol" hint ("tetra"
@@ -667,20 +469,18 @@ set_tests_properties(session_integration_test PROPERTIES
 
 # --- Verification test against a REAL dsd-fme binary ---
 # DsdProcess spawning actual dsd-fme (lwvmobile/dsd-fme, built from
-# source) and decoding the same real DMR capture the DSDcc tests use --
-# this is what verified build_argv's command line and classify_line's
-# regexes against reality (see the DSD-FME VERIFICATION NOTES in
-# dsd_process.cpp). Needs no Boost. To arm the ctest case, point
-# DSD_FME_BIN at a built dsd-fme and DSDCC_SAMPLES_DIR (declared below
-# with the DSDcc targets) at a DSDcc source checkout's samples dir;
+# source) and decoding a real DMR capture -- this is what verified
+# build_argv's command line and classify_line's regexes against reality
+# (see the DSD-FME VERIFICATION NOTES in dsd_process.cpp). Needs no Boost.
+# To arm the ctest case, point DSD_FME_BIN at a built dsd-fme and
+# DSD_SAMPLES_DIR at a directory holding a real DMR capture (dmr_it_8.dis);
 # without them the binary builds and prints SKIPPED when run bare.
 set(DSD_FME_BIN "" CACHE FILEPATH
     "Path to a real dsd-fme binary to enable test_dsd_process's ctest case")
-# The real-capture tests (this one and the DSDcc ones below) all use
-# DSDcc's bundled DMR capture; it ships in the DSDcc SOURCE tree
-# (samples/dmr_it_8.dis), not in its installed artifacts.
-set(DSDCC_SAMPLES_DIR "" CACHE PATH
-    "Directory containing DSDcc's sample captures (dmr_it_8.dis) to enable the real-capture ctest cases")
+# The real-capture tests use a real DMR capture, dmr_it_8.dis (e.g. from a
+# DSDcc source checkout's samples/ dir); point DSD_SAMPLES_DIR at it.
+set(DSD_SAMPLES_DIR "" CACHE PATH
+    "Directory containing a sample capture (dmr_it_8.dis) to enable the real-capture ctest cases")
 
 add_executable(test_dsd_process EXCLUDE_FROM_ALL
   src/dsd_process.cpp
@@ -690,9 +490,9 @@ target_include_directories(test_dsd_process PRIVATE src)
 target_link_libraries(test_dsd_process PRIVATE Threads::Threads)
 target_compile_options(test_dsd_process PRIVATE -Wall -Wextra)
 
-if(DSD_FME_BIN AND EXISTS "${DSD_FME_BIN}" AND DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
+if(DSD_FME_BIN AND EXISTS "${DSD_FME_BIN}" AND DSD_SAMPLES_DIR AND EXISTS "${DSD_SAMPLES_DIR}/dmr_it_8.dis")
   add_test(NAME dsd_process_test
-           COMMAND test_dsd_process "${DSD_FME_BIN}" "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
+           COMMAND test_dsd_process "${DSD_FME_BIN}" "${DSD_SAMPLES_DIR}/dmr_it_8.dis")
   # Paced streaming (~10 ms per 85 ms block) makes the send phase a few
   # seconds on its own.
   set_tests_properties(dsd_process_test PROPERTIES TIMEOUT 120)
@@ -729,10 +529,10 @@ target_include_directories(test_session_real_fme PRIVATE src ${Boost_INCLUDE_DIR
 target_link_libraries(test_session_real_fme PRIVATE Boost::system Threads::Threads ZLIB::ZLIB m)
 target_compile_options(test_session_real_fme PRIVATE -Wall -Wextra)
 
-if(DSD_FME_BIN AND EXISTS "${DSD_FME_BIN}" AND DSDCC_SAMPLES_DIR AND EXISTS "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
+if(DSD_FME_BIN AND EXISTS "${DSD_FME_BIN}" AND DSD_SAMPLES_DIR AND EXISTS "${DSD_SAMPLES_DIR}/dmr_it_8.dis")
   get_filename_component(DSD_FME_DIR "${DSD_FME_BIN}" DIRECTORY)
   add_test(NAME session_real_fme_test
-           COMMAND test_session_real_fme "${DSD_FME_DIR}" "${DSDCC_SAMPLES_DIR}/dmr_it_8.dis")
+           COMMAND test_session_real_fme "${DSD_FME_DIR}" "${DSD_SAMPLES_DIR}/dmr_it_8.dis")
   set_tests_properties(session_real_fme_test PROPERTIES TIMEOUT 180)
 endif()
 

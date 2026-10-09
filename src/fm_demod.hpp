@@ -73,7 +73,7 @@ struct FmDemodConfig {
     // has a parabolic (rising-with-frequency) spectrum, so most of it sits
     // ABOVE the symbol bandwidth; cutting it can recover a dB or two of SNR
     // into DSD's slicer near threshold. Symbol timing is deliberately left
-    // to the downstream decoder (dsd-fme/DSDcc do their own), so this only
+    // to the downstream decoder (dsd-fme does its own), so this only
     // conditions the stream -- the output rate is unchanged.
     //
     // Defaults OFF: it must be A/B tested on real captures before being

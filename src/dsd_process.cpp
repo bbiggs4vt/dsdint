@@ -457,7 +457,7 @@ void DsdProcess::udp_reader_loop() {
     // send MONO packets; see DsdProcessConfig::stereo_audio.)
     //
     // With mono_follow_slot (the default) we collapse that to one mono
-    // stream so on_audio matches the DSDcc backend: pick the channel for
+    // stream for on_audio: pick the channel for
     // whichever slot is currently active (published by the stdout reader),
     // or an (L+R) downmix while the active slot isn't known yet. Otherwise
     // the raw stereo interleave is relayed unchanged.
@@ -515,7 +515,7 @@ std::string upper_hex(std::string s) {
 // Tidy a D-STAR/YSF callsign or text field: collapse internal whitespace
 // runs to a single space, trim the ends, drop non-printable bytes, and
 // treat an all-'*' value (YSF's "unaddressed / group CQ" destination) as
-// empty. Mirrors the DSDcc backend's tidy_cs so both backends present
+// empty. Presents
 // callsigns the same way (e.g. "F1ZIL  B" -> "F1ZIL B").
 std::string tidy_callsign(const std::string& in) {
     std::string out;
@@ -810,8 +810,7 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     if (std::regex_search(line, m, slot_bracket_re)) ev.slot = m[1].str();
     else if (std::regex_search(line, m, slot_re) && !std::regex_search(line, other_ts_re)) ev.slot = m[1].str();
     if (std::regex_search(line, m, cc_re)) {
-        // dsd-fme zero-pads ("Color Code=04"); normalize to match the
-        // DSDcc backend's bare decimal so clients see one format.
+        // dsd-fme zero-pads ("Color Code=04"); normalize to bare decimal.
         ev.color_code = strip_leading_zeros(m[1].str());
     }
     if (std::regex_search(line, m, ran_re)) ev.ran = strip_leading_zeros(m[1].str());
@@ -851,7 +850,7 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     if (std::regex_search(line, m, sys_re))     tokens.push_back("system_code=" + m[1].str());
     if (std::regex_search(line, m, loc_re))     tokens.push_back("location_id=" + m[1].str());
     if (std::regex_search(line, m, cat_re))     tokens.push_back("category=" + m[1].str());
-    // DMR trunking (dsd-fme only; DSDcc doesn't decode CSBK payloads).
+    // DMR trunking.
     if (line.find("Connect Plus") != std::string::npos)  tokens.push_back("network_type=con+");
     else if (line.find("Capacity Plus") != std::string::npos) tokens.push_back("network_type=cap+");
     if (std::regex_search(line, m, netid_re))   tokens.push_back("network_id=" + m[1].str());
@@ -945,7 +944,7 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
             if (std::regex_search(line, cm, ysf_srcrid_re)) srcrid = tidy_callsign(cm[1].str());
             if (std::regex_search(line, cm, ysf_dstrid_re)) dstrid = tidy_callsign(cm[1].str());
             // FICH call mode / data type, from dsd-fme's textual markers,
-            // mapped to the same tokens the DSDcc backend emits.
+            // mapped to stable tokens.
             if (line.find("Group/CQ") != std::string::npos)     cs_extra.push_back("call_mode=group_cq");
             else if (line.find("RID Mode") != std::string::npos) cs_extra.push_back("call_mode=radio_id");
             else if (line.find("Private") != std::string::npos)  cs_extra.push_back("call_mode=individual");

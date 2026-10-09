@@ -1,8 +1,7 @@
 // dsd_backend_types.hpp
 //
-// Types shared by every DSD backend (subprocess-based DsdProcess and the
-// in-process DsdccDecoder), so session.cpp can consume events the same
-// way regardless of which backend produced them.
+// Types the DSD backend (the dsd-fme subprocess, DsdProcess) emits, so
+// session.cpp consumes decoder events through one shape.
 
 #pragma once
 
@@ -11,7 +10,7 @@
 namespace dsdsrv {
 
 struct DsdEvent {
-    std::string raw_line;      // subprocess backends: original stdout line. dsdcc: a synthesized description.
+    std::string raw_line;      // the decoder's original stdout line
     std::string kind;          // best-effort classification, e.g. "voice", "sync", "call", "unknown"
     std::string talkgroup;     // parsed TG/dst id if present
     std::string source_id;     // parsed source/radio id if present

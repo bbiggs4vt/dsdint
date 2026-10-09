@@ -38,29 +38,20 @@ where a mode has it; data-only modes like paging just produce events. See
   channel filter, integer decimation, quadrature demod (`atan2` of
   `x[n] * conj(x[n-1])`), linear resample to exactly 48000 Hz, gain
   scaling to 16-bit PCM.
-- `src/dsd_process.{hpp,cpp}` — the original subprocess-based DSD
-  backend: spawns and manages a `dsd-fme` (or classic `dsd`) child
-  process via `fork`/`exec`/pipes, writes PCM to its stdin, reads its
-  stdout event log (regex-classified into structured `DsdEvent`
-  records), and listens on a per-session UDP port for its decoded voice
-  audio.
-- `src/dsdcc_decoder.{hpp,cpp}` — an in-process alternative built on
-  DSDcc (https://github.com/f4exb/dsdcc), a C++ library rather than a
-  subprocess: samples are pushed directly into a `DSDDecoder` object and
-  decoded audio is pulled back out via a getter, with no child process,
-  pipes, or UDP socket involved. Structurally the most different of the
-  backend swaps in this project — see "The DSDcc variant"
-  below. Now verified against DSDcc 1.9.0 with a real DMR capture (it
-  was originally written blind, without access to DSDcc).
-- `src/dsd_backend_selector.hpp` — compile-time switch between the two
-  DSD backends (`-DDSD_USE_DSDCC_BACKEND`), so `session.cpp` stays
-  agnostic to which one it's linked against.
-- `src/dsd_backend_types.hpp` — the `DsdEvent` type shared by both DSD
-  backends, so `session.cpp` handles events identically regardless of
-  which one produced them.
+- `src/dsd_process.{hpp,cpp}` — the DSD backend: spawns and manages a
+  `dsd-fme` (or classic `dsd`) child process via `fork`/`exec`/pipes,
+  writes PCM to its stdin, reads its stdout event log (regex-classified
+  into structured `DsdEvent` records), and listens on a per-session UDP
+  port for its decoded voice audio.
+- `src/dsd_backend_selector.hpp` / `src/dsd_backend_types.hpp` — a thin
+  alias (`ActiveDsdBackend` = `DsdProcess`) and the shared `DsdEvent`
+  type, so `session.cpp` consumes decoder events through one shape. (An
+  in-process DSDcc backend existed earlier for A/B comparison and was
+  removed: it could not decode most of what the explorer relies on — the
+  per-call key list, per-network keys, reliable NXDN/P25, EDACS/ProVoice.)
 - `src/session.{hpp,cpp}` — one `Session` per WebSocket client, wiring
-  the demod backend and DSD backend (whichever ones were compiled in)
-  together, plus the JSON control protocol.
+  the demod backend and the DSD backend together, plus the JSON control
+  protocol.
 - `src/json_util.hpp` — minimal hand-rolled JSON reader/writer (the
   message schema is small and flat; swap for `nlohmann::json` if you grow
   past that).
@@ -112,13 +103,6 @@ end-to-end. To still validate the pieces that matter most:
      Boost.Beast's own multi-threaded server example pattern.
 - **`dsd_process.cpp`** and **`session.cpp`'s use of it** — these are the
   same files described above; no changes beyond what's already noted.
-- **`dsdcc_decoder.cpp`** — originally the least verified file in the
-  project (written from header fragments with placeholder API calls);
-  since then it has been rewritten against DSDcc 1.9.0's real headers
-  and dsdccx's own integration loop, and validated end to end with
-  DSDcc's bundled real DMR capture — see "The DSDcc variant" below for
-  what "validated" means concretely (it's sample-exact against
-  upstream's own decoder output).
 - **`test_session.cpp`** — an integration test for `session.cpp` itself
   (real `Server`, real Beast WebSocket client, exercises the actual wire
   protocol). Like `session.cpp` originally was, this is reviewed but not
@@ -141,16 +125,15 @@ full-stack tests).
 ### Docker (Debian bookworm)
 
 The provided `Dockerfile` builds everything — including the DSP
-dependencies Debian doesn't package (mbelib, DSDcc, dsd-fme, and the two
-TETRA decoders `tetra-rx`/tetra-kit, each pinned to a fixed commit — the
-DSD ones to the commits the backends were verified against) — and produces
-a slim runtime image containing the server variants plus the decoders they
-spawn:
+dependencies Debian doesn't package (mbelib, dsd-fme, and the two TETRA
+decoders `tetra-rx`/tetra-kit, each pinned to a fixed commit — dsd-fme to
+the commit the backend was verified against) — and produces a slim runtime
+image containing the server plus the decoders it spawns:
 
 ```bash
 docker build -t dsd-server .
-docker run --rm -p 22600:22600 dsd-server                     # subprocess backend (default)
-docker run --rm -p 22600:22600 dsd-server dsd-server-dsdcc     0.0.0.0 22600 4  # in-process DSDcc
+docker run --rm -p 22600:22600 dsd-server                     # default
+docker run --rm -p 22600:22600 dsd-server dsd-server 0.0.0.0 22600 4  # custom address/port/threads
 ```
 
 TETRA is not a separate executable — every variant above decodes it from
@@ -160,8 +143,8 @@ ships no ACELP voice codec — patent/GPL, see `TETRA_VOICE.md` — so TETRA
 sessions emit events only.)
 
 `docker build --target test .` additionally runs the entire ctest suite
-(including the real-capture tests against the just-built dsd-fme and
-DSDcc) inside the image and fails the build if anything fails — usable
+(including the real-capture tests against the just-built dsd-fme) inside
+the image and fails the build if anything fails — usable
 as CI. On hardware that can't decode much faster than realtime (e.g. a
 1.2 GHz ARMv7), add `--build-arg DSD_TEST_PACE_MS=60`: the two
 full-stack session tests stream their capture at ~8.5x realtime by
@@ -171,8 +154,8 @@ though the pipeline is fine at realtime.
 
 `docker build --target loadtest -t dsd-server-loadtest .` builds a
 capacity-measurement image; `docker run --rm dsd-server-loadtest` then
-measures 8 concurrent realtime 32 ksps streams against the DSDcc
-backend **on whatever machine the container runs on** and prints the
+measures 8 concurrent realtime 32 ksps streams **on whatever machine the
+container runs on** and prints the
 measured CPU per stream plus a streams-per-box estimate — the intended
 way to get real capacity numbers on deployment hardware (e.g. an ARM64
 box). Arguments override the defaults: server binary, BLUE file
@@ -201,86 +184,13 @@ make test_fm_demod
 ./test_fm_demod
 ```
 
-## The DSDcc variant
-
-`dsdcc_decoder.cpp` swaps out the *DSD backend* (not the demod) —
-instead of spawning a `dsd-fme`/classic-`dsd` subprocess and talking to
-it over pipes and a UDP socket, it links DSDcc
-(https://github.com/f4exb/dsdcc) directly and pushes samples into a
-`DSDDecoder` object in-process. This is a structurally bigger change
-than the subprocess backend: no child process, no pipes, no
-UDP audio port. If it works out, it's also a more direct answer to
-running many concurrent sessions on constrained hardware — 16 sessions
-means 16 decoder *objects* in your
-existing threads instead of 16 forked OS processes competing for cores.
-
-**Status: verified against DSDcc 1.9.0, end to end, with a real DMR
-signal.** This file was originally written blind (no network access to
-DSDcc), with its API calls marked LOW CONFIDENCE and its extraction
-logic stubbed out. It has since been rewritten against the real
-`dsd_decoder.h`/`dmr.h` and against `dsd_main.cpp` (upstream's own
-`dsdccx` CLI, the canonical integration example), and validated with
-DSDcc's bundled discriminator capture of a real DMR transmission
-(`samples/dmr_it_8.dis` in the DSDcc source tree). The verification is
-strong: running the capture through `DsdccDecoder` produces **exactly**
-the decoded audio upstream's `dsdccx` produces from the same file
-(151680 samples of 8 kHz voice, sample-count-exact), with the correct
-talkgroup (150607), sources, group-call flag, and TDMA slot in the
-emitted events.
-
-For the record, how the original blind guesses fared (also in
-`dsdcc_decoder.cpp`'s top comment): `run(sample)` per input sample was
-guessed exactly right, and the `<dsdcc/...>` include prefix was right;
-the audio getters were close (right idea, wrong access path — it's
-`getAudio1/2()` on `DSDDecoder` directly, one per TDMA slot); but the
-guessed `setDecodeMode(mode, false)` second argument was backwards —
-the bool means on/off, so the placeholder would have silently
-*disabled* DMR decoding. The metadata getters didn't exist as guessed;
-the real source is DSDcc's fixed-layout 26-char per-slot status text,
-which `dsdcc_decoder.cpp` now parses (layout documented there,
-confirmed against `dmr.cpp`).
-
-Two contracts worth knowing: DSDcc's input rate is **fixed at 48 kHz**
-(S16LE discriminator audio; `start()` rejects anything else rather than
-silently failing to sync), and decoded audio comes out at **8 kHz**
-(DSDcc's MBE decoder native rate, upsampling off — the same rate
-dsd-fme's UDP output typically uses, so clients see no difference).
-`session.cpp` needed zero changes to host this backend — its "always
-post to the connection's strand" callback pattern already covered
-callbacks firing synchronously on the demod worker thread.
-
-**Getting this running:**
-
-1. Build and install mbelib (github.com/szechyjs/mbelib), then DSDcc
-   (github.com/f4exb/dsdcc) — both are plain CMake builds.
-2. `cmake .. && make dsd-server-dsdcc` — CMake skips this variant with a
-   message (not an error) if DSDcc/mbelib aren't found.
-
-**Testing it** (this is no longer the untested backend — it's the most
-thoroughly tested one):
-
-- `test_dsdcc_decoder` runs `DsdccDecoder` directly on the real DMR
-  capture and asserts the decoded audio volume and the exact
-  talkgroup/source/slot metadata, plus rejection of bad configs.
-- `test_session_dsdcc` is the full-stack version: it starts the actual
-  WebSocket server built with this backend, FM-modulates the capture
-  into IQ on the client side, streams it over the socket, and asserts
-  that real decoded voice and the real talkgroup come back out. A pass
-  means IQ → demod → DSDcc → WebSocket worked on genuine RF-derived
-  data end to end (also sample-exact: all 151680 voice samples arrive).
-- Both are armed in ctest by pointing CMake at a DSDcc source checkout:
-  `cmake -DDSDCC_SAMPLES_DIR=/path/to/dsdcc/samples ..`. Without that
-  they build but print SKIPPED, since the capture ships in DSDcc's
-  source tree, not its installed artifacts.
-
 ## TETRA (runtime-selected)
 
 TETRA is π/4-DQPSK, not an FM mode, so it needs its own front end
 (`src/tetra_demod.*`, a streaming π/4-DQPSK modem) feeding an external
 decoder. It is **not a separate executable**: the one `dsd-server` binary
 carries this chain alongside the FM/DSD chain and picks it per session from
-the client's `protocol` hint (see the Protocol table above). The FM/DSD
-backend choice (dsd-fme vs DSDcc) is still build-time; the TETRA
+the client's `protocol` hint (see the Protocol table above). The TETRA
 *decoder* choice is runtime:
 
 - **`protocol":"tetra"`** — spawns osmo-tetra's `tetra-rx` (sq5bpf fork);
@@ -289,9 +199,7 @@ backend choice (dsd-fme vs DSDcc) is still build-time; the TETRA
 - **`protocol":"tetrakit"`** — spawns tetra-kit's `decoder`; JSON reports.
   Surfaces the traffic channel (`TCH_S` → `voice`).
 
-Both are selectable from either server variant (`dsd-server`,
-`dsd-server-dsdcc`) since the TETRA stack compiles into
-each. Both are **validated end to end on a real off-air capture**: our demod
+Both are **validated end to end on a real off-air capture**: our demod
 locks the burst grid, and the bits, fed to the real decoders, decode
 coherently (UK network, MCC/MNC 234/78). Voice speech frames are extracted
 (base64+zlib) but the ACELP codec is a documented external plug-in
@@ -436,9 +344,7 @@ synthetic events and audio.
   individual pieces compile.
 
 **What it doesn't check:** real DMR decoding (the fake `dsd-fme` doesn't
-care what audio it receives), the DSDcc backend
-specifically (this always builds against the default `FmDemodulator` +
-`DsdProcess`), or concurrency — it's a single client, single session,
+care what audio it receives) or concurrency — it's a single client, single session,
 sequential test cases, deliberately kept simple. A stress test with many
 concurrent clients would be a good next addition, particularly given the
 strand-binding fix described earlier in this README — that's exactly
@@ -980,9 +886,8 @@ accounting, so dsd-fme children count), peak RSS, and a streams-per-box
 estimate for the machine it ran on. Run it on the actual deployment
 hardware — measured reference points from this repo's verification
 environment (2.1 GHz Xeon core, 32 ksps DMR streams, all server
-overhead included): ~35 CPU-ms per stream-second voice-active / ~21
-idle on the DSDcc backend, ~53 voice-active / ~21 idle on the dsd-fme
-backend; ~1.5 MB RSS per DSDcc session vs ~6 MB per dsd-fme session.
+overhead included): ~53 CPU-ms per stream-second voice-active / ~21
+idle, and ~6 MB RSS per session.
 
 `tools/dmr_slot_aggregator.hpp` is a **reference** (not used by the
 server): a header-only, std-only C++17 helper a client can use to group
@@ -1016,9 +921,9 @@ the binary audio formats. The tables below are the quick summary.
 |---|---|---|
 | text | `{"type":"capabilities","protocols":"...","event_kinds":"...","extra_keys_dmr":"...", ...}` | Sent once on connect, before anything else. Advertises which protocols this build decodes, the event kinds it emits, and the `extra` token keys it can produce (grouped per protocol family) so a client can discover them programmatically. Skip it if you read the first frame expecting `started`. See PROTOCOL.md. |
 | text | `{"type":"started","udp_audio_port":47213}` | Pipeline is up. |
-| text | `{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","extra":"","raw":"..."}` | Decoder activity, parsed from a dsd-fme log line (or synthesized from DSDcc state). `kind` is `voice`/`sync`/`call`/`message`/`unknown` (plus `burst` on DSDcc); `message` carries decoded DMR short-data/SMS text in the `message` field. All fields always present, `""` when unknown. See PROTOCOL.md for per-backend semantics and real examples. |
+| text | `{"type":"event","kind":"call","talkgroup":"19535","source_id":"2222223","slot":"2","extra":"","raw":"..."}` | Decoder activity, parsed from a dsd-fme log line. `kind` is `voice`/`sync`/`call`/`message`/`unknown`; `message` carries decoded DMR short-data/SMS text in the `message` field. All fields always present, `""` when unknown. See PROTOCOL.md for semantics and real examples. |
 | text | `{"type":"error","message":"..."}` | Something was rejected (bad control message, invalid key, DSD/TETRA backend failed to start, malformed binary frame). Connection stays open. PROTOCOL.md lists all six message texts. |
-| binary | `0x01` + `int16` LE PCM | Decoded voice audio. **8000 Hz mono** from both backends: the dsd-fme backend collapses its stereo (slot1 left / slot2 right) to mono, auto-following the active TDMA slot (downmix when the slot isn't yet known); the DSDcc backend is mono per burst and likewise follows one slot — see PROTOCOL.md. |
+| binary | `0x01` + `int16` LE PCM | Decoded voice audio. **8000 Hz mono**: the dsd-fme backend collapses its stereo (slot1 left / slot2 right) to mono, auto-following the active TDMA slot (downmix when the slot isn't yet known) — see PROTOCOL.md. |
 
 ## Experimental: RRC symbol matched filter (`matched_filter`)
 
@@ -1028,7 +933,7 @@ symbol pulse (default DMR: 4800 Bd, 0.2 rolloff). FM discriminator noise
 has a rising (parabolic) spectrum, so most of it sits *above* the symbol
 band; narrowing the post-detection bandwidth to the symbol band recovers
 SNR into the decoder's slicer near threshold. Symbol timing is left to the
-decoder (dsd-fme/DSDcc do their own), so this only conditions the stream —
+decoder (dsd-fme does its own), so this only conditions the stream —
 the 48 kHz output rate is unchanged.
 
 Enable it per session with `"matched_filter": true` on the `start` message
@@ -1047,30 +952,24 @@ pipeline is byte-identical when unused.
 
 A real off-air DMR capture (unencrypted voice, TG 1 / SRC 123, complex
 float32 @ 20.3 kHz, ~3 s) was decoded with the filter off vs on. With no
-added noise it made **no difference on dsd-fme** (it decodes cleanly either
-way; dsd-fme already filters internally) and recovered ~13% more voice on
-the weaker-front-end DSDcc backend.
+added noise it made **no difference** (dsd-fme decodes cleanly either way;
+it already filters internally).
 
 Adding AWGN to probe the near-threshold regime — **lock rate = fraction of
 5 independent noise seeds that recovered the talkgroup**:
 
-| Added SNR | dsd-fme off | dsd-fme on | DSDcc off | DSDcc on |
-|---|---|---|---|---|
-| 10 dB | 5/5 | 5/5 | **2/5** | **5/5** |
-|  8 dB | 5/5 | 5/5 | **1/5** | **4/5** |
-|  6 dB | 5/5 | 5/5 | **1/5** | **2/5** |
-|  4 dB | 5/5 | 5/5 | 0/5 | 0/5 |
-|  3 dB | **2/5** | **5/5** | — | — |
-|  2 dB | **1/5** | **5/5** | — | — |
+| Added SNR | dsd-fme off | dsd-fme on |
+|---|---|---|
+|  4 dB | 5/5 | 5/5 |
+|  3 dB | **2/5** | **5/5** |
+|  2 dB | **1/5** | **5/5** |
 
-Takeaways, matching theory (no gain above threshold, a few dB near it):
+Takeaway, matching theory (no gain above threshold, a few dB near it):
 
-- **dsd-fme** is the more sensitive decoder (threshold ~2–3 dB here). The
-  filter is a no-op in normal conditions but takes near-threshold lock from
-  1–2/5 → 5/5 — roughly **1–2 dB of extra margin**, even though it's
-  redundant with dsd-fme's internal filtering above threshold.
-- **DSDcc** has a weaker front end (threshold ~8–10 dB), and the filter buys
-  it a wider **~2–4 dB** of margin.
+- dsd-fme's threshold is ~2–3 dB here. The filter is a no-op in normal
+  conditions but takes near-threshold lock from 1–2/5 → 5/5 — roughly
+  **1–2 dB of extra margin**, even though it's redundant with dsd-fme's
+  internal filtering above threshold.
 
 **Caveats:** one 3-second capture; synthetic AWGN referenced to the
 capture's mean power (not a calibrated Eb/N0); low IQ rate (~4.2

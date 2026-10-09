@@ -360,11 +360,10 @@ std::string net_merge_response(const std::string& body) {
 //     distinctness a guarantee instead of a probability.
 // stop_pipeline() releases the port when the session's pipeline stops.
 //
-// Only compiled for the dsd-fme subprocess backend: the DSDcc backend
-// decodes in-process, and the TETRA backends bind their own UDP ports
-// internally, so neither has an audio port to allocate here (udp_audio_port_
-// stays 0). A TETRA session never calls acquire_udp_port() at run time.
-#if !defined(DSD_USE_DSDCC_BACKEND)
+// The dsd-fme subprocess backend sends decoded audio to a UDP port we bind;
+// the TETRA backends bind their own ports internally, so a TETRA session has
+// no audio port to allocate here (udp_audio_port_ stays 0) and never calls
+// acquire_udp_port() at run time.
 std::mutex g_udp_port_mutex;
 std::set<uint16_t> g_udp_ports_in_use;
 
@@ -382,11 +381,10 @@ uint16_t acquire_udp_port() {
 }
 
 void release_udp_port(uint16_t port) {
-    if (port == 0) return; // never allocated (e.g. the DSDcc in-process backend)
+    if (port == 0) return; // never allocated (e.g. a TETRA session)
     std::lock_guard<std::mutex> lock(g_udp_port_mutex);
     g_udp_ports_in_use.erase(port);
 }
-#endif // !DSD_USE_DSDCC_BACKEND
 } // namespace
 
 Session::Session(tcp::socket socket, std::shared_ptr<ServerStats> stats)
@@ -1110,7 +1108,7 @@ namespace {
 // kill a stream).
 enum class ProtocolHint { Default, Dmr, Nxdn48, Nxdn96, P25p1, P25p2, Dpmr, Dstar, Ysf, Auto,
                           Tetra, Tetrakit,
-                          // dsd-fme-only modes (no DSDcc decoder): EDACS trunking
+                          // EDACS trunking
                           // + its ProVoice digital voice, and legacy Motorola
                           // X2-TDMA. Edacs = Standard/NET, EdacsEa = Extended
                           // Addressing; the *Esk forms add EDACS's 0xA0 ESK mask.
@@ -1222,7 +1220,7 @@ const char* protocol_hint_label(ProtocolHint h) {
 
 // Optional decryption key scheme from the client's "key_type" field. Only
 // DMR Basic Privacy (`Bp`) is decryptable on both backends; the rest are
-// dsd-fme-backend only (DSDcc has no RC4/AES/DES/scrambler support). An
+// decryptable with the matching dsd-fme key flag. An
 // empty/absent/unrecognized value means "no key" (leave decryption off).
 enum class KeyType { None, Bp, Rc4, Des, Aes, Hytera, Scrambler };
 
@@ -1568,7 +1566,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         // DMR Basic Privacy set in the explorer (per network, matched by this
         // stream's frequency). Applied only when the client didn't send its
         // own bp key; BP is DMR-only, though an "auto" stream may still match a
-        // DMR BP entry on its frequency. Works on both backends (-b / DSDcc).
+        // DMR BP entry on its frequency.
         int stored_bp = 0;
         if (stats_ && key_type_enum != KeyType::Bp) {
             const std::string bpfam = assoc_family(protocol_hint_label(hint));
@@ -1577,55 +1575,6 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
                 stored_bp = stats_->assoc().bp_for_freq("dmr", chf);
             }
         }
-#if defined(DSD_USE_DSDCC_BACKEND)
-        // Map the hint to DsdccDecoder's mode string (see DsdccDecoder::start,
-        // which forwards it to DSDDecoder::setDecodeMode). Default -> "dmr",
-        // matching the historical behavior. NOTE: DSDcc's NXDN symbol recovery
-        // is fragile on real off-air signals (verified against a real NXDN48
-        // capture); the dsd-fme backend is the reliable NXDN decoder.
-        switch (hint) {
-            case ProtocolHint::Nxdn48: dcfg.mode = "nxdn48"; break;
-            case ProtocolHint::Nxdn96: dcfg.mode = "nxdn96"; break;
-            // DSDcc has a P25 Phase 1 decode mode; there's no separate Phase 2
-            // decoder, so both P25 hints select it. The DSDcc wrapper does not
-            // yet extract P25 metadata into fields (it emits sync only) -- the
-            // dsd-fme backend is the P25 decoder to use.
-            case ProtocolHint::P25p1:
-            case ProtocolHint::P25p2:  dcfg.mode = "p25";    break;
-            case ProtocolHint::Dpmr:   dcfg.mode = "dpmr";   break;
-            case ProtocolHint::Dstar:  dcfg.mode = "dstar";  break;
-            case ProtocolHint::Ysf:    dcfg.mode = "ysf";    break;
-            // DSDcc has no EDACS/ProVoice/X2-TDMA decoder; fall back to
-            // auto-detect (honest "nothing" rather than mis-decoding as DMR).
-            // Use the dsd-fme backend for these protocols.
-            case ProtocolHint::ProVoice:
-            case ProtocolHint::Edacs:
-            case ProtocolHint::EdacsEsk:
-            case ProtocolHint::EdacsEa:
-            case ProtocolHint::EdacsEaEsk:
-            case ProtocolHint::X2tdma: dcfg.mode = "auto";   break;
-            case ProtocolHint::Auto:   dcfg.mode = "auto";   break;
-            case ProtocolHint::Dmr:
-            case ProtocolHint::Default:
-            default:                   dcfg.mode = "dmr";    break;
-        }
-        dcfg.input_sample_rate_hz = 48000;
-        // DMR Basic Privacy is the only decryption DSDcc can do; the key value
-        // is the BP key NUMBER (decimal 1–255). Any other scheme is dsd-fme
-        // only, so warn and run without a key rather than pretending.
-        if (key_type_enum == KeyType::Bp) {
-            unsigned long n = std::strtoul(key.c_str(), nullptr, 10);
-            dcfg.bp_key = (n > 255) ? 255u : static_cast<unsigned>(n);
-        } else if (key_type_enum != KeyType::None) {
-            std::cerr << "dsd-server: DSDcc backend supports only DMR Basic Privacy "
-                         "('bp') keys; ignoring key_type='" << key_type << "'\n";
-        }
-        if (!dcfg.bp_key && stored_bp) dcfg.bp_key = static_cast<unsigned>(stored_bp);  // explorer BP for this network
-        // DsdccDecoder is in-process, so there's no UDP audio port to
-        // allocate -- udp_audio_port_ stays 0 and the "started" message
-        // below reports that accurately (0 meaning "not applicable here",
-        // not "failed to allocate").
-#else
         // On a keyring restart, keep the port the decode client is already
         // receiving audio on (stop_pipeline left it reserved); otherwise take
         // a fresh one.
@@ -1638,7 +1587,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         // verified against dsd-fme's source (dsd_main.c, getopt 'f' case, which
         // matches on optarg): s=DMR, i=NXDN48/IDAS, n=NXDN96, a=auto-detect,
         // d=D-STAR, y=YSF, m=dPMR. P25: 1=Phase 1, 2=Phase 2 (6000 sps TDMA).
-        // EDACS/ProVoice + X2-TDMA (dsd-fme only; no DSDcc decoder): p=ProVoice,
+        // EDACS/ProVoice + X2-TDMA: p=ProVoice,
         // h=EDACS STD/NET, H=EDACS STD/NET+ESK(0xA0), e=EDACS EA, E=EDACS EA+ESK,
         // x=X2-TDMA. (EDACS modes also enable ProVoice; the H/E forms apply the
         // 0xA0 ESK control-channel mask, with dsd-fme's default 4:4:3 AFS.)
@@ -1701,7 +1650,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         // for the stream's family (all families when the protocol is "auto");
         // keys added later take effect when the stream restarts. The list
         // carries key VALUES, so the file is owner-only and removed in
-        // stop_pipeline. DSDcc has no key-list option, so this is dsd-fme only.
+        // stop_pipeline.
         if (stats_ && std::getenv("DSD_NET_NO_APPLY_KEYS") == nullptr) {
             std::string kfam = assoc_family(protocol_hint_label(hint));
             if (kfam == "auto") kfam.clear();                 // not known yet -> all families
@@ -1731,7 +1680,6 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
                 }
             }
         }
-#endif // DSD_USE_DSDCC_BACKEND
 
         // Network explorer per-call audio (off unless enabled): every slot's
         // decoded voice, before the client's mono mix. A session with a key
@@ -1802,9 +1750,7 @@ void Session::restart_pipeline() {
     if (!pipeline_active_.load() || !last_start_.valid) return;
     if (chain_.load() != Chain::Fm) return;
     const StartParams p = last_start_;
-#if !defined(DSD_USE_DSDCC_BACKEND)
     pending_udp_port_ = udp_audio_port_;   // keep it across the stop/start inside start_pipeline
-#endif
     start_pipeline(p.sample_rate, p.channel_bw, p.freq_offset, p.gain, p.afc, p.protocol,
                    p.key_type, p.key, p.matched_filter, p.pocsag_mode, p.invert, p.iq_log);
 }
@@ -1839,14 +1785,12 @@ void Session::stop_pipeline() {
             case Chain::Fm:    demod_.reset(); break;
         }
     }
-#if !defined(DSD_USE_DSDCC_BACKEND)
-    // Only the dsd-fme subprocess path allocates an audio port; a TETRA
-    // session never did (udp_audio_port_ stayed 0, and release ignores 0).
-    // During a keyring restart the port is kept reserved (pending_udp_port_)
-    // so the relaunch reuses it and the client's audio receiver doesn't move.
+    // The dsd-fme subprocess path allocates an audio port; a TETRA session
+    // never did (udp_audio_port_ stayed 0, and release ignores 0). During a
+    // keyring restart the port is kept reserved (pending_udp_port_) so the
+    // relaunch reuses it and the client's audio receiver doesn't move.
     if (pending_udp_port_ == 0) release_udp_port(udp_audio_port_);
     udp_audio_port_ = 0;
-#endif
 
     // Remove the temp dsd-fme key list this pipeline used (it held key values).
     if (!klist_path_.empty()) {

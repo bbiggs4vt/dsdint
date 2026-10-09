@@ -6,12 +6,9 @@
 // put on the wire -- the event kinds, and the `extra` token keys it may
 // emit -- instead of hard-coding them from PROTOCOL.md.
 //
-// The set of `extra` keys depends on both the compiled DSD backend
-// (dsd-fme subprocess vs in-process DSDcc, chosen at build time via
-// dsd_backend_selector.hpp) and the protocol. At connect time the client
-// hasn't chosen a protocol yet, so the keys are grouped by protocol
-// family (extra_keys_dmr, extra_keys_p25, ...) and pre-filtered to the
-// keys THIS backend can actually produce; the client reads the field for
+// The set of `extra` keys depends on the protocol. At connect time the
+// client hasn't chosen one yet, so the keys are grouped by protocol family
+// (extra_keys_dmr, extra_keys_p25, ...); the client reads the field for
 // whichever protocol it's about to request. Families this build can never
 // emit a key for are omitted entirely.
 //
@@ -27,35 +24,19 @@
 
 namespace dsdsrv {
 
-// Which backend a given `extra` key comes from. `Both` = either DSD
-// backend; `Tetra` = the TETRA chain (a separate subprocess path present
-// in both builds), so it's always available regardless of the DSD choice.
-// `Pager` = the paging chain (FM -> multimon-ng subprocess), likewise present
-// in every build.
-enum class KeyBackend { Fme, Dsdcc, Both, Tetra, Pager };
+// Which chain a given `extra` key comes from. `Fme`/`Both` = the dsd-fme
+// DSD decoder; `Tetra` = the TETRA chain; `Pager` = the paging chain
+// (FM -> multimon-ng). All are present in the build, so every advertised
+// key is active -- the tag is kept for documentation and PROTOCOL.md parity.
+enum class KeyBackend { Fme, Both, Tetra, Pager };
 
-#if defined(DSD_USE_DSDCC_BACKEND)
-inline constexpr KeyBackend kActiveDsdBackend = KeyBackend::Dsdcc;
-#else
-inline constexpr KeyBackend kActiveDsdBackend = KeyBackend::Fme;
-#endif
-
-inline bool cap_key_active(KeyBackend b) {
-    // Both/Tetra are always live; a backend-specific key only when this is
-    // the compiled DSD backend.
-    return b == KeyBackend::Both || b == KeyBackend::Tetra || b == KeyBackend::Pager ||
-           b == kActiveDsdBackend;
-}
+inline bool cap_key_active(KeyBackend) { return true; }
 
 struct CapKey { const char* key; KeyBackend backend; };
 struct CapFamily { const char* field; std::vector<CapKey> keys; };
 
-// The `protocol` hint values this build actually decodes. Hints that a
-// backend only accepts by falling back to auto (provoice / edacs* /
-// x2tdma on DSDcc) or decodes without metadata (p25 on DSDcc) are tagged
-// to the backend that truly handles them, so each build advertises only
-// what it can really do. The TETRA hints ride the separate TETRA chain,
-// present in both builds. Mirrors ProtocolHint / parse_protocol_hint in
+// The `protocol` hint values this build decodes (the dsd-fme DSD chain, plus
+// the TETRA and paging chains). Mirrors ProtocolHint / parse_protocol_hint in
 // session.cpp and the protocol list in PROTOCOL.md.
 inline const std::vector<CapKey>& cap_protocols() {
     static const std::vector<CapKey> protos = {
@@ -91,9 +72,6 @@ inline const std::vector<CapKey>& cap_protocols() {
 inline const std::vector<CapFamily>& cap_families() {
     static const std::vector<CapFamily> fams = {
         {"extra_keys_dmr", {
-            {"unit_target",  KeyBackend::Dsdcc},
-            {"burst",        KeyBackend::Dsdcc},
-            {"sync_type",    KeyBackend::Dsdcc},
             {"network_type", KeyBackend::Fme},
             {"network_id",   KeyBackend::Fme},
             {"site_id",      KeyBackend::Fme},
@@ -125,7 +103,6 @@ inline const std::vector<CapFamily>& cap_families() {
             {"rpt1",       KeyBackend::Both},
             {"rpt2",       KeyBackend::Both},
             {"radio_text", KeyBackend::Both},
-            {"gps",        KeyBackend::Dsdcc},
         }},
         {"extra_keys_ysf", {
             {"uplink",    KeyBackend::Both},

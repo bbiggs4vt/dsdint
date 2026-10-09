@@ -931,7 +931,7 @@ public:
     // DMR Basic Privacy: a key NUMBER (1-255, selecting a built-in well-known
     // key), set per network. BP carries no key id and isn't a hex key, so it
     // lives apart from the keyring; it is applied to the server's decoder with
-    // dsd-fme's -b (DSDcc's setDMRBasicPrivacyKey), matched by the network's
+    // dsd-fme's -b, matched by the network's
     // frequency at stream start. The number is not secret.
     bool set_bp(const std::string& fam, const std::string& net, int number) {
         if (fam.empty() || net.empty() || number < 1 || number > 255) return false;

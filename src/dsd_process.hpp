@@ -214,7 +214,7 @@ struct DsdProcessConfig {
 
     // Collapse that stereo stream to a single 8 kHz MONO stream before it
     // reaches on_audio (so the subprocess backend matches the in-process
-    // DSDcc backend's mono output). The mono channel auto-follows the
+    // mono output). The mono channel auto-follows the
     // active TDMA slot -- picked from the slot the decoder is currently
     // reporting voice/call activity on (slot 1 -> left, slot 2 -> right).
     // While no slot is known (nothing decoded yet, or concurrent voice on

@@ -32,7 +32,7 @@
 //   Server -> Client:
 //     - Binary frame, 1-byte tag + payload:
 //         tag 0x01: decoded voice PCM (int16 LE; 8 kHz -- stereo from
-//         dsd-fme's DMR mode, mono from the DSDcc backend)
+//         dsd-fme's DMR mode)
 //     - Text frame, JSON: event records from the decode backend, e.g.
 //         {"type":"event","kind":"call","talkgroup":"19535",
 //          "source_id":"2222223","slot":"2","extra":"","raw":"..."}
@@ -70,7 +70,7 @@
 
 // The server carries two signal chains and picks one per session at run time
 // (from the client's "protocol" hint -- see start_pipeline):
-//   * FM-discriminator + DSD backend (dsd-fme subprocess or in-process DSDcc,
+//   * FM-discriminator + DSD backend (the dsd-fme subprocess,
 //     chosen at build time via dsd_backend_selector.hpp) for the analog-FM
 //     digital modes;
 //   * π/4-DQPSK modem + a TETRA subprocess backend (osmo tetra-rx or
@@ -198,7 +198,7 @@ private:
     std::unique_ptr<MultimonProcess> pager_proc_;
     // "pager decoder exited" is reported once per pipeline.
     std::atomic<bool> pager_failed_{false};
-    uint16_t udp_audio_port_ = 0; // only meaningful for the DsdProcess (subprocess) backend; 0 under TETRA/DSDcc
+    uint16_t udp_audio_port_ = 0; // the dsd-fme subprocess backend; 0 under TETRA
 
     // Producer (network thread via on_binary) / consumer (worker thread)
     // queue of raw IQ blocks awaiting demodulation.
