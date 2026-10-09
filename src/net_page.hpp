@@ -1378,7 +1378,8 @@ function bpSection(cont) {
 // Secret per-network DMR keys with no key id, one kind per entry (the
 // server's AssocModel::net_key_kinds): Motorola Enhanced Privacy (a 40-bit
 // ARC4 key for every EP call on the network, whatever key id it announces),
-// and the "forced" kinds -- TYT EP, Anytone BP, TYT / Baofeng / Retevis AP --
+// and the "forced" kinds -- TYT EP, TYT BP, Anytone BP, TYT / Baofeng /
+// Retevis AP --
 // keys for radios that send no key id or encryption flag, which dsd-fme
 // applies to every voice frame on the channel (one forced kind per network;
 // setting one replaces another). `ap` kinds take 128 or 256 bits. /net.json
@@ -1389,6 +1390,9 @@ var NETKEY = {
   tytep: { path: '/net/tytep/', digits: 32, name: 'TYT Enhanced Privacy', short: 'TYT EP',
            opt: 'TYT Enhanced Privacy (AES, 32 hex)', list: 'TYT EP key set (all voice on the channel)',
            eg: '00000000000000000000000000012345', forced: true },
+  tytbp: { path: '/net/tytbp/', digits: 4, name: 'TYT Basic Privacy', short: 'TYT BP',
+           opt: 'TYT Basic Privacy (16-bit, 4 hex)', list: 'TYT BP key set (all voice on the channel)',
+           eg: '1A2B', forced: true },
   anybp: { path: '/net/anybp/', digits: 4, name: 'Anytone Basic Privacy', short: 'Anytone BP',
            opt: 'Anytone Basic Privacy (16-bit, 4 hex)', list: 'Anytone BP key set (all voice on the channel)',
            eg: '1A2B', forced: true },
@@ -1732,7 +1736,7 @@ function keyAddForm() {
   wrap.appendChild(h('div', { class: 'keyact' }, [
     h('button', { class: 'btn sm', type: 'button', onclick: save }, 'Save key'),
     h('button', { class: 'btn sm', type: 'button', onclick: function () { S.keyAdd = null; viewKeys(); } }, 'Cancel')]));
-  wrap.appendChild(h('div', { class: 'kh', text: 'A hex key (up to 64 digits), matched by the key id a call announces' + (isDmr ? '; or DMR Basic Privacy, a key number 1–255 with no key id; or a Motorola Enhanced Privacy key (10 hex digits) applied to every EP call on the network whatever its key id; or a TYT EP, Anytone BP or TYT / Baofeng / Retevis AP key, applied to ALL voice on the channel — clear calls there are garbled, so only for channels that always use it (one of these per network)' : '') + '. Stored on the server; never shown again. Only enter keys for systems you are authorized to monitor.' }));
+  wrap.appendChild(h('div', { class: 'kh', text: 'A hex key (up to 64 digits), matched by the key id a call announces' + (isDmr ? '; or DMR Basic Privacy, a key number 1–255 with no key id; or a Motorola Enhanced Privacy key (10 hex digits) applied to every EP call on the network whatever its key id; or a TYT EP, TYT BP, Anytone BP or TYT / Baofeng / Retevis AP key, applied to ALL voice on the channel — clear calls there are garbled, so only for channels that always use it (one of these per network)' : '') + '. Stored on the server; never shown again. Only enter keys for systems you are authorized to monitor.' }));
   applyMode();
   return wrap;
 }

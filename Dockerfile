@@ -82,10 +82,11 @@ RUN git clone https://github.com/szechyjs/mbelib /opt/src/mbelib \
 RUN git clone --depth 1 https://github.com/f4exb/dsdcc /opt/src/dsd-samples
 
 # dsd-fme — the decoder binary the server spawns per session. Patched so a
-# DMR Basic Privacy key given with -b survives carrier loss while a key list
-# (-K) is loaded -- unpatched, dsd-fme zeroes it at every carrier drop, so the
-# explorer's BP keys stopped working after the first call on any DMR stream
-# that also had keyring / EP keys. The patch is re-checked against the pin.
+# DMR Basic Privacy key given with -b, and a TYT BP key given with -2, survive
+# carrier loss while a key list (-K) is loaded -- unpatched, dsd-fme zeroes
+# them at every carrier drop, so the explorer's BP / TYT BP keys stopped
+# working after the first call on any DMR stream that also had keyring / EP
+# keys. The patch is re-checked against the pin.
 ARG DSDFME_COMMIT=198f0eacb5ef3873fab23186640c90789152894c
 COPY patches/dsd-fme-keep-bp-key.patch /opt/src/
 RUN git clone https://github.com/lwvmobile/dsd-fme /opt/src/dsd-fme \

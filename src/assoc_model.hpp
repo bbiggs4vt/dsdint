@@ -978,7 +978,9 @@ public:
     //  - "forced" kinds: keys for radios that send no key id or encryption
     //    flag, which dsd-fme applies to EVERY voice frame on the channel, so
     //    a clear call there is garbled -- TYT EP (AES-128, -5; TYT MD-380/
-    //    UV380, Baofeng DM-1701), Anytone BP (16 bits, -A), TYT AP (PC4, -!),
+    //    UV380, Baofeng DM-1701), TYT BP (16 bits, -2; kept across carrier
+    //    loss beside -K only with patches/dsd-fme-keep-bp-key.patch), Anytone
+    //    BP (16 bits, -A), TYT AP (PC4, -!),
     //    Baofeng AP (PC5, -+) and Retevis AP (RC2, -@), the AP kinds 128 or
     //    256 bits. dsd-fme keeps them across carrier loss and beside -K. Only
     //    one forced kind can be set per network (two can't both be right), so
@@ -988,7 +990,7 @@ public:
     struct NetKeyKind { const char* id; std::size_t digits; bool forced; bool allow256; };
     static const std::vector<NetKeyKind>& net_key_kinds() {
         static const std::vector<NetKeyKind> k = {
-            {"ep", 10, false, false}, {"tytep", 32, true, false}, {"anybp", 4, true, false},
+            {"ep", 10, false, false}, {"tytep", 32, true, false}, {"tytbp", 4, true, false}, {"anybp", 4, true, false},
             {"tytap", 32, true, true}, {"bfap", 32, true, true}, {"rtap", 32, true, true}};
         return k;
     }

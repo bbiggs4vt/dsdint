@@ -250,6 +250,14 @@ int main() {
               "anybp: a 16-bit key is set and zero-padded to 4 digits");
         check(!m.set_net_key("anybp", "dmr", "cc:1@440425000", "12345") && !m.set_net_key("anybp", "dmr", "cc:1@440425000", "0"),
               "anybp: over 16 bits / zero are rejected");
+        {
+            AssocModel t;
+            check(t.set_net_key("tytbp", "dmr", "cc:9@453000000", "a1") && t.net_key_for_freq("tytbp", "dmr", 453000000) == "00A1" &&
+                      !t.set_net_key("tytbp", "dmr", "cc:9@453000000", "1FFFF"),
+                  "tytbp: a 16-bit key is set and padded; over 16 bits is rejected");
+            check(t.set_net_key("anybp", "dmr", "cc:9@453000000", "BEEF") && t.net_key_for_freq("tytbp", "dmr", 453000000).empty(),
+                  "tytbp: it is a forced kind (setting Anytone BP replaces it)");
+        }
         const std::string k128 = "736B9A9C5645288B243AD5CB8701EF8A";
         const std::string k256 = "1122334455667788" "99AABBCCDDEEFF11" "1122334455667788" "99AABBCCDDEEFF11";
         for (const char* kind : {"tytap", "bfap", "rtap"}) {
