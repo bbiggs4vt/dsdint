@@ -79,42 +79,56 @@ only if the acoustic measure proves insufficient.
 ## Backend diagnostics vs. user-facing verdict
 
 The user sees a single "audio quality bad" badge (no cause). The **backend**
-may log richer per-call diagnostics for field debugging — but only the
-honest, non-inference discriminators:
+may log richer per-call diagnostics for field debugging, built from these
+three signals:
 
 - **FEC / link error rate** — identifies degraded SNR (high correction counts,
   intermittent sync). Direct measurement.
-- **Acoustic quality score** — the Layer 2 verdict.
-- **Signalled-crypto metadata (key id / algorithm id)** — for signalled
-  systems (Motorola EP PI header, P25 ESS, DMR privacy indicator) the
-  protocol *announces* encryption and dsd-fme already parses the key id/algo
-  (it is what the Keys tab is built on). This is reading the protocol, not
-  inference, so recording it is fine.
+- **Acoustic quality score** — the Layer 2 verdict (speech-like or not).
+- **Signalled-crypto metadata (key id / algorithm id)** — when present. For
+  signalled traffic (Motorola EP PI header, P25 ESS, DMR privacy indicator)
+  the protocol *announces* encryption and dsd-fme already parses the
+  key id/algo (it is what the Keys tab is built on). This is reading the
+  protocol, not inference.
 
-Those three separate the cases a field debugger cares about:
-- high error rate -> RF problem,
-- signalled key id -> encrypted (protocol said so),
-- clean link + no signalling + structureless audio -> "unusable, cause
-  undetermined" (the honest answer).
+  **Caveat — signalling is NOT universal.** Simplex / direct (DMO) calls
+  routinely carry no privacy signalling, and unsignalled schemes (e.g. TYT EP)
+  never do. So the key-id signal is present only for repeater/trunked traffic
+  on schemes that signal; it is absent exactly in the case below.
 
-### Explicitly NOT built: unsignalled-encryption inference
+### The diagnostic that matters: noisy link vs. clean-link content problem
 
-Do NOT build a classifier that *infers* "encrypted" from "clean link +
-structureless audio" to flag unsignalled/covert encryption (e.g. TYT EP).
-Two reasons:
+The field case that motivated this: a user thumbs privacy ON by accident on a
+simplex call. No signalling to read, not a known-EP talkgroup — a plain
+misconfiguration. "Radio X is garbage: is it RF, or did someone enable
+privacy?" The FEC + acoustic pair answers it directly:
 
-1. **Unreliable.** Clean-link-but-structureless audio is also a bad decode,
-   wrong protocol params, or a vocoder edge case — real false-positive modes.
-   It is a *worse* debugging signal than error-rate + signalling, not better.
-2. **It is the piece that generalizes into surveillance.** A general
-   unsignalled-encryption detector is an interception capability on any
-   network regardless of intent, and (paired with forced-decrypt) is the
-   thing already off the table.
+- **high FEC errors + bad audio** -> RF problem (degraded SNR).
+- **low FEC errors (clean link) + unintelligible audio** -> NOT RF. The bits
+  arrived intact; the problem is at the content level. On one's own network
+  with a strong local simplex signal, that is the fingerprint of accidental
+  privacy.
 
-For one's own network it buys little anyway: signalled crypto is already
-announced, and the operator already knows which of their own TGs/radios run
-unsignalled EP by their IDs (they programmed them), so "clean link + bad
-audio on TG X" is already explained by "TG X is our EP talkgroup."
+This "clean link + unintelligible" state is just the logical AND of the two
+measurements above, so recording it as a backend diagnostic is fine and gives
+the operator the signal they need to catch a misconfigured radio (simplex
+included, where signalling can't help).
+
+### The line that stays: no content recovery, no certainty oracle
+
+What is still NOT built:
+
+1. **No decryption / forced key / content recovery.** The diagnostic recovers
+   zero content and defeats no encryption — it only says "unusable, and here
+   is whether the link was clean." Keeping it a diagnostic (not an
+   interception tool) is the load-bearing guardrail.
+2. **Report the observed state, not a certainty verdict.** It records
+   "clean link + unintelligible audio — likely a privacy/content problem," NOT
+   "ENCRYPTED: yes." This is honest (clean-link-garbage can also be a bad
+   decode / wrong codec params / vocoder edge case, so certainty would be a
+   lie) and it avoids shipping a binary encryption-presence oracle. The
+   operator supplies the final interpretation; on their own network the hedge
+   is enough to act on.
 
 ## Guardrail (important)
 
