@@ -1375,44 +1375,56 @@ function bpSection(cont) {
   });
   cont.appendChild(h('div', { class: 'keynet' }, [ul]));   // same .9rem inset as the key-id network blocks
 }
-// DMR Enhanced Privacy: a 40-bit hex key per network with no key id, applied
-// to every EP call on the network's frequency. It is secret, so /net.json says
-// only which networks have one: S.d.ep is {fam:[net,...]}.
-function epNets() { return (S.d && S.d.ep && S.d.ep[S.fam]) || []; }
-function markEp(net, on) {
+// Secret per-network DMR keys with no key id, one kind per entry: Motorola
+// Enhanced Privacy (a 40-bit ARC4 key for every EP call on the network,
+// whatever key id it announces) and TYT-style EP (an AES-128 key that dsd-fme
+// applies to every voice frame on the channel -- TYT / Baofeng DM-1701 radios
+// send no key id or algorithm). /net.json says only which networks have one:
+// S.d[kind] is {fam:[net,...]}; the value is never sent back.
+var NETKEY = {
+  ep:    { path: '/net/ep/', digits: 10, name: 'Motorola Enhanced Privacy', short: 'EP',
+           opt: 'Motorola Enhanced Privacy (any key id)', list: 'EP key set (any key id)', eg: '0102030405' },
+  tytep: { path: '/net/tytep/', digits: 32, name: 'TYT Enhanced Privacy', short: 'TYT EP',
+           opt: 'TYT / DM-1701 Enhanced Privacy (AES, 32 hex)', list: 'TYT EP key set (all voice on the channel)',
+           eg: '00000000000000000000000000012345' }
+};
+function netKeyNets(kind) { return (S.d && S.d[kind] && S.d[kind][S.fam]) || []; }
+function markNetKey(kind, net, on) {
   if (!S.d) return;
-  S.d.ep = S.d.ep || {};
-  var L = (S.d.ep[S.fam] || []).filter(function (x) { return x !== net; });
+  S.d[kind] = S.d[kind] || {};
+  var L = (S.d[kind][S.fam] || []).filter(function (x) { return x !== net; });
   if (on) L.push(net);
-  S.d.ep[S.fam] = L;
+  S.d[kind][S.fam] = L;
 }
-function setEp(net, val, done) {
-  fetch('/net/ep/set', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
-                         body: JSON.stringify({ fam: S.fam, net: net, key: val }) })
+function setNetKey(kind, net, val, done) {
+  var K = NETKEY[kind];
+  fetch(K.path + 'set', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ fam: S.fam, net: net, key: val }) })
     .then(function (r) { return r.json().then(function (j) { return r.ok && j.ok; }, function () { return false; }); })
     .then(function (ok) {
-      if (ok) { markEp(net, true); toast('Enhanced Privacy key set for ' + (netLabel(net) || net) + '.'); if (S.d) render(); }
-      else toast('That EP key wasn’t accepted (up to 10 hex digits, not all zero).');
+      if (ok) { markNetKey(kind, net, true); toast(K.name + ' key set for ' + (netLabel(net) || net) + '.'); if (S.d) render(); }
+      else toast('That ' + K.short + ' key wasn’t accepted (up to ' + K.digits + ' hex digits, not all zero).');
       if (done) done(ok);
-    }).catch(function () { toast('Could not reach the server to set the EP key.'); });
+    }).catch(function () { toast('Could not reach the server to set the ' + K.short + ' key.'); });
 }
-function removeEp(net) {
-  fetch('/net/ep/remove?fam=' + encodeURIComponent(S.fam) + '&net=' + encodeURIComponent(net), { cache: 'no-store' })
+function removeNetKey(kind, net) {
+  var K = NETKEY[kind];
+  fetch(K.path + 'remove?fam=' + encodeURIComponent(S.fam) + '&net=' + encodeURIComponent(net), { cache: 'no-store' })
     .then(function (r) { return r.json(); }).then(function (j) {
-      if (j.ok) { markEp(net, false); toast('Enhanced Privacy key removed.'); if (S.d) render(); }
-    }).catch(function () { toast('Could not reach the server to remove the EP key.'); });
+      if (j.ok) { markNetKey(kind, net, false); toast(K.name + ' key removed.'); if (S.d) render(); }
+    }).catch(function () { toast('Could not reach the server to remove the ' + K.short + ' key.'); });
 }
-// The Enhanced Privacy list (DMR only), like the Basic Privacy one: the
-// networks with an EP key set, each with Clear (the value is never shown).
-function epSection(cont) {
-  var nets = epNets().slice();
+// The list for one kind (DMR only), like the Basic Privacy one: the networks
+// with a key set, each with Clear (the value is never shown).
+function netKeySection(cont, kind) {
+  var K = NETKEY[kind], nets = netKeyNets(kind).slice();
   if (!nets.length) return;
-  cont.appendChild(h('div', { class: 'section', style: 'margin-top:1rem', text: 'Enhanced Privacy (DMR)' }));
+  cont.appendChild(h('div', { class: 'section', style: 'margin-top:1rem', text: K.name + ' (DMR)' }));
   var ul = h('ul', { class: 'lst keylst' });
   nets.sort().forEach(function (net) {
     ul.appendChild(h('li', null, [h('div', { class: 'keyhdr' }, [
-      netc(net), h('span', { class: 'mono', text: 'EP key set (any key id)' }),
-      h('span', { class: 'c' }, S.file ? '' : h('a', { class: 'keyrm', onclick: function () { removeEp(net); } }, 'Clear'))])]));
+      netc(net), h('span', { class: 'mono', text: K.list }),
+      h('span', { class: 'c' }, S.file ? '' : h('a', { class: 'keyrm', onclick: function () { removeNetKey(kind, net); } }, 'Clear'))])]));
   });
   cont.appendChild(h('div', { class: 'keynet' }, [ul]));
 }
@@ -1614,7 +1626,7 @@ function viewKeys() {
   }
   // DMR Basic Privacy (a key number per network, no key id) -- its own section.
   // DMR Enhanced Privacy keys set without a key id -- likewise.
-  if (S.fam === 'dmr') { bpSection(cont); epSection(cont); }
+  if (S.fam === 'dmr') { bpSection(cont); netKeySection(cont, 'ep'); netKeySection(cont, 'tytep'); }
 }
 // The manual "Add a key" form (Keys tab): pick a network, type a key id, pick
 // the algorithm (optional) and enter the hex value. Its state (S.keyAdd)
@@ -1622,8 +1634,8 @@ function viewKeys() {
 // One "Add a key" form for both a key-id key and DMR Basic Privacy: picking
 // the "Basic Privacy" algorithm greys out the key id (BP has none) and turns
 // the value field into the 1-255 key number. S.keyAdd.alg === 'bp' is the BP
-// mode marker (not a real algorithm id). 'ep' likewise picks DMR Enhanced
-// Privacy without a key id: a 10-hex-digit key for every EP call on the network.
+// mode marker (not a real algorithm id). 'ep' / 'tytep' likewise pick a
+// NETKEY kind (no key id; a hex key of that kind's length).
 function keyAddForm() {
   var isDmr = S.fam === 'dmr';
   var wrap = h('div', { class: 'keyadd' });
@@ -1653,24 +1665,26 @@ function keyAddForm() {
     var bo = h('option', { value: 'bp' }, 'DMR Basic Privacy (key number)');
     if (S.keyAdd.alg === 'bp') bo.selected = true;
     algSel.appendChild(bo);
-    var eo = h('option', { value: 'ep' }, 'DMR Enhanced Privacy (any key id)');
-    if (S.keyAdd.alg === 'ep') eo.selected = true;
-    algSel.appendChild(eo);
+    Object.keys(NETKEY).forEach(function (kind) {
+      var eo = h('option', { value: kind }, NETKEY[kind].opt);
+      if (S.keyAdd.alg === kind) eo.selected = true;
+      algSel.appendChild(eo);
+    });
   }
   var valInp = h('input', { class: 'ki', type: 'text', spellcheck: 'false', autocomplete: 'off', value: S.keyAdd.val,
                             placeholder: 'key (hex)', 'aria-label': 'Key value' });
   valInp.addEventListener('input', function () { S.keyAdd.val = valInp.value; });
   var kidLab = lab('Key id', kidInp), valLab = lab('Key value', valInp);
   // Reflect the selected algorithm: BP has no key id and takes a 1-255 number;
-  // EP (any key id) has no key id and takes a 40-bit hex key.
+  // a NETKEY kind (EP, TYT EP) has no key id and takes a hex key of its length.
   var applyMode = function () {
-    var bp = S.keyAdd.alg === 'bp', ep = S.keyAdd.alg === 'ep';
-    kidInp.disabled = bp || ep;
-    kidInp.placeholder = bp ? 'n/a for Basic Privacy' : ep ? 'any (applies to all key ids)' : 'e.g. 1 or 666A';
-    kidLab.el.classList.toggle('off', bp || ep);
-    valLab.span.textContent = bp ? 'BP key number' : ep ? 'EP key (hex)' : 'Key value';
-    valInp.placeholder = bp ? '1–255' : ep ? '10 hex digits, e.g. 0102030405' : 'key (hex)';
-    valInp.setAttribute('aria-label', bp ? 'BP key number' : ep ? 'EP key (hex)' : 'Key value (hex)');
+    var bp = S.keyAdd.alg === 'bp', nk = isDmr ? NETKEY[S.keyAdd.alg] : null;
+    kidInp.disabled = bp || !!nk;
+    kidInp.placeholder = bp ? 'n/a for Basic Privacy' : nk ? 'n/a (no key id)' : 'e.g. 1 or 666A';
+    kidLab.el.classList.toggle('off', bp || !!nk);
+    valLab.span.textContent = bp ? 'BP key number' : nk ? nk.short + ' key (hex)' : 'Key value';
+    valInp.placeholder = bp ? '1–255' : nk ? nk.digits + ' hex digits, e.g. ' + nk.eg : 'key (hex)';
+    valInp.setAttribute('aria-label', bp ? 'BP key number' : nk ? nk.short + ' key (hex)' : 'Key value (hex)');
   };
   algSel.addEventListener('change', function () { S.keyAdd.alg = algSel.value; applyMode(); });
   var save = function () {
@@ -1682,10 +1696,12 @@ function keyAddForm() {
       setBp(net, num, function (ok) { if (ok) S.keyAdd = null; if (S.view === 'keys') viewKeys(); });
       return;
     }
-    if (alg === 'ep') {
-      var hx = val.replace(/\s+/g, '');
-      if (!/^[0-9A-Fa-f]{1,10}$/.test(hx) || /^0+$/.test(hx)) { toast('Enter the EP key: up to 10 hex digits (40 bits).'); valInp.focus(); return; }
-      setEp(net, hx, function (ok) { if (ok) S.keyAdd = null; if (S.view === 'keys') viewKeys(); });
+    if (isDmr && NETKEY[alg]) {
+      var nk = NETKEY[alg], hx = val.replace(/\s+/g, '');
+      if (!/^[0-9A-Fa-f]+$/.test(hx) || hx.length > nk.digits || /^0+$/.test(hx)) {
+        toast('Enter the ' + nk.short + ' key: up to ' + nk.digits + ' hex digits.'); valInp.focus(); return;
+      }
+      setNetKey(alg, net, hx, function (ok) { if (ok) S.keyAdd = null; if (S.view === 'keys') viewKeys(); });
       return;
     }
     if (!kid) { toast('Enter a key id.'); kidInp.focus(); return; }
@@ -1698,7 +1714,7 @@ function keyAddForm() {
   wrap.appendChild(h('div', { class: 'keyact' }, [
     h('button', { class: 'btn sm', type: 'button', onclick: save }, 'Save key'),
     h('button', { class: 'btn sm', type: 'button', onclick: function () { S.keyAdd = null; viewKeys(); } }, 'Cancel')]));
-  wrap.appendChild(h('div', { class: 'kh', text: 'A hex key (up to 64 digits), matched by the key id a call announces' + (isDmr ? '; or DMR Basic Privacy, a key number 1–255 with no key id; or a DMR Enhanced Privacy key (10 hex digits) applied to every EP call on the network whatever its key id' : '') + '. Stored on the server; never shown again. Only enter keys for systems you are authorized to monitor.' }));
+  wrap.appendChild(h('div', { class: 'kh', text: 'A hex key (up to 64 digits), matched by the key id a call announces' + (isDmr ? '; or DMR Basic Privacy, a key number 1–255 with no key id; or a Motorola Enhanced Privacy key (10 hex digits) applied to every EP call on the network whatever its key id; or a TYT / DM-1701 Enhanced Privacy key (32 hex digits), applied to ALL voice on the channel — clear calls there are garbled, so only for channels that always use it' : '') + '. Stored on the server; never shown again. Only enter keys for systems you are authorized to monitor.' }));
   applyMode();
   return wrap;
 }
