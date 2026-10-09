@@ -185,6 +185,14 @@ target_compile_options(test_dmr_slot_aggregator PRIVATE -Wall -Wextra)
 add_test(NAME dmr_slot_aggregator_test COMMAND test_dmr_slot_aggregator)
 set_tests_properties(dmr_slot_aggregator_test PROPERTIES TIMEOUT 30)
 
+# Voice-quality analyzer: spectral-flatness intelligibility check
+# (audio_quality.hpp, header-only in src/). Pure DSP on synthetic signals.
+add_executable(test_audio_quality EXCLUDE_FROM_ALL tests/test_audio_quality.cpp)
+target_include_directories(test_audio_quality PRIVATE src)
+target_compile_options(test_audio_quality PRIVATE -Wall -Wextra)
+add_test(NAME audio_quality_test COMMAND test_audio_quality)
+set_tests_properties(audio_quality_test PROPERTIES TIMEOUT 30)
+
 # Status-page backend: ServerStats registry + HTML/JSON renderers
 # (header-only, in src/). Pure in-process logic -- no sockets, always runs.
 add_executable(test_server_stats EXCLUDE_FROM_ALL tests/test_server_stats.cpp)
