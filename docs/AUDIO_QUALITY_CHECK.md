@@ -28,15 +28,25 @@ Status: **Layer 2 built** on branch `claude/audio-quality-check`. Layer 1
     frame-to-frame.
   - A cipher XORs each frame, so the exact comfort-noise codeword NEVER appears
     in encrypted audio, and scrambled speech never repeats frame-to-frame.
-  The analyzer tracks the silence-codeword fraction (`sil`), the
-  consecutive-repeat fraction (`rep`), and the per-frame `err` counts (FEC/RF,
-  diagnostic only). Verdict is driven by the comfort-noise fraction alone so
-  that every encrypted call (which has 0%) flags red: `sil >= 2%` -> good;
-  `0.5% <= sil < 2%` -> marginal (a thin borderline buffer, empty in current
-  captures, that keeps an unusually pause-light clear call off "unusable");
-  `sil < 0.5%` -> unusable. Min 50 frames or "unknown". The `rep` fraction is
-  no longer in the verdict (it is kept as a diagnostic: it separates encrypted
-  speech, ~0% rep, from encrypted silence, which repeats).
+  The verdict keys on the COUNT of the exact comfort-noise codeword, which a
+  cipher can never produce (it scrambles the standard value away): its presence
+  means the call had real pauses and is clear. Calibrated on real captures --
+  clear calls always carry several comfort-noise frames (a pause is multiple
+  20 ms frames), encrypted calls carry exactly zero:
+  - `>= 2` comfort-noise frames -> **good** (clear, has natural pauses).
+  - `0` comfort-noise frames and `>= 80` frames (~1.6 s) -> **unusable** (a
+    multi-second transmission with no pause at all is scrambled; every
+    unsignalled-encrypted call flags here).
+  - `0` comfort-noise frames and a short burst (< 80 frames) -> **unknown**: a
+    quick clear word with no pause and a short encrypted burst look identical,
+    so don't risk a false "unusable".
+  - `< 50` frames -> **unknown** (too short to judge).
+  There is no longer a "marginal" verdict -- it was a false-positive magnet
+  for long continuous talkers (one pause in a 30 s over reads ~1% comfort-noise
+  and used to land marginal; now it reads good). The silence fraction (`qs`),
+  repeat fraction (`qr`) and `err`/frame (`qe`) are kept as diagnostics only;
+  `qr` still separates encrypted speech (~0% rep) from encrypted silence
+  (repeats) in the hover.
   - Wired into `AssocModel`: fed from the **event stream** in `ingest()` (not
     the PCM), so it runs whenever voice is decoded, independent of recording
     (`DSD_NET_QUALITY=0` disables). Per-call analyzers in `call_quality_`,
@@ -65,20 +75,26 @@ Status: **Layer 2 built** on branch `claude/audio-quality-check`. Layer 1
   - Scope: AMBE+2 only (DMR / NXDN / P25 Phase 2). P25 Phase 1 uses IMBE
     (different marker), so those calls get no frames -> verdict "unknown".
 
-- **Calibration (on real captures, incl. a mixed clear+encrypted recording).**
-  | call | silence codeword | consecutive repeats | verdict |
-  |---|---|---|---|
-  | clear speech (9+ calls) | 4-25% | 5-24% | good |
-  | encrypted speech (440.425) | 0% | 0-2% | unusable |
-  | encrypted silence | 0% | ~8% | marginal |
-  Validated end-to-end by replaying a real recording: both 440.425 encrypted
-  calls read unusable, all clear 460.x calls read good (no false positives).
-  Caveats to widen the sample against: a truly continuous clear talker (no
-  pauses) could drop `sil` below 2% -> would land at marginal (not unusable,
-  since clear voice still repeats sustained frames). A radio using a
-  non-standard comfort-noise frame would read 0% silence -> false flag; the
-  codeword is the AMBE+2 standard so this is unlikely but unverified across
-  radios. Encrypted silence lands at marginal (low content, honest).
+- **Calibration (on several real captures, clear + encrypted traffic).**
+  | call | comfort-noise codeword frames | verdict |
+  |---|---|---|
+  | clear speech (~100 calls) | 4-19 (several; always >= 2) | good |
+  | unsignalled-encrypted (440.425) | 0 | unusable |
+  | short clear word, no pause (57 frames) | 0 | unknown (not flagged) |
+  Validated across five real recordings: every unsignalled-encrypted 440.425
+  call reads unusable, every clear call reads good, and the two false-positive
+  modes are fixed -- long continuous talkers (12-30 s, one pause, ~1% of
+  frames comfort-noise) now read good, and a 1 s no-pause clear burst reads
+  unknown instead of a false unusable.
+  Tunable to widen against: `kNoPauseUnusable` (80 frames ~1.6 s) is the
+  boundary for the zero-comfort-noise case. The shortest observed false-
+  positive clear-no-pause call was 57 frames and the shortest real encrypted
+  call ~90; 80 sits between. A longer clear burst with truly no pause (>= 80
+  frames, ~1.6 s) would still false-flag unusable, and a short (< 80 frame)
+  encrypted burst reads unknown rather than unusable -- both are the price of
+  the zero-comfort-noise ambiguity. A radio using a non-standard comfort-noise
+  frame would read 0 -> false flag; the codeword is the AMBE+2 standard, so
+  unlikely but unverified across radios.
 
 - **To do — Layer 1 (RF error rate) as a verdict input.** The `err` counts
   are parsed and exposed but don't yet gate the verdict (no weak-signal

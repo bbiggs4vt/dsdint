@@ -72,11 +72,12 @@ int main() {
         check(s.verdict == V::Unusable, "encrypted silence call -> unusable (no comfort-noise)");
     }
 
-    // ---- threshold boundaries ----
-    check(VoiceQuality::classify(49, 0.0) == V::Unknown, "verdict: < kMinFrames -> unknown");
-    check(VoiceQuality::classify(100, 0.03) == V::Good, "verdict: silence >= 2% -> good");
-    check(VoiceQuality::classify(100, 0.0) == V::Unusable, "verdict: no comfort-noise -> unusable");
-    check(VoiceQuality::classify(100, 0.01) == V::Marginal, "verdict: trace comfort-noise (0.5-2%) -> marginal");
+    // ---- threshold boundaries (classify(frames, silence-frame count)) ----
+    check(VoiceQuality::classify(49, 0) == V::Unknown, "verdict: < kMinFrames -> unknown");
+    check(VoiceQuality::classify(500, 2) == V::Good, "verdict: >=2 comfort-noise frames -> good");
+    check(VoiceQuality::classify(500, 1) == V::Unusable, "verdict: 1 comfort-noise frame in a long call -> unusable");
+    check(VoiceQuality::classify(100, 0) == V::Unusable, "verdict: no comfort-noise, long (>=80) -> unusable");
+    check(VoiceQuality::classify(60, 0) == V::Unknown, "verdict: no comfort-noise, short (<80) -> unknown");
 
     // ---- err accumulation (RF signal, diagnostic only) ----
     {

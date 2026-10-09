@@ -54,14 +54,17 @@ public:
     // voice). Drops short noise fragments (call edges, bad syncs).
     static constexpr std::uint32_t kMinFrames = 50;
 
-    // Thresholds, calibrated on real clear vs. encrypted captures. Every clear
-    // call measured >= 2.6% comfort-noise ("silence") frames; every encrypted
-    // call measured exactly 0% (a cipher scrambles the standard codeword away).
-    // So silence >= 2% is clear, silence == 0 is scrambled/unusable, and a thin
-    // band between the two is a borderline buffer (empty in current captures)
-    // that keeps an unusually pause-light clear call off the red "unusable".
-    static constexpr double kSilenceClear = 0.02;   // >= -> has real comfort-noise -> good
-    static constexpr double kSilenceNone  = 0.005;  // <  -> no comfort-noise at all -> unusable
+    // The verdict keys on the EXACT comfort-noise codeword, which a cipher can
+    // never produce (scrambling the standard value away): its presence means
+    // the call has real natural pauses and is clear. Calibrated on real
+    // captures -- clear calls always carry several of these frames (a brief
+    // pause is multiple 20 ms frames); encrypted calls carry exactly zero.
+    static constexpr std::uint32_t kClearSilenceFrames = 2;  // >= -> clear (has real pauses)
+    // With ZERO comfort-noise frames, a transmission this long or longer has
+    // gone ~1.6 s+ without any pause -> scrambled / unusable. Below it, a quick
+    // clear word with no pause and a short encrypted burst look identical, so
+    // the verdict stays "unknown" rather than risk a false "unusable".
+    static constexpr std::uint32_t kNoPauseUnusable = 80;
 
     struct Summary {
         std::uint32_t frames = 0;
@@ -108,19 +111,21 @@ public:
             s.rep = static_cast<double>(repeats_) / frames_;
         }
         if (err_frames_) s.err_per_frame = static_cast<double>(err_sum_) / err_frames_;
-        s.verdict = classify(frames_, s.sil);
+        s.verdict = classify(frames_, silence_);
         return s;
     }
 
-    // Verdict from the comfort-noise ("silence") codeword fraction alone. The
-    // repeat fraction is kept as a diagnostic (it separates encrypted speech
-    // from encrypted silence) but no longer changes the verdict: any call with
-    // no real comfort-noise reads unusable, so encrypted calls all flag red.
-    static Verdict classify(std::uint32_t frames, double sil) {
+    // Verdict from the exact comfort-noise codeword count. Present -> the call
+    // has real pauses -> clear. Absent in a multi-second transmission ->
+    // scrambled/unusable (encrypted calls all flag). Absent in a short burst ->
+    // unknown: a quick clear word with no pause looks the same as a short
+    // encrypted burst, so we don't risk a false "unusable". The repeat fraction
+    // (Summary::rep) is kept as a diagnostic only.
+    static Verdict classify(std::uint32_t frames, std::uint32_t silence) {
         if (frames < kMinFrames) return Verdict::Unknown;
-        if (sil >= kSilenceClear) return Verdict::Good;       // real comfort-noise -> clear speech
-        if (sil >= kSilenceNone)  return Verdict::Marginal;   // a trace of comfort-noise -> borderline
-        return Verdict::Unusable;                             // none at all -> scrambled / unusable
+        if (silence >= kClearSilenceFrames) return Verdict::Good;
+        if (frames >= kNoPauseUnusable) return Verdict::Unusable;
+        return Verdict::Unknown;
     }
 
     static const char* verdict_str(Verdict v) {
