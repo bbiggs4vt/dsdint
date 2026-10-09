@@ -39,3 +39,4 @@ dsd-fme
 # Python bytecode cache (e.g. from tools/ scripts imported by test harnesses)
 __pycache__/
 *.pyc
+!patches/*.patch

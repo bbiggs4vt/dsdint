@@ -153,6 +153,54 @@ int main() {
         fs::remove(kf);
     }
 
+    // ---- DMR Enhanced Privacy (a secret hex key per network, any key id) ----
+    {
+        AssocModel m;
+        check(m.set_ep("dmr", "cc:1@440425000", "1a2b3c4d5e"), "ep: a 10-hex-digit key is set");
+        check(m.set_ep("dmr", "cc:2@451000000", "abc") && m.ep_for_freq("dmr", 451000000) == "0000000ABC",
+              "ep: a shorter key is zero-padded to 40 bits");
+        check(!m.set_ep("dmr", "cc:1@440425000", "") && !m.set_ep("dmr", "cc:1@440425000", "0000") &&
+                  !m.set_ep("dmr", "cc:1@440425000", "123456789AB") && !m.set_ep("dmr", "cc:1@440425000", "xyz") &&
+                  !m.set_ep("dmr", "", "01"),
+              "ep: empty / zero / over 40-bit / non-hex keys and an empty network are rejected");
+        const std::string js = m.to_json(2000);
+        check(js.find("\"ep\":{\"dmr\":[\"cc:1@440425000\",\"cc:2@451000000\"]}") != std::string::npos &&
+                  js.find("1A2B3C4D5E") == std::string::npos,
+              "ep: /net.json lists the networks but never the key value");
+        check(m.ep_for_freq("dmr", 440425000) == "1A2B3C4D5E", "ep: matched by the network's frequency");
+        check(m.ep_for_freq("dmr", 460175000).empty() && m.ep_for_freq("p25", 440425000).empty() &&
+                  m.ep_for_freq("dmr", 0).empty(),
+              "ep: no match for another frequency / family / no frequency");
+
+        // The stream's -K list: the EP key for every 8-bit key id, then the
+        // keyring (so a key-id key overrides EP for its own id).
+        m.set_key("dmr", "cc:1@440425000", "05", "24", "00112233445566778899AABBCCDDEEFF");
+        const std::string csv = m.keys_csv_stream("dmr", "1A2B3C4D5E");
+        check(csv.rfind("KEY ID,KEY\n00,1A2B3C4D5E\n", 0) == 0 && csv.find("\nFF,1A2B3C4D5E\n") != std::string::npos &&
+                  csv.find("KEY ID") == csv.rfind("KEY ID"),
+              "ep: the stream key list has the EP key for ids 00-FF and one header");
+        check(csv.find("\nFF,1A2B3C4D5E\n05,0011223344556677,8899AABBCCDDEEFF\n") != std::string::npos,
+              "ep: keyring keys follow the EP rows (later rows win in dsd-fme)");
+        check(m.keys_csv_stream("dmr", "") == m.keys_csv_family("dmr"), "ep: no EP key -> the plain family list");
+
+        check(m.remove_ep("dmr", "cc:1@440425000") && m.ep_for_freq("dmr", 440425000).empty() &&
+                  !m.remove_ep("dmr", "cc:1@440425000"),
+              "ep: remove clears it, and removing again is false");
+
+        namespace fs = std::filesystem;
+        const std::string kf = (fs::temp_directory_path() / ("dsd_ep_keys_" + std::to_string(::getpid()) + ".json")).string();
+        fs::remove(kf);
+        AssocModel w;
+        w.use_keys_file(kf);
+        w.set_ep("dmr", "cc:5@451237500", "0102030405");
+        w.set_bp("dmr", "cc:5@451237500", 9);
+        AssocModel r;
+        check(r.use_keys_file(kf) && r.ep_for_freq("dmr", 451237500) == "0102030405" &&
+                  r.bp_for_freq("dmr", 451237500) == 9,
+              "ep: it is kept in the keys file (beside BP) and comes back on load");
+        fs::remove(kf);
+    }
+
     if (g_failures == 0) { std::printf("\nALL KEYRING TESTS PASSED\n"); return 0; }
     std::printf("\n%d KEYRING TEST(S) FAILED\n", g_failures);
     return 1;

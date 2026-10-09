@@ -683,6 +683,21 @@ void Session::serve_http() {
         }
         if (!ok) res->result(http::status::bad_request);
         res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
+    } else if (post && target == "/net/ep/set") {
+        // Set a DMR Enhanced Privacy (ARC4) key for a network -- 1-10 hex
+        // digits, applied to every EP call on the network's frequency whatever
+        // key id it announces. Secret: kept with the keyring, never echoed.
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "application/json");
+        bool ok = false;
+        if (stats_) {
+            const auto obj = json::parse_flat_object(http_req_.body());
+            std::string fam = json::get_string(obj, "fam");
+            if (fam.empty()) fam = "dmr";
+            ok = stats_->assoc().set_ep(fam, json::get_string(obj, "net"), json::get_string(obj, "key"));
+        }
+        if (!ok) res->result(http::status::bad_request);
+        res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
     } else if (post && target == "/net/merge") {
         const std::string out = net_merge_response(http_req_.body());
         res->result(out.compare(0, 9, "{\"error\":") == 0 ? http::status::bad_request : http::status::ok);
@@ -841,6 +856,13 @@ void Session::serve_http() {
         std::string fam = query_param(query, "fam");
         if (fam.empty()) fam = "dmr";
         bool ok = stats_ && stats_->assoc().remove_bp(fam, query_param(query, "net"));
+        res->result(ok ? http::status::ok : http::status::bad_request);
+        res->set(http::field::content_type, "application/json");
+        res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
+    } else if (target == "/net/ep/remove") {
+        std::string fam = query_param(query, "fam");
+        if (fam.empty()) fam = "dmr";
+        bool ok = stats_ && stats_->assoc().remove_ep(fam, query_param(query, "net"));
         res->result(ok ? http::status::ok : http::status::bad_request);
         res->set(http::field::content_type, "application/json");
         res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
@@ -1567,12 +1589,16 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         // stream's frequency). Applied only when the client didn't send its
         // own bp key; BP is DMR-only, though an "auto" stream may still match a
         // DMR BP entry on its frequency.
+        // DMR Enhanced Privacy set in the explorer is matched the same way
+        // and goes into this stream's -K list (below).
         int stored_bp = 0;
-        if (stats_ && key_type_enum != KeyType::Bp) {
+        std::string stored_ep;
+        if (stats_) {
             const std::string bpfam = assoc_family(protocol_hint_label(hint));
             if (bpfam == "dmr" || bpfam == "auto") {
                 const std::int64_t chf = center_freq_ > 0 ? channel_freq(center_freq_ + freq_offset) : 0;
-                stored_bp = stats_->assoc().bp_for_freq("dmr", chf);
+                if (key_type_enum != KeyType::Bp) stored_bp = stats_->assoc().bp_for_freq("dmr", chf);
+                stored_ep = stats_->assoc().ep_for_freq("dmr", chf);
             }
         }
         // On a keyring restart, keep the port the decode client is already
@@ -1650,11 +1676,13 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         // for the stream's family (all families when the protocol is "auto");
         // keys added later take effect when the stream restarts. The list
         // carries key VALUES, so the file is owner-only and removed in
-        // stop_pipeline.
+        // stop_pipeline. A DMR EP key for this frequency is written in as the
+        // key for every 8-bit key id (keyring keys still win for their ids);
+        // dsd-fme's -1 isn't used for it because -1 turns the key list off.
         if (stats_ && std::getenv("DSD_NET_NO_APPLY_KEYS") == nullptr) {
             std::string kfam = assoc_family(protocol_hint_label(hint));
             if (kfam == "auto") kfam.clear();                 // not known yet -> all families
-            const std::string csv = stats_->assoc().keys_csv_family(kfam);
+            const std::string csv = stats_->assoc().keys_csv_stream(kfam, stored_ep);
             if (csv.size() > sizeof("KEY ID,KEY\n") - 1) {    // more than just the header
                 std::string tmpl = (std::filesystem::temp_directory_path() / "dsd_klist_XXXXXX").string();
                 std::vector<char> path(tmpl.begin(), tmpl.end());
