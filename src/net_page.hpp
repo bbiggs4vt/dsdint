@@ -3402,7 +3402,8 @@ function addStreamFams(d) {
 // is on (a tab's "… streams connected …", which ticks) doesn't flicker as the
 // page refreshes. FT caches the elements; only their text / title / class
 // change, and a node is created or removed only when the set changes.
-var FT = { tab: {}, conn: null, imps: null };
+// FT.order: the protocol tabs' order, fixed once set (see famOrder).
+var FT = { tab: {}, conn: null, imps: null, order: null };
 function famTabEl(f) {
   var b = FT.tab[f];
   if (!b) {
@@ -3440,6 +3441,19 @@ function fillTab(b, f) {
   var lt = label + ' '; if (b._label.nodeValue !== lt) b._label.nodeValue = lt;
   if (b._count.textContent !== count) b._count.textContent = count;
 }
+// The protocol tabs' order. They are sorted by activity (calls + talkgroups +
+// radios) the first time there are any, and then keep their places: re-sorting
+// every poll made tabs with similar counts (DMR and P25 early in a session)
+// swap back and forth. A protocol that shows up later goes at the end (by
+// activity among the newcomers); one that goes away keeps its place for if it
+// comes back. A new view (live / an opened file) sorts afresh; so does a reload.
+function famOrder(fams) {
+  var byAct = function (a, b) { return famTotals(b) - famTotals(a); };
+  if (!FT.order) FT.order = [];
+  var fresh = fams.filter(function (f) { return FT.order.indexOf(f) < 0; }).sort(byAct);
+  FT.order = FT.order.concat(fresh);
+  return FT.order.filter(function (f) { return fams.indexOf(f) >= 0; });
+}
 function renderFamtabs(fams) {
   var ft = $('famtabs');
   Object.keys(FT.tab).forEach(function (f) {         // families gone: drop their tabs
@@ -3464,9 +3478,9 @@ function renderAll() {
   // (identified, or with traffic) -- or a decode stream connected to it now
   // (receiving, nothing identified yet). A protocol with only bare
   // "Unidentified · <freq>" buckets and no live stream is dropped with them.
-  var fams = Object.keys(S.d.families).filter(function (f) {
+  var fams = famOrder(Object.keys(S.d.families).filter(function (f) {
     return streamsOf(f).length || S.d.families[f].networks.some(netShown);
-  }).sort(function (a, b) { return famTotals(b) - famTotals(a); });
+  }));
   $('empty').hidden = fams.length > 0;
   $('main').hidden = !fams.length;
   if (fams.length && fams.indexOf(S.fam) < 0) { S.fam = fams[0]; S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; }
@@ -3562,6 +3576,7 @@ function openData(d, name, report) {
   if (d.format === 'dsd-net-export' && d.format_version > 1)
     alert('This export uses a newer format (v' + d.format_version + '); some details may not show.');
   S.file = { name: name, exported: d.exported || d.now, source: d.name || d.source || '' };
+  FT.order = null;                                    // a new view: sort its tabs afresh
   S.d = { version: -Date.now(), now: d.now || d.exported, families: d.families, rec: {}, merges: d.merges || {} };
   applyMerges(S.d);
   S.fam = null; S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; S.q = ''; $('q').value = ''; GR.sig = ''; GR.fitted = false; GR.userView = false;
@@ -3688,6 +3703,7 @@ function backToLive() {
   if (PLAYER.a && PLAYER.name && S.file) { PLAYER.a.pause(); PLAYER.name = null; }
   clearFileAudio();
   S.file = null; S.d = null; IX = null; S.fam = load('fam'); S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; GR.sig = ''; GR.fitted = false; GR.userView = false;
+  FT.order = null;
   document.body.classList.remove('filemode');
   $('filebar').hidden = true;
   $('live').textContent = 'connecting\u2026';
