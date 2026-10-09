@@ -1170,6 +1170,19 @@ int main() {
         const J& c = j["families"]["dstar"]["calls"].at(0);
         check(c["voice"].b && c["q"].s.empty(), "quality: D-STAR voice call -> no verdict (not AMBE+2)");
     }
+    // P25 voice with no AMBE+2 frames (Phase 1 / IMBE) -> no badge, NOT
+    // "unknown" (0 frames there means IMBE, not a failure to decode voice).
+    {
+        AssocModel m;
+        m.begin_stream(1, "p25p1", 0);
+        line(m, 1, "2023/10/02 10:23:18 P25 TGT: 00000100; SRC: 00002048; NAC: 293; ", 1000);
+        DsdEvent vs; vs.kind = "voice"; vs.slot = "";   // voice, no AMBE+2 frames (IMBE)
+        for (int i = 0; i < 20; ++i) m.ingest(1, vs, 1001 + i);
+        J j = snap(m, 1100);
+        const J* c = nullptr;
+        for (const auto& x : j["families"]["p25"]["calls"].a) if (x["src"].s == "2048") c = &x;
+        check(c && (*c)["voice"].b && (*c)["q"].s.empty(), "quality: P25 voice, no AMBE+2 frames -> no badge (Phase 1 IMBE)");
+    }
 
     if (g_failures == 0) {
         std::printf("\nALL ASSOC MODEL TESTS PASSED\n");

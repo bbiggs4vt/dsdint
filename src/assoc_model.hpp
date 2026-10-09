@@ -95,6 +95,16 @@ inline bool quality_ambe2_family(const std::string& fam) {
            fam == "dpmr" || fam == "ysf" || fam == "x2tdma";
 }
 
+// Families where AMBE+2 is the ONLY voice codec, so a voice call with no
+// decoded AMBE+2 frames really means no voice was decoded (-> "QUALITY ?").
+// P25 is excluded: Phase 1 uses IMBE, which produces no AMBE+2 frames but IS
+// decoded voice -- we just cannot assess it, so it should show no badge rather
+// than "couldn't assess". (Phase 2 calls that do produce AMBE+2 frames still
+// get a real verdict via quality_ambe2_family.)
+inline bool quality_no_frames_is_unknown(const std::string& fam) {
+    return quality_ambe2_family(fam) && fam != "p25";
+}
+
 class AssocModel {
 public:
     // ---- tunables -------------------------------------------------------
@@ -1320,10 +1330,12 @@ private:
                         c.qrep = s.rep;
                         c.qerr = s.err_per_frame;
                         c.qframes = s.frames;
-                    } else if (k.voice && s.frames == 0) {
-                        // Flagged voice but no AMBE voice frames ever decoded
+                    } else if (k.voice && s.frames == 0 && quality_no_frames_is_unknown(fk.first)) {
+                        // Flagged voice but no AMBE+2 voice frames ever decoded
                         // (e.g. a sync-only channel): quality couldn't be
-                        // assessed -- say so rather than show nothing.
+                        // assessed -- say so rather than show nothing. Not for
+                        // P25, where 0 frames usually means Phase 1 (IMBE), not
+                        // a failure to decode.
                         c.qual = "unknown";
                     }
                 }
