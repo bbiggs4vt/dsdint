@@ -130,9 +130,9 @@ static J snap(const AssocModel& m, std::int64_t t, bool* ok = nullptr) { return 
 // one per ms from `t`. If `unique`, each frame gets a distinct codeword
 // (scrambled/encrypted); otherwise the given fixed `frame` codeword repeats.
 static void feed_frames(AssocModel& m, std::uint64_t sid, std::uint64_t frame, bool unique,
-                        int n, std::int64_t t) {
+                        int n, std::int64_t t, const std::string& slot = "1") {
     for (int i = 0; i < n; ++i) {
-        DsdEvent vf; vf.kind = "voice"; vf.slot = "1"; vf.voice_err = 0;
+        DsdEvent vf; vf.kind = "voice"; vf.slot = slot; vf.voice_err = 0;
         vf.voice_frame = unique ? frame + static_cast<std::uint64_t>(i) * 0x1111 : frame;
         m.ingest(sid, vf, t + i);
     }
@@ -1143,6 +1143,20 @@ int main() {
         J j = snap(m, 1100);
         const J& c = j["families"]["dmr"]["calls"].at(0);
         check(c["voice"].b && c["q"].s == "unknown", "quality: voice call, no frames decoded -> q=unknown");
+    }
+    // Signalled-encrypted call with no key: no quality verdict (the ENCRYPTED
+    // badge already says so; a redundant quality tag would be noise).
+    {
+        AssocModel m;
+        m.begin_stream(1, "p25p1", 0);
+        line(m, 1, "2023/10/02 10:23:18 P25 TGT: 00000100; SRC: 00002048; NAC: 293; ", 1000);
+        line(m, 1, " HDU  ALG ID: 0x84 KEY ID: 0x0042 MI: 0x0123456789ABCDEF ENC", 1100);
+        feed_frames(m, 1, 0x123456789A00ULL, true, 250, 1200, "");   // scrambled frames (would be unusable)
+        J j = snap(m, 2000);
+        const J* ec = nullptr;
+        for (const auto& c : j["families"]["p25"]["calls"].a) if (c["src"].s == "2048") ec = &c;
+        check(ec && (*ec)["enc"].b, "quality: signalled-encrypted call is flagged enc");
+        check(ec && (*ec)["q"].s.empty(), "quality: signalled-encrypted, no key -> no quality verdict");
     }
 
     if (g_failures == 0) {

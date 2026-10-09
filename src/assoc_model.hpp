@@ -1189,7 +1189,17 @@ private:
                     if (k.open)
                         if (auto qit = call_quality_.find(k.id); qit != call_quality_.end())
                             s = qit->second.summary();
-                    if (s.verdict != VoiceQuality::Verdict::Unknown) {
+                    // A call the protocol flags encrypted (signalled: a key id
+                    // / algorithm) that we have no key for already shows an
+                    // ENCRYPTED badge and has no intelligible audio to judge --
+                    // a quality verdict there is redundant noise, so suppress
+                    // it. (With a key the call decodes clear and reads "good".)
+                    // Unsignalled encryption (no key id) is NOT flagged here, so
+                    // it still gets a verdict -- that is the whole point.
+                    const bool enc_no_key = k.encrypted && s.verdict != VoiceQuality::Verdict::Good;
+                    if (enc_no_key) {
+                        // leave c.qual empty: defer to the ENCRYPTED badge
+                    } else if (s.verdict != VoiceQuality::Verdict::Unknown) {
                         c.qual = VoiceQuality::verdict_str(s.verdict);
                         c.qsil = s.sil;
                         c.qrep = s.rep;

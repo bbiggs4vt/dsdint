@@ -52,6 +52,14 @@ Status: **Layer 2 built** on branch `claude/audio-quality-check`. Layer 1
     "couldn't assess" rather than showing nothing. A voice call with some
     frames but fewer than the 50-frame minimum stays unbadged (it did get
     bursts, just too few to judge).
+  - A call the protocol flags encrypted (SIGNALLED: a key id / algorithm, so
+    `enc` is set) that we have no key for gets NO quality verdict -- the
+    ENCRYPTED badge already says so, and there is no intelligible audio to
+    judge, so a quality tag would be redundant noise. (With a key it decodes
+    clear and reads "good".) This suppression keys on the signalled `enc`
+    flag only; UNSIGNALLED encryption (no key id, e.g. TYT EP) is never
+    flagged `enc`, so it still gets a verdict -- catching it is the whole
+    point of this feature.
   - Tests: `tests/test_audio_quality.cpp`, `tests/test_dsd_fme_parse.cpp`,
     `tests/test_assoc_model.cpp` integration -- all keyed to the real stats.
   - Scope: AMBE+2 only (DMR / NXDN / P25 Phase 2). P25 Phase 1 uses IMBE
