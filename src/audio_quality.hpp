@@ -1,117 +1,128 @@
 // audio_quality.hpp
 //
-// Streaming voice-quality / intelligibility analyzer for decoded 8 kHz mono
-// PCM (one decoder slot's voice). It accumulates per-frame spectral and
-// energy statistics over a call and produces a provisional quality verdict:
-// does the decoded audio resemble intelligible speech, or not?
+// Per-call voice-quality / intelligibility analyzer for AMBE-based digital
+// voice (DMR / NXDN / P25 Phase 2, which use the AMBE+2 3600x2450 vocoder).
 //
-// This is Layer 2 of the design in docs/AUDIO_QUALITY_CHECK.md. It measures
-// SIGNAL QUALITY ONLY and deliberately does NOT attribute a cause: noise,
-// a bad decode, and encrypted-sounds-like-noise are indistinguishable to it
-// by design. Its verdict is "usable / not usable", never "encrypted". The
-// backend may cross-reference it with the decoder's FEC error rate (Layer 1)
-// to tell a noisy link from a clean-link content problem, but that lives
-// elsewhere; this unit only looks at the audio.
+// It works from the vocoder's per-frame AMBE codewords -- which dsd-fme emits
+// with "-Z" as " AMBE <hex> err = [a] [b]" lines, already parsed into voice
+// events -- NOT from the decoded PCM. That matters: the AMBE vocoder
+// synthesizes speech-SHAPED output (formants, pitch) even from scrambled or
+// corrupt parameters, so the PCM of encrypted/garbled audio looks just like
+// clear speech (measured: spectral flatness ~0.15 for both). The discriminating
+// signal lives in the codeword's b0 pitch index, BEFORE synthesis:
 //
-// The primary feature is spectral flatness (Wiener entropy): the ratio of the
-// geometric to the arithmetic mean of the power spectrum. Voiced speech is
-// tonal/structured -> low flatness; white noise and structureless audio ->
-// flatness near 1. Silence is excluded (an energy floor) so it does not skew
-// the average. Zero-crossing rate is kept as a secondary diagnostic.
+//   b0 120-123 -> erasure frame (unrecoverable)   ] "junk": the vocoder got
+//   b0 126-127 -> tone frame (out-of-band)        ] parameters it can't use
+//   b0 124-125 -> silence / comfort-noise frame   (a natural speech pause)
+//   b0  < 120  -> speech frame
 //
-// Self-contained (a tiny radix-2 FFT lives here) so it has no dependencies and
-// is unit-testable with synthetic signals. Not thread-safe; feed one call's
-// audio from one thread. Buffers are sized once so feed() does not allocate.
+// Measured on real captures (see docs/AUDIO_QUALITY_CHECK.md "Calibration"):
+//   clear speech : silence 4-24%, junk ~0%
+//   encrypted    : silence ~0% (no natural pauses), junk up to ~15%
+// So a high junk fraction means garbled/unintelligible, and ~0% silence means
+// no natural speech pauses (continuous noise/encryption). The per-frame err
+// counts are accumulated too (the FEC/RF-quality signal) but do not yet gate
+// the verdict -- that needs weak-signal calibration data we do not have.
+//
+// This measures SIGNAL QUALITY ONLY and never attributes a cause: a weak link,
+// a bad decode, and encryption can all drive the same numbers. Its verdict is
+// "usable / not usable", never "encrypted". Not thread-safe; feed one call's
+// frames from one thread (the model holds its lock).
 
 #pragma once
 
-#include <algorithm>
-#include <cmath>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
-#include <vector>
+#include <cstdlib>
+#include <string>
 
 namespace dsdsrv {
 
 class VoiceQuality {
 public:
-    static constexpr int kRate = 8000;
-    static constexpr int kFftSize = 256;   // 32 ms analysis frame at 8 kHz
-    static constexpr int kHop = 128;       // 50% overlap -> ~62 frames/sec
-
-    // Energy floor below which a frame is treated as silence and excluded
-    // from the spectral statistics. int16 RMS; ~ -46 dBFS. Keeps room tone
-    // and inter-word gaps from dragging the flatness average around.
-    static constexpr double kSilenceRms = 180.0;
-
-    // Minimum voiced frames before a verdict is anything but Unknown. ~0.5 s
-    // of actual voice; shorter bursts do not carry enough to judge.
-    static constexpr std::uint32_t kMinVoicedFrames = 30;
-
-    // PROVISIONAL / UNCALIBRATED verdict thresholds on mean spectral flatness.
-    // Speech voiced segments sit low (structured); white noise ~1.0. These are
-    // first-pass guesses -- see docs/AUDIO_QUALITY_CHECK.md "Calibration". They
-    // MUST be re-tuned against an AWGN gradient and a real encrypted capture
-    // before the verdict is trusted; until then surface it as uncalibrated.
-    static constexpr double kFlatnessGood = 0.22;      // <= this -> speech-like
-    static constexpr double kFlatnessUnusable = 0.50;  // >= this -> structureless
-
+    enum class Frame { Speech, Silence, Erasure, Tone };
     enum class Verdict { Unknown, Good, Marginal, Unusable };
 
+    // Minimum AMBE frames before a verdict is anything but Unknown (~1-2 s of
+    // voice). Drops the short noise fragments (call edges, bad syncs) that the
+    // captures showed as ~18-frame bursts with erratic stats.
+    static constexpr std::uint32_t kMinFrames = 50;
+
+    // Verdict thresholds, calibrated on real clear vs. encrypted captures.
+    // Clear speech measured junk ~0% and silence >= ~4%; the encrypted counting
+    // call measured junk ~15%, and continuous encrypted audio measured silence
+    // ~0%. See docs/AUDIO_QUALITY_CHECK.md.
+    static constexpr double kJunkUnusable = 0.04;   // >= -> garbled / unintelligible
+    static constexpr double kJunkMarginal = 0.02;   // >= -> partly garbled
+    static constexpr double kSilenceLow   = 0.02;   // <= -> no natural pauses (suspicious)
+
     struct Summary {
-        std::uint32_t voiced_frames = 0;   // frames above the silence floor
-        std::uint32_t total_frames = 0;    // all analysis frames (incl. silence)
-        double mean_flatness = 0.0;        // over voiced frames, [0..1]
-        double mean_zcr = 0.0;             // over voiced frames, crossings/sample
+        std::uint32_t frames = 0, speech = 0, silence = 0, erasure = 0, tone = 0;
+        double junk = 0.0;            // (erasure + tone) / frames
+        double sil = 0.0;             // silence / frames
+        double err_per_frame = 0.0;   // mean FEC error count per frame (RF quality)
         Verdict verdict = Verdict::Unknown;
     };
+
+    // The b0 pitch index of an AMBE codeword from dsd-fme's "-Z" hex dump
+    // (e.g. "F801A99F8CE080": 56 bits, the top 49 are the codeword). Returns
+    // -1 if the hex is empty or unparseable.
+    static int b0_of(const std::string& hex) {
+        if (hex.empty() || hex.size() > 16) return -1;
+        for (char ch : hex)
+            if (!std::isxdigit(static_cast<unsigned char>(ch))) return -1;
+        const std::uint64_t word = std::strtoull(hex.c_str(), nullptr, 16) >> 7;  // -> 49-bit codeword
+        auto bit = [word](int i) { return static_cast<int>((word >> (48 - i)) & 1ULL); };
+        return (bit(0) << 6) | (bit(1) << 5) | (bit(2) << 4) | (bit(3) << 3) |
+               (bit(37) << 2) | (bit(38) << 1) | bit(39);
+    }
+
+    static Frame classify_b0(int b0) {
+        if (b0 >= 120 && b0 <= 123) return Frame::Erasure;
+        if (b0 == 124 || b0 == 125) return Frame::Silence;
+        if (b0 >= 126)              return Frame::Tone;
+        return Frame::Speech;
+    }
 
     VoiceQuality() { reset(); }
 
     void reset() {
-        pending_.clear();
-        re_.assign(static_cast<std::size_t>(kFftSize), 0.0f);
-        im_.assign(static_cast<std::size_t>(kFftSize), 0.0f);
-        if (window_.empty()) build_window();
-        voiced_ = 0;
-        total_ = 0;
-        flat_sum_ = 0.0;
-        zcr_sum_ = 0.0;
+        frames_ = speech_ = silence_ = erasure_ = tone_ = 0;
+        err_sum_ = 0; err_frames_ = 0;
     }
 
-    // Feed one block of this call's decoded PCM (8 kHz mono int16). Any number
-    // of samples; frames are formed internally across calls.
-    void feed(const std::int16_t* pcm, std::size_t n) {
-        if (!pcm || !n) return;
-        pending_.insert(pending_.end(), pcm, pcm + n);
-        std::size_t off = 0;
-        const std::size_t fft = static_cast<std::size_t>(kFftSize);
-        while (pending_.size() - off >= fft) {
-            analyze_frame(&pending_[off]);
-            off += static_cast<std::size_t>(kHop);
+    // One AMBE voice frame: its b0 pitch index (from b0_of) and its FEC error
+    // count (sum of the "err = [a] [b]" pair; pass -1 if not known).
+    void feed_frame(int b0, int err) {
+        ++frames_;
+        switch (classify_b0(b0)) {
+            case Frame::Speech:  ++speech_;  break;
+            case Frame::Silence: ++silence_; break;
+            case Frame::Erasure: ++erasure_; break;
+            case Frame::Tone:    ++tone_;    break;
         }
-        if (off) pending_.erase(pending_.begin(), pending_.begin() + static_cast<std::ptrdiff_t>(off));
-        // Cap the carryover so a pathological feed can't grow it without bound.
-        if (pending_.size() > fft) pending_.erase(pending_.begin(), pending_.end() - static_cast<std::ptrdiff_t>(fft));
+        if (err >= 0) { err_sum_ += static_cast<std::uint64_t>(err); ++err_frames_; }
     }
 
     Summary summary() const {
         Summary s;
-        s.total_frames = total_;
-        s.voiced_frames = voiced_;
-        if (voiced_) {
-            s.mean_flatness = flat_sum_ / voiced_;
-            s.mean_zcr = zcr_sum_ / voiced_;
+        s.frames = frames_; s.speech = speech_; s.silence = silence_;
+        s.erasure = erasure_; s.tone = tone_;
+        if (frames_) {
+            s.junk = static_cast<double>(erasure_ + tone_) / frames_;
+            s.sil = static_cast<double>(silence_) / frames_;
         }
-        s.verdict = classify(voiced_, s.mean_flatness);
+        if (err_frames_) s.err_per_frame = static_cast<double>(err_sum_) / err_frames_;
+        s.verdict = classify(frames_, s.junk, s.sil);
         return s;
     }
 
-    static Verdict classify(std::uint32_t voiced, double mean_flatness) {
-        if (voiced < kMinVoicedFrames) return Verdict::Unknown;
-        if (mean_flatness <= kFlatnessGood) return Verdict::Good;
-        if (mean_flatness >= kFlatnessUnusable) return Verdict::Unusable;
-        return Verdict::Marginal;
+    static Verdict classify(std::uint32_t frames, double junk, double sil) {
+        if (frames < kMinFrames) return Verdict::Unknown;
+        if (junk >= kJunkUnusable) return Verdict::Unusable;
+        if (junk >= kJunkMarginal || sil <= kSilenceLow) return Verdict::Marginal;
+        return Verdict::Good;
     }
 
     static const char* verdict_str(Verdict v) {
@@ -125,93 +136,9 @@ public:
     }
 
 private:
-    void build_window() {
-        window_.resize(static_cast<std::size_t>(kFftSize));
-        // Hann window to limit spectral leakage so flatness reflects the signal
-        // rather than the rectangular-window sinc skirts.
-        for (int i = 0; i < kFftSize; ++i)
-            window_[static_cast<std::size_t>(i)] =
-                0.5f - 0.5f * std::cos(2.0 * kPi * i / (kFftSize - 1));
-    }
-
-    void analyze_frame(const std::int16_t* frame) {
-        ++total_;
-        // RMS + zero-crossing rate on the raw (unwindowed) frame.
-        double sumsq = 0.0;
-        std::uint32_t crossings = 0;
-        for (int i = 0; i < kFftSize; ++i) {
-            const double x = frame[i];
-            sumsq += x * x;
-            if (i && ((frame[i] >= 0) != (frame[i - 1] >= 0))) ++crossings;
-        }
-        const double rms = std::sqrt(sumsq / kFftSize);
-        if (rms < kSilenceRms) return;   // silence: excluded from spectral stats
-
-        // Windowed real FFT -> power spectrum -> spectral flatness.
-        for (int i = 0; i < kFftSize; ++i) {
-            re_[static_cast<std::size_t>(i)] = static_cast<float>(frame[i]) * window_[static_cast<std::size_t>(i)];
-            im_[static_cast<std::size_t>(i)] = 0.0f;
-        }
-        fft(re_, im_);
-        // Bins 1 .. N/2 (skip DC; up to Nyquist). Geometric mean via mean of
-        // logs; arithmetic mean of the same bins. flatness = geo / arith.
-        double log_sum = 0.0, lin_sum = 0.0;
-        int bins = 0;
-        const double eps = 1e-9;
-        for (int i = 1; i <= kFftSize / 2; ++i) {
-            const double p = static_cast<double>(re_[static_cast<std::size_t>(i)]) * re_[static_cast<std::size_t>(i)] +
-                             static_cast<double>(im_[static_cast<std::size_t>(i)]) * im_[static_cast<std::size_t>(i)] + eps;
-            log_sum += std::log(p);
-            lin_sum += p;
-            ++bins;
-        }
-        const double geo = std::exp(log_sum / bins);
-        const double arith = lin_sum / bins;
-        const double flatness = arith > 0.0 ? std::clamp(geo / arith, 0.0, 1.0) : 0.0;
-
-        ++voiced_;
-        flat_sum_ += flatness;
-        zcr_sum_ += static_cast<double>(crossings) / kFftSize;
-    }
-
-    // In-place iterative radix-2 Cooley-Tukey FFT. kFftSize is a power of two.
-    static void fft(std::vector<float>& re, std::vector<float>& im) {
-        const int n = static_cast<int>(re.size());
-        // Bit-reversal permutation.
-        for (int i = 1, j = 0; i < n; ++i) {
-            int bit = n >> 1;
-            for (; j & bit; bit >>= 1) j ^= bit;
-            j ^= bit;
-            if (i < j) { std::swap(re[i], re[j]); std::swap(im[i], im[j]); }
-        }
-        for (int len = 2; len <= n; len <<= 1) {
-            const double ang = -2.0 * kPi / len;
-            const float wr = static_cast<float>(std::cos(ang));
-            const float wi = static_cast<float>(std::sin(ang));
-            for (int i = 0; i < n; i += len) {
-                float cur_wr = 1.0f, cur_wi = 0.0f;
-                for (int k = 0; k < len / 2; ++k) {
-                    const int a = i + k, b = i + k + len / 2;
-                    const float tr = re[b] * cur_wr - im[b] * cur_wi;
-                    const float ti = re[b] * cur_wi + im[b] * cur_wr;
-                    re[b] = re[a] - tr; im[b] = im[a] - ti;
-                    re[a] += tr;        im[a] += ti;
-                    const float nwr = cur_wr * wr - cur_wi * wi;
-                    cur_wi = cur_wr * wi + cur_wi * wr;
-                    cur_wr = nwr;
-                }
-            }
-        }
-    }
-
-    static constexpr double kPi = 3.14159265358979323846;
-
-    std::vector<std::int16_t> pending_;   // samples not yet consumed into a frame
-    std::vector<float> re_, im_;          // FFT scratch
-    std::vector<float> window_;           // Hann window
-
-    std::uint32_t voiced_ = 0, total_ = 0;
-    double flat_sum_ = 0.0, zcr_sum_ = 0.0;
+    std::uint32_t frames_, speech_, silence_, erasure_, tone_;
+    std::uint64_t err_sum_;
+    std::uint32_t err_frames_;
 };
 
 }  // namespace dsdsrv

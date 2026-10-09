@@ -455,6 +455,11 @@ public:
             cur->voice = true;
             cur->tx_end_ms = 0;                  // talking again (re-keyed in the hang time)
         }
+        // Voice-quality: feed this AMBE frame (its b0 pitch class + FEC errors)
+        // to the call's analyzer. From the event stream, so it runs whenever
+        // voice is decoded -- independent of recording. DSD_NET_QUALITY=0 off.
+        if (ev.voice_b0 >= 0 && quality_on_.load(std::memory_order_relaxed))
+            call_quality_[cur->id].feed_frame(ev.voice_b0, ev.voice_err);
         if (data) cur->data = true;
         note_service(F, *cur, extra, now);
         if (emerg) cur->emergency = true;
@@ -562,12 +567,9 @@ public:
     // records themselves (what a recording replays), only adds its file.
     void audio(std::uint64_t sid, int slot, const int16_t* pcm, std::size_t n, bool keyed = false,
                std::int64_t now = now_ms()) {
-        if (!n) return;
-        const bool want_rec = audio_on_.load(std::memory_order_relaxed);
-        const bool want_qual = quality_on_.load(std::memory_order_relaxed);
-        if (!want_rec && !want_qual) return;
+        if (!audio_on_.load(std::memory_order_relaxed) || !n) return;
         std::lock_guard<std::mutex> lk(mu_);
-        const bool rec_on = want_rec && audio_.on();   // write a file for this audio?
+        if (!audio_.on()) return;
         auto sit = sess_.find(sid);
         if (sit == sess_.end() || !sit->second.live) return;
         Ctx& c = sit->second;
@@ -604,9 +606,7 @@ public:
             slot = vslot;
         }
         if (!k) {
-            // No call to attribute this audio to yet. Quality needs a call, so
-            // there is nothing to measure; only recording buffers the preroll.
-            if (silent || !rec_on) return;
+            if (silent) return;
             Ctx::Preroll& p = c.preroll[slot];
             if (now - p.last > kPrerollMs) { p.pcm.clear(); p.audible = false; }
             p.audible = p.audible || audible;
@@ -615,15 +615,6 @@ public:
             p.last = now;
             return;
         }
-        // Voice-quality (Layer 2): measure the attributed call's audio BEFORE
-        // the recording gates below, so encrypted/garbled audio (which recording
-        // discards) is still measured. The analyzer excludes silence internally;
-        // skipping digital-silent blocks here just saves the work. Independent
-        // of recording -- this is the only place that must run when rec_on is
-        // false. (A keyed encrypted call is clear here and reads as good; an
-        // unkeyed one reads as structureless -> unusable, which is the point.)
-        if (want_qual && !silent) call_quality_[k->id].feed(pcm, n);
-        if (!rec_on) return;
         if (k->no_audio) return;
         if (k->encrypted && !keyed) {
             k->no_audio = true;
@@ -1200,8 +1191,10 @@ private:
                             s = qit->second.summary();
                     if (s.verdict != VoiceQuality::Verdict::Unknown) {
                         c.qual = VoiceQuality::verdict_str(s.verdict);
-                        c.qflat = s.mean_flatness;
-                        c.qframes = s.voiced_frames;
+                        c.qjunk = s.junk;
+                        c.qsil = s.sil;
+                        c.qerr = s.err_per_frame;
+                        c.qframes = s.frames;
                     }
                 }
                 c.open = k.open && now - k.last_ms <= kContinueMs;

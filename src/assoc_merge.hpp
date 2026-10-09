@@ -387,12 +387,14 @@ struct DsCall {
     std::int64_t freq = 0;
     std::string audio;                          // its audio file on this server, if any (see /net/audio/; an import's once uploaded)
     std::uint64_t audio_ms = 0;
-    // Voice-quality (intelligibility) verdict for the call's decoded audio:
+    // Voice-quality (intelligibility) verdict from the AMBE frame-type stats:
     // "good" | "marginal" | "unusable", or "" when not computed / too short to
     // judge. Signal quality only -- never a cause (see docs/AUDIO_QUALITY_CHECK.md).
     std::string qual;
-    double qflat = 0.0;                         // mean spectral flatness (hover diagnostic; 0 = n/a)
-    std::uint32_t qframes = 0;                  // voiced frames measured (hover diagnostic)
+    double qjunk = 0.0;                          // erasure+tone frame fraction (hover diagnostic)
+    double qsil = 0.0;                           // silence frame fraction (hover diagnostic)
+    double qerr = 0.0;                           // mean FEC errors/frame (hover diagnostic)
+    std::uint32_t qframes = 0;                   // AMBE frames measured (hover diagnostic)
 };
 struct DsFamily {
     std::map<std::string, DsNetwork> networks;
@@ -548,7 +550,8 @@ inline std::string families_json(const Dataset& d) {
             if (!k.svc.empty()) o << ",\"svc\":" << q(k.svc);
             if (!k.pos.empty()) o << ",\"pos\":" << q(k.pos);
             if (!k.kid.empty()) o << ",\"alg\":" << q(k.alg) << ",\"kid\":" << q(k.kid);
-            if (!k.qual.empty()) o << ",\"q\":" << q(k.qual) << ",\"qf\":" << k.qflat << ",\"qn\":" << k.qframes;
+            if (!k.qual.empty()) o << ",\"q\":" << q(k.qual) << ",\"qj\":" << k.qjunk << ",\"qs\":" << k.qsil
+                                   << ",\"qe\":" << k.qerr << ",\"qn\":" << k.qframes;
             o << "}";
         }
         o << "]}";
@@ -747,7 +750,8 @@ inline bool dataset_from_export(const mjson::V& root, const std::string& label, 
                 c.priv = e.boolean("priv"); c.voice = e.boolean("voice"); c.data = e.boolean("data");
                 c.emerg = e.boolean("emerg"); c.enc = e.boolean("enc");
                 c.alg = e.str("alg"); c.kid = e.str("kid");
-                c.qual = e.str("q"); c.qflat = e.num("qf"); c.qframes = static_cast<std::uint32_t>(u(e, "qn"));
+                c.qual = e.str("q"); c.qjunk = e.num("qj"); c.qsil = e.num("qs");
+                c.qerr = e.num("qe"); c.qframes = static_cast<std::uint32_t>(u(e, "qn"));
                 c.open = false;                                  // history, not live
                 c.start = i64(e, "start"); c.last = i64(e, "last"); c.freq = i64(e, "freq");
                 df.calls.push_back(std::move(c));
@@ -906,9 +910,10 @@ inline void fold_call(DsCall& twin, const DsCall& dup) {
     if (svc_rank(dup.svc) > svc_rank(twin.svc)) twin.svc = dup.svc;
     if (twin.pos.empty()) twin.pos = dup.pos;
     if (twin.audio.empty()) { twin.audio = dup.audio; twin.audio_ms = dup.audio_ms; }
-    // Keep the better-supported voice-quality verdict (more voiced frames).
+    // Keep the better-supported voice-quality verdict (more frames measured).
     if (!dup.qual.empty() && (twin.qual.empty() || dup.qframes > twin.qframes)) {
-        twin.qual = dup.qual; twin.qflat = dup.qflat; twin.qframes = dup.qframes;
+        twin.qual = dup.qual; twin.qjunk = dup.qjunk; twin.qsil = dup.qsil;
+        twin.qerr = dup.qerr; twin.qframes = dup.qframes;
     }
     twin.start = std::min(twin.start, dup.start);
     twin.last = std::max(twin.last, dup.last);

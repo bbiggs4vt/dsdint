@@ -1664,17 +1664,19 @@ function typeBadges(c) {
     c.streams > 1 ? h('span', { class: 'badge b-group', title: rx, 'data-tip': rx }, c.streams + ' RX') : null]);
 }
 // A quality badge, only for audio that may not be usable (marginal / unusable);
-// "good" is the norm and shows nothing. Signal-quality only -- it never names a
-// cause (noise, a bad decode, and encryption all read the same), and the
-// thresholds are provisional/uncalibrated. See docs/AUDIO_QUALITY_CHECK.md.
+// "good" is the norm and shows nothing. Built from the AMBE frame-type stats:
+// junk = erasure+tone frames (garble), sil = silence frames (natural pauses).
+// Signal-quality only -- it never names a cause (a weak signal, a bad decode,
+// and encryption all read the same). See docs/AUDIO_QUALITY_CHECK.md.
 function qualBadge(c) {
   if (c.q !== 'unusable' && c.q !== 'marginal') return null;
-  var how = 'spectral flatness ' + (c.qf != null ? Number(c.qf).toFixed(2) : '?') +
-            (c.qn ? ' over ' + c.qn + ' voiced frames' : '');
+  var pct = function (x) { return x != null ? (100 * x).toFixed(0) + '%' : '?'; };
+  var how = 'garbled frames ' + pct(c.qj) + ', silence ' + pct(c.qs) +
+            (c.qn ? ', ' + c.qn + ' frames' : '');
   var tip = (c.q === 'unusable'
-             ? 'Audio quality: likely unusable \u2014 the decoded voice doesn\u2019t resemble intelligible speech (' + how + ').'
-             : 'Audio quality: marginal \u2014 the decoded voice is partly unlike speech (' + how + ').') +
-            ' Signal quality only; the cause is not determined (a weak signal, a bad decode, or encryption all look the same). Provisional \u2014 thresholds not yet calibrated.';
+             ? 'Audio quality: likely unusable \u2014 the decoded voice is largely garbled (' + how + ').'
+             : 'Audio quality: marginal \u2014 part garbled, or no natural speech pauses (' + how + ').') +
+            ' Signal quality only; the cause is not determined (a weak signal, a bad decode, or encryption all look the same). Provisional \u2014 thresholds calibrated on a small sample.';
   return h('span', { class: 'badge ' + (c.q === 'unusable' ? 'b-qlow' : 'b-qmarg'), title: tip, 'data-tip': tip },
            c.q === 'unusable' ? 'LOW QUALITY' : 'MARGINAL');
 }

@@ -1,5 +1,6 @@
 #include "dsd_process.hpp"
 #include "child_fds.hpp"
+#include "audio_quality.hpp"
 
 #include <unistd.h>
 #include <fcntl.h>
@@ -1022,6 +1023,18 @@ DsdEvent classify_dsd_fme_line(const std::string& line) {
     else if (edacs_call) ev.kind = "call"; // EDACS/ProVoice trunking call
     else if (!ev.message.empty()) ev.kind = "message"; // a decoded SMS/short-data body
     else if (!ev.talkgroup.empty() || !ev.source_id.empty()) ev.kind = "call";
+
+    // AMBE voice-frame detail for the quality analyzer, from dsd-fme's "-Z"
+    // payload log: " AMBE F801A99F8CE080 err = [0] [0] ". The codeword's b0
+    // pitch index classifies the frame (speech/silence/erasure/tone); the two
+    // err numbers are the frame's FEC error counts. AMBE+2 only (DMR/NXDN/
+    // P25p2); P25p1's IMBE prints a different marker and is left alone.
+    static const std::regex ambe_re(R"(\bAMBE\s+([0-9A-Fa-f]+)\s+err\s*=\s*\[(\d+)\]\s*\[(\d+)\])",
+                                    std::regex::icase);
+    if (std::regex_search(line, m, ambe_re)) {
+        ev.voice_b0 = VoiceQuality::b0_of(m[1].str());
+        ev.voice_err = std::atoi(m[2].str().c_str()) + std::atoi(m[3].str().c_str());
+    }
 
     return ev;
 }

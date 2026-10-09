@@ -5,29 +5,54 @@ Status: **Layer 2 built** on branch `claude/audio-quality-check`. Layer 1
 
 ## Implementation status
 
-- **Built — Layer 2 (acoustic intelligibility).**
-  - `src/audio_quality.hpp` — `VoiceQuality`: streaming spectral-flatness
-    analyzer (self-contained radix-2 FFT, Hann window, silence floor,
-    min-voiced-frames gate) producing a good/marginal/unusable verdict.
-    Thresholds are provisional/uncalibrated and marked as such.
-  - Wired into `AssocModel`: runs whenever voice is decoded, independent of
-    recording (`DSD_NET_QUALITY=0` disables). Active per-call analyzers live
-    in `call_quality_`, fed in `audio()` before the recording gates (so
-    encrypted/garbled audio is measured too), finalized onto `Call::qual` in
-    `close_call`. Open calls get a live running verdict in the snapshot.
-  - Surfaced in `/net.json` per call as `q` (verdict) + `qf` (mean flatness)
-    + `qn` (voiced frames); round-trips through export/import; merges in
-    `fold_call`. The explorer shows a LOW QUALITY / MARGINAL badge (good shows
-    nothing) with a tooltip that gives the numbers and states cause is not
-    determined.
-  - Tests: `tests/test_audio_quality.cpp` (synthetic signals) and a
-    `tests/test_assoc_model.cpp` integration block (noisy call -> unusable,
-    tone -> good, reaching the JSON).
-- **To do — Layer 1 (FEC error rate).** Parse dsd-fme's FEC/sync-error fields
-  for the noisy-link-vs-clean-link-content-problem distinction. Needs the
-  verbose capture (below) to pin the log-line format.
-- **To do — calibration.** The Layer 2 thresholds are guesses until tuned
-  against an AWGN gradient + a real encrypted capture (below).
+- **Abandoned — spectral flatness on the PCM.** The first attempt measured
+  spectral flatness of the decoded PCM. It does NOT work: the AMBE vocoder
+  synthesizes speech-SHAPED output (formants, pitch) even from scrambled or
+  corrupt parameters, so encrypted/garbled audio and clear speech both read
+  ~0.15 flatness. Measured on real captures: clear 0.152/0.172, encrypted
+  0.141/0.193 -- fully overlapping. An encrypted call read "good". Dead end;
+  the signal is destroyed by the vocoder before the PCM exists.
+
+- **Built — AMBE frame-type analysis (`src/audio_quality.hpp`).** Works from
+  the vocoder's per-frame AMBE codewords, BEFORE synthesis, which dsd-fme
+  emits with `-Z` as ` AMBE <hex> err = [a] [b]` lines (already parsed into
+  voice events; `-Z` is on by default for short-data decode). The codeword's
+  `b0` pitch index classifies each frame: `<120` speech, `124/125` silence,
+  `120-123` erasure, `126/127` tone. The verdict uses the junk fraction
+  (erasure+tone) and the silence fraction; the per-frame `err` counts are
+  accumulated as the FEC/RF signal (diagnostic only for now).
+  - Wired into `AssocModel`: fed from the **event stream** in `ingest()`
+    (not the PCM), so it runs whenever voice is decoded, independent of
+    recording (`DSD_NET_QUALITY=0` disables). Per-call analyzers in
+    `call_quality_`, finalized onto `Call::qual` in `close_call`; open calls
+    get a live running verdict in the snapshot.
+  - `/net.json` per call: `q` (verdict), `qj` (junk frac), `qs` (silence
+    frac), `qe` (err/frame), `qn` (frames); round-trips through export/import;
+    merges in `fold_call`. Explorer shows LOW QUALITY / MARGINAL (good shows
+    nothing), tooltip gives the numbers and states cause is not determined.
+  - Tests: `tests/test_audio_quality.cpp` (real codewords + real-call
+    distributions), `tests/test_dsd_fme_parse.cpp` (AMBE line parse),
+    `tests/test_assoc_model.cpp` integration (clear->good, 15% junk->unusable,
+    no-silence->marginal, via the JSON).
+  - Scope: AMBE+2 only (DMR / NXDN / P25 Phase 2). P25 Phase 1 uses IMBE
+    (different marker), so those calls get no frames -> verdict "unknown".
+
+- **Calibration (done, small sample).** On the real captures:
+  | call | silence | junk (eras+tone) | verdict |
+  |---|---|---|---|
+  | clear speech | 4-24% | ~0% | good |
+  | encrypted (counting) | 0% | ~15% | unusable |
+  | encrypted (continuous) | 0% | ~0.4% | marginal (no pauses) |
+  Thresholds: junk >= 4% -> unusable; junk >= 2% OR silence <= 2% -> marginal;
+  else good; min 50 frames or "unknown". Sample is small (a handful of calls,
+  one radio/codec); widen it before fully trusting the cut points. The
+  continuous-encrypted case (b0 looks like speech, just no pauses) is the
+  weakest -- it lands at "marginal", honestly low-confidence.
+
+- **To do — Layer 1 (RF error rate) as a verdict input.** The `err` counts
+  are parsed and exposed but don't yet gate the verdict (no weak-signal
+  captures to calibrate the RF threshold -- the AWGN gradient below). Adding
+  it gives the noisy-link vs. clean-link-content distinction directly.
 
 ## Goal
 

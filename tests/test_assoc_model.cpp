@@ -10,11 +10,9 @@
 #include "../src/dsd_process.hpp"
 
 #include <cctype>
-#include <cmath>
 #include <filesystem>
 #include <cstdio>
 #include <map>
-#include <random>
 #include <string>
 #include <vector>
 
@@ -128,24 +126,12 @@ static void line(AssocModel& m, std::uint64_t sid, const std::string& l, std::in
 }
 static J snap(const AssocModel& m, std::int64_t t, bool* ok = nullptr) { return parse(m.to_json(t), ok); }
 
-// Synthetic 8 kHz mono PCM for the voice-quality path: white noise reads as
-// structureless (-> "unusable"); a harmonic tone reads as speech-like (-> good).
-static std::vector<std::int16_t> noise_pcm(int samples, unsigned seed) {
-    std::mt19937 rng(seed);
-    std::normal_distribution<double> nd(0.0, 5000.0);
-    std::vector<std::int16_t> v(static_cast<std::size_t>(samples));
-    for (int i = 0; i < samples; ++i)
-        v[static_cast<std::size_t>(i)] = static_cast<std::int16_t>(std::clamp(nd(rng), -32767.0, 32767.0));
-    return v;
-}
-static std::vector<std::int16_t> voiced_pcm(int samples) {
-    std::vector<std::int16_t> v(static_cast<std::size_t>(samples));
-    for (int i = 0; i < samples; ++i) {
-        double s = 0.0;
-        for (int hmc = 1; hmc <= 5; ++hmc) s += std::sin(2.0 * M_PI * 160.0 * hmc * i / 8000.0) / hmc;
-        v[static_cast<std::size_t>(i)] = static_cast<std::int16_t>(9000.0 * s / 2.0);
-    }
-    return v;
+// Feed `n` AMBE voice frames of a given b0 pitch class into an open call on
+// slot "1" of session `sid`, one per ms from `t`. b0: 86 speech, 124 silence,
+// 121 erasure, 127 tone (real codeword classes).
+static void feed_frames(AssocModel& m, std::uint64_t sid, int b0, int n, std::int64_t t) {
+    DsdEvent vf; vf.kind = "voice"; vf.slot = "1"; vf.voice_b0 = b0; vf.voice_err = 0;
+    for (int i = 0; i < n; ++i) m.ingest(sid, vf, t + i);
 }
 
 int main() {
@@ -1105,33 +1091,45 @@ int main() {
               "JSON: quotes / backslashes / control chars escaped, text round-trips");
     }
 
-    // ---- voice quality: the Layer 2 verdict reaches a call's JSON ----
-    // Runs without recording (quality_on_ defaults on). White noise on a voice
-    // call -> "unusable"; a harmonic tone -> "good". The live (open-call)
-    // verdict is read straight from the snapshot.
+    // ---- voice quality: the AMBE-frame verdict reaches a call's JSON ----
+    // From the event stream, so it runs with no recording (quality_on_ default
+    // on). Distributions match the real captures (docs/AUDIO_QUALITY_CHECK.md).
+    // Clear: ~90% speech + ~10% silence -> good.
     {
         AssocModel m;
         m.begin_stream(1, "dmr", 0);
-        line(m, 1, "19:54:55 Sync: +DMR  slot1  [SLOT1] | Color Code=01 | VC6 ", 900);
         line(m, 1, " SLOT 1 TGT=9 SRC=3112 Group Call ", 1000);
-        auto garb = noise_pcm(8000, 999);                 // ~1 s -> plenty of frames
-        m.audio(1, 1, garb.data(), garb.size(), false, 1000);
-        J j = snap(m, 1000);
+        feed_frames(m, 1, 86, 226, 1001);                 // speech
+        feed_frames(m, 1, 124, 26, 1230);                 // silence
+        J j = snap(m, 1300);
         const J& c = j["families"]["dmr"]["calls"].at(0);
-        check(c["q"].s == "unusable", "quality: noisy voice call -> q=unusable in JSON");
-        check(c.has("qf") && c["qf"].n > 0.0, "quality: flatness diagnostic present");
-        check(c.has("qn") && c["qn"].n >= 30, "quality: voiced-frame count present");
+        check(c["q"].s == "good", "quality: clear call (10% silence, 0 junk) -> good");
+        check(c.has("qj") && c.has("qs") && c.has("qn"), "quality: junk/silence/frame diagnostics present");
     }
+    // Encrypted counting call: ~85% speech, ~0% silence, ~15% junk -> unusable.
     {
         AssocModel m;
         m.begin_stream(1, "dmr", 0);
-        line(m, 1, "19:54:55 Sync: +DMR  slot1  [SLOT1] | Color Code=01 | VC6 ", 900);
         line(m, 1, " SLOT 1 TGT=9 SRC=3112 Group Call ", 1000);
-        auto good = voiced_pcm(8000);
-        m.audio(1, 1, good.data(), good.size(), false, 1000);
-        J j = snap(m, 1000);
+        feed_frames(m, 1, 86, 199, 1001);                 // speech
+        feed_frames(m, 1, 121, 22, 1201);                 // erasure
+        feed_frames(m, 1, 127, 12, 1224);                 // tone
+        feed_frames(m, 1, 124, 1, 1237);                  // one silence
+        J j = snap(m, 1300);
         const J& c = j["families"]["dmr"]["calls"].at(0);
-        check(c["q"].s == "good", "quality: speech-like voice call -> q=good in JSON");
+        check(c["q"].s == "unusable", "quality: encrypted/garbled call (15% junk) -> unusable");
+        check(c["qj"].n > 0.13, "quality: junk fraction ~0.15 in JSON");
+    }
+    // Encrypted continuous call: low junk but ~0% silence -> marginal.
+    {
+        AssocModel m;
+        m.begin_stream(1, "dmr", 0);
+        line(m, 1, " SLOT 1 TGT=9 SRC=3112 Group Call ", 1000);
+        feed_frames(m, 1, 86, 257, 1001);                 // all speech, no pauses
+        feed_frames(m, 1, 121, 1, 1259);                  // 1 erasure (junk ~0.4%)
+        J j = snap(m, 1300);
+        const J& c = j["families"]["dmr"]["calls"].at(0);
+        check(c["q"].s == "marginal", "quality: continuous (no silence) call -> marginal");
     }
 
     if (g_failures == 0) {
