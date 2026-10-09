@@ -515,11 +515,20 @@ is started with `DSD_NET_AUDIO` set, which decides at every start).
 
 - **▶** plays a call (press again, or ■, to stop). The call playing stays in
   a **bar at the bottom of the window** — time, channel, who → whom,
-  progress, **⤓** download and the transcript — however fast the list moves.
+  **⤓** download and the transcript — however fast the list moves.
   **✕** closes it. A call **still in progress** plays as it is being
   recorded: at the end of what has arrived, the player fetches the rest and
   carries on (with a brief pause), until the call is over; with speech-to-text
   on, it is transcribed once the call ends.
+- A **seek slider** across the top of the bar shows how far in you are;
+  click or drag it to move around (available once the call is over and its
+  length is known — a call still in progress isn't seekable yet).
+- A **spectrogram** of the whole call fills the bottom of the bar — time
+  left-to-right, frequency bottom-to-top (0–4 kHz), loudness as colour
+  (dark = quiet, bright = loud) — with a playhead that tracks playback;
+  click or drag on it to seek too. It is computed **in your browser** (the
+  audio is fetched, decoded and Fourier-transformed there), so the server
+  does no analysis work.
 - **⤓** next to ▶ downloads the call's WAV (8 kHz mono), named after the
   call: `call_20261002T172931Z_434.4250MHz_s1_TG1_from_123.wav`.
 - **⤓ Audio (.zip)** saves the audio of the calls **listed, in the order

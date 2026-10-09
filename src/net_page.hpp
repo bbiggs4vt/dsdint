@@ -393,9 +393,21 @@ inline std::string render_net_page_html() {
   .np .tx a { margin-left: .4rem; }
   .np .x { appearance: none; background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 1rem; padding: .2rem .4rem; }
   .np .x:hover { color: var(--heading); }
-  .np .prog { height: 2px; background: var(--info); width: 0; transition: width .2s linear; }
-  body.np-on { padding-bottom: 6.5rem; }
-  body.np-on .toast { bottom: 7rem; }
+  .np .seek { position: relative; height: 9px; cursor: pointer; background: rgba(255,255,255,.08); }
+  .np .seek .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--info); transition: width .1s linear; }
+  .np .seek .thumb { position: absolute; top: 50%; left: 0; width: 13px; height: 13px; margin: -7px 0 0 -6px; border-radius: 50%;
+                     background: var(--info); box-shadow: 0 0 0 2px #1f2327; opacity: 0; transition: opacity .12s; }
+  .np .seek:hover .thumb, .np .seek.drag .thumb { opacity: 1; }
+  .np .seek.drag .fill { transition: none; }
+  .np .seek.off { cursor: default; } .np .seek.off .thumb { display: none; }
+  .np .sg { position: relative; height: 84px; background: #0b0d10; cursor: pointer; overflow: hidden; }
+  .np .sg canvas { display: block; width: 100%; height: 100%; }
+  .np .sg .ph { position: absolute; top: 0; bottom: 0; left: 0; width: 1px; background: rgba(255,255,255,.9);
+                box-shadow: 0 0 3px rgba(255,255,255,.55); pointer-events: none; }
+  .np .sg .lbl { position: absolute; left: 5px; top: 3px; font-size: .62rem; letter-spacing: .03em; color: rgba(255,255,255,.5);
+                 pointer-events: none; text-shadow: 0 1px 2px #000; }
+  body.np-on { padding-bottom: 10.5rem; }
+  body.np-on .toast { bottom: 11rem; }
   @media (pointer: coarse) { .np .x { padding: .5rem .7rem; } .np .dl { padding: .4rem .6rem; } }
   /* Details: a drawer over the page instead of a column below it. */
   @media (max-width: 1050px) {
@@ -619,7 +631,7 @@ inline std::string render_net_page_html() {
   </div>
 </div>
 <div id="np" class="np" hidden>
-  <div class="prog" id="npprog"></div>
+  <div class="seek" id="npseek" title="Seek"><div class="fill" id="npfill"></div><div class="thumb" id="npthumb"></div></div>
   <div class="in">
     <button id="npplay" class="play on" type="button" title="Play / stop"><span>&#9632;</span></button>
     <div class="main">
@@ -628,6 +640,11 @@ inline std::string render_net_page_html() {
     </div>
     <a id="npdl" class="dl" href="#" download title="Download this call's audio">&#10515;</a>
     <button id="npx" class="x" type="button" title="Close" aria-label="Close">&#10005;</button>
+  </div>
+  <div class="sg" id="npsgwrap" title="Spectrogram - click or drag to seek">
+    <canvas id="npsg"></canvas>
+    <div class="ph" id="npph"></div>
+    <div class="lbl" id="npsglbl"></div>
   </div>
 </div>
 <script>
@@ -1822,15 +1839,19 @@ function playAudio(c) {
   if (p && p.catch) p.catch(function () {});
   syncPlay();
   showNp();
+  if (SG.name !== c.audio || !SG.ready) { SG.name = c.audio; sgBuild(c); } else { sgSize(); sgPaint(); }
+  npTickStart();
   // A live call is transcribed once it is over (its audio is still growing).
   PLAYER.txLater = ASR.on && live(c);
+  PLAYER.liveSg = live(c);   // rebuild the whole-file spectrogram once it ends
   if (ASR.on && !PLAYER.txLater) transcribe(c);
 }
 // This call's latest record (the list is rebuilt on every poll).
 function callNow(c) { return (IX && IX.calls.filter(function (x) { return x.audio === c.audio; })[0]) || c; }
 function playDone() {
   var c = PLAYER.call;
-  PLAYER.name = null; syncPlay(); npProgress();
+  PLAYER.name = null; syncPlay(); npTickStop(); npProgress();
+  if (PLAYER.liveSg && c) { PLAYER.liveSg = false; sgBuild(callNow(c)); }   // now the file is complete
   if (PLAYER.txLater && c) { PLAYER.txLater = false; transcribe(callNow(c)); }
 }
 // A live call's audio file is still being written: the server sends it as far
@@ -2257,6 +2278,123 @@ function sttSpan(c, cls) {
 }
 
 // ---------- now playing ----------
+// ---------- spectrogram (whole file, computed in the browser) ----------
+// The server never does any analysis: the audio is fetched, decoded with the
+// Web Audio API, and short-time-Fourier-transformed here into a static image
+// (time across, frequency up, loudness as colour) with a moving playhead.
+// In-place iterative radix-2 FFT (length must be a power of two).
+function fftRadix2(re, im) {
+  var n = re.length, i, j, bit, tmp;
+  for (i = 1, j = 0; i < n; i++) {
+    for (bit = n >> 1; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { tmp = re[i]; re[i] = re[j]; re[j] = tmp; tmp = im[i]; im[i] = im[j]; im[j] = tmp; }
+  }
+  for (var len = 2; len <= n; len <<= 1) {
+    var ang = -2 * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang), half = len >> 1;
+    for (i = 0; i < n; i += len) {
+      var cr = 1, ci = 0;
+      for (j = 0; j < half; j++) {
+        var a = i + j, b = a + half;
+        var vr = re[b] * cr - im[b] * ci, vi = re[b] * ci + im[b] * cr;
+        re[b] = re[a] - vr; im[b] = im[a] - vi;
+        re[a] += vr; im[a] += vi;
+        var ncr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = ncr;
+      }
+    }
+  }
+}
+// Inferno-style colour ramp: quiet -> dark, loud -> bright.
+var SG_RAMP = [[0,0,4],[40,11,84],[101,21,110],[159,42,99],[212,72,66],[245,125,21],[250,193,39],[252,255,164]];
+function heat(v) {
+  if (v <= 0) return SG_RAMP[0];
+  if (v >= 1) return SG_RAMP[SG_RAMP.length - 1];
+  var x = v * (SG_RAMP.length - 1), i = Math.floor(x), f = x - i, a = SG_RAMP[i], b = SG_RAMP[i + 1];
+  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+}
+var SG = { token: 0, ready: false, oc: null, cols: 0, win: 256, hop: 128, hann: null, raf: 0 };
+(function () { var w = SG.win, a = new Float32Array(w); for (var i = 0; i < w; i++) a[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (w - 1)); SG.hann = a; })();
+// Match the backing canvas to its display size in device pixels.
+function sgSize() {
+  var wrap = $('npsgwrap'), cv = $('npsg');
+  if (!wrap || !cv) return;
+  var dpr = window.devicePixelRatio || 1;
+  var w = Math.max(1, Math.round(wrap.clientWidth * dpr)), hh = Math.max(1, Math.round(wrap.clientHeight * dpr));
+  if (cv.width !== w) cv.width = w;
+  if (cv.height !== hh) cv.height = hh;
+}
+function sgPaint() {
+  var cv = $('npsg');
+  if (!cv) return;
+  var ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  if (SG.ready && SG.oc && SG.cols) {
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(SG.oc, 0, 0, SG.cols, SG.oc.height, 0, 0, cv.width, cv.height);
+  }
+}
+function sgCompute(buf, token) {
+  var data = buf.getChannelData(0), N = buf.length, win = SG.win, hop = SG.hop, bins = win >> 1, hann = SG.hann;
+  var cols = N >= win ? 1 + Math.floor((N - win) / hop) : 1;
+  var re = new Float64Array(win), im = new Float64Array(win), db = new Float32Array(cols * bins), maxDb = -Infinity;
+  for (var c = 0; c < cols; c++) {
+    if (token !== SG.token) return false;
+    var off = c * hop, i, k;
+    for (i = 0; i < win; i++) { var s = off + i < N ? data[off + i] : 0; re[i] = s * hann[i]; im[i] = 0; }
+    fftRadix2(re, im);
+    for (k = 0; k < bins; k++) {
+      var mag = Math.sqrt(re[k] * re[k] + im[k] * im[k]) / win, d = 20 * Math.log10(mag + 1e-7);
+      db[c * bins + k] = d;
+      if (d > maxDb) maxDb = d;
+    }
+  }
+  if (token !== SG.token) return false;
+  var dyn = 70, bot = maxDb - dyn;
+  var oc = SG.oc || (SG.oc = document.createElement('canvas'));
+  oc.width = cols; oc.height = bins;
+  var octx = oc.getContext('2d'), img = octx.createImageData(cols, bins), px = img.data;
+  for (var cc = 0; cc < cols; cc++) {
+    for (var kk = 0; kk < bins; kk++) {
+      var v = (db[cc * bins + kk] - bot) / dyn; if (v < 0) v = 0; else if (v > 1) v = 1;
+      var rgb = heat(v), row = bins - 1 - kk, p = (row * cols + cc) * 4;   // low frequencies at the bottom
+      px[p] = rgb[0]; px[p + 1] = rgb[1]; px[p + 2] = rgb[2]; px[p + 3] = 255;
+    }
+  }
+  octx.putImageData(img, 0, 0);
+  SG.cols = cols;
+  return true;
+}
+// Fetch + decode + analyse the whole file. A stale build (the user moved on to
+// another call) is dropped via the token.
+function sgBuild(c) {
+  var token = ++SG.token;
+  SG.ready = false; SG.cols = 0;
+  sgSize();
+  var cv = $('npsg'); if (cv) cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
+  var OC = window.OfflineAudioContext || window.webkitOfflineAudioContext, url = c ? audioUrl(c) : '';
+  if (!url || !OC || !window.fetch) { $('npsglbl').textContent = ''; return; }
+  $('npsglbl').textContent = 'analyzing…';
+  fetch(url).then(function (r) { return r.arrayBuffer(); }).then(function (ab) {
+    if (token !== SG.token) return null;
+    return new OC(1, 1, 8000).decodeAudioData(ab);
+  }).then(function (buf) {
+    if (!buf || token !== SG.token) return;
+    if (sgCompute(buf, token) && token === SG.token) {
+      SG.ready = true;
+      $('npsglbl').textContent = '0–4 kHz';
+      sgPaint(); npProgress();
+    }
+  }).catch(function () { if (token === SG.token) $('npsglbl').textContent = ''; });
+}
+// A smooth playhead while playing (timeupdate alone fires only a few times a second).
+function npTick() {
+  SG.raf = 0;
+  if (!PLAYER.a || $('np').hidden) return;
+  npProgress();
+  if (PLAYER.name) SG.raf = requestAnimationFrame(npTick);
+}
+function npTickStart() { if (!SG.raf) SG.raf = requestAnimationFrame(npTick); }
+function npTickStop() { if (SG.raf) { cancelAnimationFrame(SG.raf); SG.raf = 0; } }
 function showNp() {
   var c = PLAYER.call;
   if (!c) return;
@@ -2275,18 +2413,30 @@ function showNp() {
   npProgress();
   npText();
 }
+// Seekable only once we know the full length -- a live call is still growing,
+// so there is nothing to seek within yet.
+function npSeekable() {
+  var a = PLAYER.a, c = PLAYER.call;
+  return !!(a && isFinite(a.duration) && a.duration > 0 && !(c && live(c)));
+}
 function npProgress() {
   var a = PLAYER.a, c = PLAYER.call;
   if (!a || !c || $('np').hidden) return;
   var d = isFinite(a.duration) && a.duration > 0 ? a.duration : (c.audio_ms || 0) / 1000, t = a.currentTime || 0;
   if (!PLAYER.name && a.ended) t = d;
-  $('npprog').style.width = d ? Math.min(100, 100 * t / d) + '%' : '0';
+  var pct = (d ? Math.min(1, t / d) : 0) * 100;
+  $('npfill').style.width = pct + '%';
+  $('npthumb').style.left = pct + '%';
+  $('npph').style.left = pct + '%';
+  $('npseek').classList.toggle('off', !npSeekable());
   var el = $('nptime');
   if (el) el.textContent = mmss(t * 1000) + ' / ' + mmss(d * 1000);
 }
 function closeNp() {
   if (PLAYER.a && PLAYER.name) PLAYER.a.pause();
   PLAYER.name = null; PLAYER.call = null;
+  npTickStop();
+  SG.token++; SG.ready = false; SG.name = null;   // abandon any in-flight analysis
   $('np').hidden = true;
   document.body.classList.remove('np-on');
   syncPlay();
@@ -3177,7 +3327,10 @@ function zoomAt(cx, cy, k1) {
   ['g-cap', 'g-priv'].forEach(function (id) { $(id).addEventListener('change', function () { GR.sig = ''; buildGraph(); }); });
   $('g-labels').addEventListener('change', function () { drawGraph(); });
   $('g-fit').addEventListener('click', fit);
-  window.addEventListener('resize', function () { if (S.view === 'graph') { if (autoFit()) run(); paint(); } });
+  window.addEventListener('resize', function () {
+    if (S.view === 'graph') { if (autoFit()) run(); paint(); }
+    if (!$('np').hidden) { sgSize(); sgPaint(); }
+  });
 })();
 function legend() {
   var L = $('g-legend');
@@ -4109,6 +4262,28 @@ $('asrmodel').addEventListener('change', function () {
 $('zip').addEventListener('click', zipCalls);
 $('npplay').addEventListener('click', function () { if (PLAYER.call) playAudio(PLAYER.call); });
 $('npx').addEventListener('click', closeNp);
+// Click or drag anywhere on the seek bar or the spectrogram to move playback.
+function npSeekTo(clientX, el) {
+  if (!npSeekable()) return;
+  var r = el.getBoundingClientRect(), f = r.width ? (clientX - r.left) / r.width : 0;
+  PLAYER.a.currentTime = (f < 0 ? 0 : f > 1 ? 1 : f) * PLAYER.a.duration;
+  npProgress();
+}
+function wireSeek(el) {
+  var seek = $('npseek'), dragging = false;
+  el.addEventListener('pointerdown', function (e) {
+    if (!npSeekable()) return;
+    dragging = true; seek.classList.add('drag');
+    try { el.setPointerCapture(e.pointerId); } catch (_) {}
+    npSeekTo(e.clientX, el); e.preventDefault();
+  });
+  el.addEventListener('pointermove', function (e) { if (dragging) npSeekTo(e.clientX, el); });
+  function end() { dragging = false; seek.classList.remove('drag'); }
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', end);
+}
+wireSeek($('npseek'));
+wireSeek($('npsgwrap'));
 asrCfg().catch(function () {});
 S.fam = load('fam');
 uiRestore();
