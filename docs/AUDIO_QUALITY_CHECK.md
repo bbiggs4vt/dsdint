@@ -143,6 +143,35 @@ encrypted call genuinely is not usable to the listener. But:
   listening to). The thing deliberately NOT built is a detector whose output
   is "this call is encrypted: yes/no."
 
+## Processing cost (estimate)
+
+Yardstick — baseline already running per session: the FM front-end applies a
+63-tap complex FIR to the raw IQ at the SDR rate (~2 Msps typical) ->
+~126M complex MACs/sec, continuously; plus dsd-fme's Viterbi/FEC + AMBE
+vocoder on top. That is the real per-stream cost.
+
+- **Layer 1 (FEC error rate): effectively free.** dsd-fme already computes the
+  counts and prints the lines; `classify_dsd_fme_line` already parses every
+  line. Addition = pull a number from lines currently dropped as `unknown` +
+  a running per-call sum. No per-sample work.
+- **Layer 2 (acoustic): small, active-only.** Works on decoded voice PCM
+  (8 kHz mono per slot; DMR up to 2 slots). Dominant cost is a 256-pt FFT at
+  50% overlap for spectral flatness: ~62 frames/sec/slot -> ~0.5M flops/sec/
+  slot -> ~1M flops/sec/session during voice. Flatness / ZCR / energy-mod on
+  top are negligible. That is ~0.2% of the FM demod's own ~500M+ flops/sec for
+  the same stream, and 0% when idle (no call -> no PCM -> no work). 20
+  concurrent active slots still < 1% of one core. Could drop the FFT for an
+  8-band IIR/Goertzel filterbank to go cheaper, but no need.
+- **Memory: trivial.** All features are streaming/online — no whole-call
+  buffering. A few hundred bytes of accumulator per active session.
+- **Constraint, not cost:** Layer 2 runs in the audio-callback path, so keep
+  it allocation-free there (one reused FFT scratch buffer per session). A
+  256-pt FFT is microseconds against a 32 ms frame, so no risk to the audio
+  thread.
+
+Bottom line: Layer 1 free, Layer 2 a fraction of a percent of the DSP already
+running per stream, both zero when no one is talking.
+
 ## Surfacing
 
 - Per-call quality badge in the explorer: **good / marginal / unusable**,
