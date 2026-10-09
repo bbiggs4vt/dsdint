@@ -977,6 +977,8 @@ over HTTP and the connection closed:
 | `GET /net/bp/remove?net=[&fam=]` | remove that network's BP key; `{"ok":true\|false}` |
 | `POST /net/ep/set` | body `{"net","key"[,"fam"]}` — set a **DMR Enhanced Privacy** (ARC4) key for a network whose key id isn't known (`key` 1–10 hex digits, zero-padded to 40 bits, not all zero; `fam` defaults to `dmr`); `400` if malformed. Matched to the network's frequency at stream start and written into that decoder's `-K` list as the key for every key id `00`–`FF`, ahead of the keyring's own rows so a key-id key still wins for its id. Secret: kept in the keys file with the keyring, never echoed; `/net.json` `ep` lists only which networks have one |
 | `GET /net/ep/remove?net=[&fam=]` | remove that network's EP key; `{"ok":true\|false}` |
+| `POST /net/tytep/set` | body `{"net","key"[,"fam"]}` — set a **TYT-style Enhanced Privacy** (AES-128; TYT MD-380/UV380, Baofeng DM-1701) key for a network: `key` 1–32 hex digits (spaces ignored, zero-padded to 128 bits, not all zero; e.g. `00000000000000000000000000012345`); `fam` defaults to `dmr`; `400` if malformed. Matched to the network's frequency at stream start and applied with dsd-fme's `-5`, which decrypts **every** voice frame on the channel (these radios send no key id or encryption flag), so a clear call there is garbled. Secret: kept in the keys file, never echoed; `/net.json` `tytep` lists only which networks have one |
+| `GET /net/tytep/remove?net=[&fam=]` | remove that network's TYT EP key; `{"ok":true\|false}` |
 | `GET /net/export.json` | `application/json` attachment `net_export_<UTC>.json` — the explorer export (below) |
 | `GET /net/export.graphml` | `application/graphml+xml` attachment — the association graph for graph tools |
 | `GET /net/log/on` | starts recording every input of the explorer's model to `net_<UTC>.jsonl.gz` (`?clear=1` clears the model first so the recording replays exactly); returns the recording status |
@@ -1144,6 +1146,8 @@ protocol family (`dmr`, `p25`, `nxdn`, `tetra`, `dpmr`, `dstar`, `ysf`,
 - `ep` is which networks have a DMR Enhanced Privacy key set without a key id
   (`{"dmr": ["cc:1@440425000"]}`) — set via `/net/ep/set`. The key value is
   secret and never appears here.
+- `tytep` is the same for TYT-style Enhanced Privacy (AES-128) keys, set via
+  `/net/tytep/set`; values never appear here.
 - `clients` is how many clients are connected (any session, decoding or not);
   `streams` lists the decode streams running now, whether or not anything is
   decoded: `[{"s":12,"fam":"dmr","label":"dmr","freq":460175000,"since":…,

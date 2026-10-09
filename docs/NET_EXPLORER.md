@@ -414,10 +414,10 @@ tablet or phone the details are a drawer: **Close** or Esc.
     secret (the keys themselves
     are well known). As with the key list, a change takes effect when a stream
     next starts, or now with **↻ Apply to live streams**.
-  - **Enhanced Privacy (DMR), any key id.** An EP (ARC4) key normally goes in
+  - **Motorola Enhanced Privacy (DMR), any key id.** An EP (ARC4) key normally goes in
     with its key id like any other key (algorithm **RC4 (EP)**). When you have
-    a network's EP key but not its key id, choose **DMR Enhanced Privacy (any
-    key id)** in the same form: the key-id box greys out and the value is the
+    a network's EP key but not its key id, choose **Motorola Enhanced Privacy
+    (any key id)** in the same form: the key-id box greys out and the value is the
     **40-bit key, up to 10 hex digits**. It is stored per network and, matched
     to the network's **frequency** when a stream starts, handed to the
     server's own decoder as the key for **every** key id (00–FF) in its key
@@ -426,10 +426,26 @@ tablet or phone the details are a drawer: **Close** or Esc.
     key id has no key of its own is tried with the EP key, so set it only on
     channels you know use EP. Unlike a BP number it **is** secret: it is kept
     with the keyring and never shown again — the networks that have one
-    appear in an **Enhanced Privacy** list on the DMR Keys tab, each with
-    **Clear**. It is not included in a network's key-list download. A change
-    takes effect when a stream next starts, or now with **↻ Apply to live
-    streams**.
+    appear in a **Motorola Enhanced Privacy** list on the DMR Keys tab, each
+    with **Clear**. It is not included in a network's key-list download. A
+    change takes effect when a stream next starts, or now with **↻ Apply to
+    live streams**.
+  - **TYT Enhanced Privacy (DMR).** TYT radios (MD-380 / MD-UV380 and kin)
+    and the Baofeng DM-1701 call their AES-128 privacy "EP" too, but it is a
+    different scheme: a **32-hex-digit key** such as
+    `00000000000000000000000000012345`, with **no key id and no encryption
+    flag** in the call. Choose **TYT / DM-1701 Enhanced Privacy** in the same
+    form; the key-id box greys out and the value takes the key (shorter keys
+    are zero-padded, spaces are ignored). It is stored per network and,
+    matched to the network's **frequency** when a stream starts, applied to
+    the server's own decoder with dsd-fme's `-5`. Because nothing in the call
+    says it is encrypted, the decoder applies it to **every** voice frame on
+    that channel: a clear call there is garbled, so set it only on channels
+    where all traffic uses this key. It works alongside BP, Motorola EP and
+    the key list. Like Motorola EP it is secret — kept with the keyring,
+    never shown again, listed in a **TYT Enhanced Privacy** list with
+    **Clear** — and it takes effect when a stream next starts, or now with
+    **↻ Apply to live streams**.
 
 ## 9. Searching, filtering and sorting
 

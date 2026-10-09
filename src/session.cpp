@@ -698,6 +698,21 @@ void Session::serve_http() {
         }
         if (!ok) res->result(http::status::bad_request);
         res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
+    } else if (post && target == "/net/tytep/set") {
+        // Set a TYT-style Enhanced Privacy (AES-128, 32 hex digits) key for a
+        // network; dsd-fme applies it (-5) to every voice frame on the
+        // network's frequency. Secret: kept with the keyring, never echoed.
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "application/json");
+        bool ok = false;
+        if (stats_) {
+            const auto obj = json::parse_flat_object(http_req_.body());
+            std::string fam = json::get_string(obj, "fam");
+            if (fam.empty()) fam = "dmr";
+            ok = stats_->assoc().set_tyt_ep(fam, json::get_string(obj, "net"), json::get_string(obj, "key"));
+        }
+        if (!ok) res->result(http::status::bad_request);
+        res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
     } else if (post && target == "/net/merge") {
         const std::string out = net_merge_response(http_req_.body());
         res->result(out.compare(0, 9, "{\"error\":") == 0 ? http::status::bad_request : http::status::ok);
@@ -863,6 +878,13 @@ void Session::serve_http() {
         std::string fam = query_param(query, "fam");
         if (fam.empty()) fam = "dmr";
         bool ok = stats_ && stats_->assoc().remove_ep(fam, query_param(query, "net"));
+        res->result(ok ? http::status::ok : http::status::bad_request);
+        res->set(http::field::content_type, "application/json");
+        res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
+    } else if (target == "/net/tytep/remove") {
+        std::string fam = query_param(query, "fam");
+        if (fam.empty()) fam = "dmr";
+        bool ok = stats_ && stats_->assoc().remove_tyt_ep(fam, query_param(query, "net"));
         res->result(ok ? http::status::ok : http::status::bad_request);
         res->set(http::field::content_type, "application/json");
         res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
@@ -1590,15 +1612,17 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         // own bp key; BP is DMR-only, though an "auto" stream may still match a
         // DMR BP entry on its frequency.
         // DMR Enhanced Privacy set in the explorer is matched the same way
-        // and goes into this stream's -K list (below).
+        // and goes into this stream's -K list (below); a TYT-style EP key is
+        // matched the same way and applied with dsd-fme's -5.
         int stored_bp = 0;
-        std::string stored_ep;
+        std::string stored_ep, stored_tyt_ep;
         if (stats_) {
             const std::string bpfam = assoc_family(protocol_hint_label(hint));
             if (bpfam == "dmr" || bpfam == "auto") {
                 const std::int64_t chf = center_freq_ > 0 ? channel_freq(center_freq_ + freq_offset) : 0;
                 if (key_type_enum != KeyType::Bp) stored_bp = stats_->assoc().bp_for_freq("dmr", chf);
                 stored_ep = stats_->assoc().ep_for_freq("dmr", chf);
+                stored_tyt_ep = stats_->assoc().tyt_ep_for_freq("dmr", chf);
             }
         }
         // On a keyring restart, keep the port the decode client is already
@@ -1667,6 +1691,13 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
             dcfg.extra_args.push_back("-b");
             dcfg.extra_args.push_back(std::to_string(stored_bp));
         }
+        if (!stored_tyt_ep.empty()) {   // explorer TYT-style EP (AES-128) for this frequency
+            // dsd-fme's -5 takes the 128-bit key as two space-separated
+            // 64-bit hex words in one argv token (no shell, so the space is
+            // inert); the value is 32 validated hex digits.
+            dcfg.extra_args.push_back("-5");
+            dcfg.extra_args.push_back(stored_tyt_ep.substr(0, 16) + " " + stored_tyt_ep.substr(16, 16));
+        }
 
         // Hand this decoder the explorer's stored keyring as a dsd-fme -K hex
         // key list, so keys entered in the UI decrypt this server's own
@@ -1715,7 +1746,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         if (stats_ && stats_id_) {
             auto st = stats_;
             const std::uint64_t sid = stats_id_;
-            const bool keyed = key_type_enum != KeyType::None || have_key_list || stored_bp != 0;
+            const bool keyed = key_type_enum != KeyType::None || have_key_list || stored_bp != 0 || !stored_tyt_ep.empty();
             dcfg.on_slot_audio = [st, sid, keyed](int slot, const int16_t* pcm, std::size_t n) {
                 st->assoc().audio(sid, slot, pcm, n, keyed);
             };

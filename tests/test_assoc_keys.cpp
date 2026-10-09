@@ -201,6 +201,47 @@ int main() {
         fs::remove(kf);
     }
 
+    // ---- TYT-style Enhanced Privacy (AES-128, 32 hex digits, per network) ----
+    {
+        AssocModel m;
+        check(m.set_tyt_ep("dmr", "cc:1@440425000", "00000000000000000000000000012345") &&
+                  m.tyt_ep_for_freq("dmr", 440425000) == "00000000000000000000000000012345",
+              "tytep: a 32-hex-digit key is set and matched by frequency");
+        check(m.set_tyt_ep("dmr", "cc:2@451000000", "12345") &&
+                  m.tyt_ep_for_freq("dmr", 451000000) == "00000000000000000000000000012345",
+              "tytep: a shorter key is zero-padded to 128 bits");
+        check(m.set_tyt_ep("dmr", "cc:3@452000000", "736B9A9C5645288B 243AD5CB8701EF8A") &&
+                  m.tyt_ep_for_freq("dmr", 452000000) == "736B9A9C5645288B243AD5CB8701EF8A",
+              "tytep: dsd-fme's space-separated form is accepted");
+        check(!m.set_tyt_ep("dmr", "cc:1@440425000", std::string(33, '1')) &&
+                  !m.set_tyt_ep("dmr", "cc:1@440425000", "0") && !m.set_tyt_ep("dmr", "cc:1@440425000", "g1") &&
+                  !m.set_tyt_ep("dmr", "", "1"),
+              "tytep: over 128-bit / zero / non-hex keys and an empty network are rejected");
+        check(m.ep_for_freq("dmr", 440425000).empty() && m.tyt_ep_for_freq("dmr", 460175000).empty() &&
+                  m.tyt_ep_for_freq("p25", 440425000).empty(),
+              "tytep: kept apart from Motorola EP; no match for another frequency / family");
+        const std::string js = m.to_json(2000);
+        check(js.find("\"tytep\":{\"dmr\":[\"cc:1@440425000\",\"cc:2@451000000\",\"cc:3@452000000\"]}") != std::string::npos &&
+                  js.find("12345") == std::string::npos && js.find("736B9A9C") == std::string::npos,
+              "tytep: /net.json lists the networks but never the key value");
+        check(m.remove_tyt_ep("dmr", "cc:1@440425000") && m.tyt_ep_for_freq("dmr", 440425000).empty() &&
+                  !m.remove_tyt_ep("dmr", "cc:1@440425000"),
+              "tytep: remove clears it, and removing again is false");
+
+        namespace fs = std::filesystem;
+        const std::string kf = (fs::temp_directory_path() / ("dsd_tytep_keys_" + std::to_string(::getpid()) + ".json")).string();
+        fs::remove(kf);
+        AssocModel w;
+        w.use_keys_file(kf);
+        w.set_tyt_ep("dmr", "cc:5@451237500", "00000000000000000000000000012345");
+        w.set_ep("dmr", "cc:5@451237500", "0102030405");
+        AssocModel r;
+        check(r.use_keys_file(kf) && r.tyt_ep_for_freq("dmr", 451237500) == "00000000000000000000000000012345" &&
+                  r.ep_for_freq("dmr", 451237500) == "0102030405",
+              "tytep: it is kept in the keys file (beside EP) and comes back on load");
+        fs::remove(kf);
+    }
+
     if (g_failures == 0) { std::printf("\nALL KEYRING TESTS PASSED\n"); return 0; }
     std::printf("\n%d KEYRING TEST(S) FAILED\n", g_failures);
     return 1;
