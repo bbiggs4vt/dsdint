@@ -76,6 +76,46 @@ vocoder's b0 pitch code) is a *possible* alternative source for Layer 2, but:
 Prefer the acoustic measure on the PCM we already have. Revisit pitch-field
 only if the acoustic measure proves insufficient.
 
+## Backend diagnostics vs. user-facing verdict
+
+The user sees a single "audio quality bad" badge (no cause). The **backend**
+may log richer per-call diagnostics for field debugging — but only the
+honest, non-inference discriminators:
+
+- **FEC / link error rate** — identifies degraded SNR (high correction counts,
+  intermittent sync). Direct measurement.
+- **Acoustic quality score** — the Layer 2 verdict.
+- **Signalled-crypto metadata (key id / algorithm id)** — for signalled
+  systems (Motorola EP PI header, P25 ESS, DMR privacy indicator) the
+  protocol *announces* encryption and dsd-fme already parses the key id/algo
+  (it is what the Keys tab is built on). This is reading the protocol, not
+  inference, so recording it is fine.
+
+Those three separate the cases a field debugger cares about:
+- high error rate -> RF problem,
+- signalled key id -> encrypted (protocol said so),
+- clean link + no signalling + structureless audio -> "unusable, cause
+  undetermined" (the honest answer).
+
+### Explicitly NOT built: unsignalled-encryption inference
+
+Do NOT build a classifier that *infers* "encrypted" from "clean link +
+structureless audio" to flag unsignalled/covert encryption (e.g. TYT EP).
+Two reasons:
+
+1. **Unreliable.** Clean-link-but-structureless audio is also a bad decode,
+   wrong protocol params, or a vocoder edge case — real false-positive modes.
+   It is a *worse* debugging signal than error-rate + signalling, not better.
+2. **It is the piece that generalizes into surveillance.** A general
+   unsignalled-encryption detector is an interception capability on any
+   network regardless of intent, and (paired with forced-decrypt) is the
+   thing already off the table.
+
+For one's own network it buys little anyway: signalled crypto is already
+announced, and the operator already knows which of their own TGs/radios run
+unsignalled EP by their IDs (they programmed them), so "clean link + bad
+audio on TG X" is already explained by "TG X is our EP talkgroup."
+
 ## Guardrail (important)
 
 Layer 2 **will** fire on encrypted audio. That is intended and useful — an
