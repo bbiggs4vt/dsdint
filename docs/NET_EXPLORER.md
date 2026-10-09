@@ -434,7 +434,7 @@ tablet or phone the details are a drawer: **Close** or Esc.
     and the Baofeng DM-1701 call their AES-128 privacy "EP" too, but it is a
     different scheme: a **32-hex-digit key** such as
     `00000000000000000000000000012345`, with **no key id and no encryption
-    flag** in the call. Choose **TYT / DM-1701 Enhanced Privacy** in the same
+    flag** in the call. Choose **TYT Enhanced Privacy (AES, 32 hex)** in the same
     form; the key-id box greys out and the value takes the key (shorter keys
     are zero-padded, spaces are ignored). It is stored per network and,
     matched to the network's **frequency** when a stream starts, applied to
