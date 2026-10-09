@@ -30,10 +30,13 @@ Status: **Layer 2 built** on branch `claude/audio-quality-check`. Layer 1
     in encrypted audio, and scrambled speech never repeats frame-to-frame.
   The analyzer tracks the silence-codeword fraction (`sil`), the
   consecutive-repeat fraction (`rep`), and the per-frame `err` counts (FEC/RF,
-  diagnostic only). Verdict: `sil >= 2%` -> good; else `rep < 3%` -> unusable
-  (no pauses, never repeats = scrambled speech); else -> marginal (no real
-  comfort-noise but repetitive: encrypted silence, or an unusually continuous
-  talker). Min 50 frames or "unknown".
+  diagnostic only). Verdict is driven by the comfort-noise fraction alone so
+  that every encrypted call (which has 0%) flags red: `sil >= 2%` -> good;
+  `0.5% <= sil < 2%` -> marginal (a thin borderline buffer, empty in current
+  captures, that keeps an unusually pause-light clear call off "unusable");
+  `sil < 0.5%` -> unusable. Min 50 frames or "unknown". The `rep` fraction is
+  no longer in the verdict (it is kept as a diagnostic: it separates encrypted
+  speech, ~0% rep, from encrypted silence, which repeats).
   - Wired into `AssocModel`: fed from the **event stream** in `ingest()` (not
     the PCM), so it runs whenever voice is decoded, independent of recording
     (`DSD_NET_QUALITY=0` disables). Per-call analyzers in `call_quality_`,

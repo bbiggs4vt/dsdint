@@ -1122,7 +1122,8 @@ int main() {
         check(c["q"].s == "unusable", "quality: encrypted speech (no silence, no repeats) -> unusable");
         check(c["qs"].n == 0.0, "quality: 0% silence codeword in JSON");
     }
-    // Encrypted silence: a non-silence frame repeats -> marginal.
+    // Encrypted silence: a non-silence frame repeats, but 0% real comfort-noise
+    // -> unusable (encrypted calls all flag red).
     {
         AssocModel m;
         m.begin_stream(1, "dmr", 0);
@@ -1130,7 +1131,7 @@ int main() {
         feed_frames(m, 1, 0xDEADBEEFCAFEULL, false, 250, 1001);  // a non-silence value repeats
         J j = snap(m, 1300);
         const J& c = j["families"]["dmr"]["calls"].at(0);
-        check(c["q"].s == "marginal", "quality: encrypted silence (repeats, no real silence) -> marginal");
+        check(c["q"].s == "unusable", "quality: encrypted silence (no real comfort-noise) -> unusable");
     }
 
     if (g_failures == 0) {

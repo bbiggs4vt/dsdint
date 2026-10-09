@@ -55,28 +55,28 @@ int main() {
         check(s.verdict == V::Unusable, "encrypted speech call -> unusable");
     }
 
-    // ---- encrypted silence: no real silence codeword, but a frame repeats ----
-    // Matches capture s=769: silence 0%, repeats ~8% (the encrypted-silence
-    // value repeats, but it is NOT the real comfort-noise codeword).
+    // ---- encrypted silence: no real comfort-noise codeword -> unusable ----
+    // Even though the encrypted-silence value repeats (capture s=769 had ~8%
+    // repeats), there is 0% REAL comfort-noise, so it reads unusable (red):
+    // encrypted calls all flag.
     {
         VoiceQuality q;
         std::uint64_t encsil = 0xDEADBEEFCAFE01ULL;   // not SIL
         for (int i = 0; i < 250; ++i) {
-            if (i % 12 == 0) q.feed_frame(encsil, 0); // repeats of a non-silence value
-            else if (i > 0 && (i % 12) == 1) q.feed_frame(encsil, 0);  // some consecutive repeats
+            if (i % 12 == 0 || (i > 0 && i % 12 == 1)) q.feed_frame(encsil, 0);  // repeats
             else q.feed_frame(0x1000 + static_cast<std::uint64_t>(i) * 7, 0);
         }
         auto s = q.summary();
-        check(s.sil == 0.0, "encrypted silence: 0% real silence codeword");
-        check(s.rep >= 0.03, "encrypted silence: some consecutive repeats");
-        check(s.verdict == V::Marginal, "encrypted silence call -> marginal");
+        check(s.sil == 0.0, "encrypted silence: 0% real comfort-noise codeword");
+        check(s.rep >= 0.03, "encrypted silence: some consecutive repeats (diagnostic)");
+        check(s.verdict == V::Unusable, "encrypted silence call -> unusable (no comfort-noise)");
     }
 
     // ---- threshold boundaries ----
-    check(VoiceQuality::classify(49, 0.0, 0.0) == V::Unknown, "verdict: < kMinFrames -> unknown");
-    check(VoiceQuality::classify(100, 0.03, 0.0) == V::Good, "verdict: silence >= 2% -> good");
-    check(VoiceQuality::classify(100, 0.0, 0.0) == V::Unusable, "verdict: no silence, no repeats -> unusable");
-    check(VoiceQuality::classify(100, 0.0, 0.10) == V::Marginal, "verdict: no silence but repetitive -> marginal");
+    check(VoiceQuality::classify(49, 0.0) == V::Unknown, "verdict: < kMinFrames -> unknown");
+    check(VoiceQuality::classify(100, 0.03) == V::Good, "verdict: silence >= 2% -> good");
+    check(VoiceQuality::classify(100, 0.0) == V::Unusable, "verdict: no comfort-noise -> unusable");
+    check(VoiceQuality::classify(100, 0.01) == V::Marginal, "verdict: trace comfort-noise (0.5-2%) -> marginal");
 
     // ---- err accumulation (RF signal, diagnostic only) ----
     {

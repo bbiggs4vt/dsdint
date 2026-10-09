@@ -54,9 +54,14 @@ public:
     // voice). Drops short noise fragments (call edges, bad syncs).
     static constexpr std::uint32_t kMinFrames = 50;
 
-    // Thresholds, calibrated on real clear vs. encrypted captures.
-    static constexpr double kSilenceClear = 0.02;   // >= -> has real comfort-noise -> clear
-    static constexpr double kRepeatScrambled = 0.03; // < (when no silence) -> no repeats -> scrambled speech
+    // Thresholds, calibrated on real clear vs. encrypted captures. Every clear
+    // call measured >= 2.6% comfort-noise ("silence") frames; every encrypted
+    // call measured exactly 0% (a cipher scrambles the standard codeword away).
+    // So silence >= 2% is clear, silence == 0 is scrambled/unusable, and a thin
+    // band between the two is a borderline buffer (empty in current captures)
+    // that keeps an unusually pause-light clear call off the red "unusable".
+    static constexpr double kSilenceClear = 0.02;   // >= -> has real comfort-noise -> good
+    static constexpr double kSilenceNone  = 0.005;  // <  -> no comfort-noise at all -> unusable
 
     struct Summary {
         std::uint32_t frames = 0;
@@ -103,15 +108,19 @@ public:
             s.rep = static_cast<double>(repeats_) / frames_;
         }
         if (err_frames_) s.err_per_frame = static_cast<double>(err_sum_) / err_frames_;
-        s.verdict = classify(frames_, s.sil, s.rep);
+        s.verdict = classify(frames_, s.sil);
         return s;
     }
 
-    static Verdict classify(std::uint32_t frames, double sil, double rep) {
+    // Verdict from the comfort-noise ("silence") codeword fraction alone. The
+    // repeat fraction is kept as a diagnostic (it separates encrypted speech
+    // from encrypted silence) but no longer changes the verdict: any call with
+    // no real comfort-noise reads unusable, so encrypted calls all flag red.
+    static Verdict classify(std::uint32_t frames, double sil) {
         if (frames < kMinFrames) return Verdict::Unknown;
         if (sil >= kSilenceClear) return Verdict::Good;       // real comfort-noise -> clear speech
-        if (rep < kRepeatScrambled) return Verdict::Unusable; // no silence, no repeats -> scrambled
-        return Verdict::Marginal;                             // no real silence but repetitive
+        if (sil >= kSilenceNone)  return Verdict::Marginal;   // a trace of comfort-noise -> borderline
+        return Verdict::Unusable;                             // none at all -> scrambled / unusable
     }
 
     static const char* verdict_str(Verdict v) {

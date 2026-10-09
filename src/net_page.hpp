@@ -1676,8 +1676,8 @@ function qualBadge(c) {
   var how = 'silence frames ' + pct(c.qs) + ', repeats ' + pct(c.qr) +
             (c.qn ? ', ' + c.qn + ' frames' : '');
   var tip = (c.q === 'unusable'
-             ? 'Audio quality: likely unusable \u2014 the decoded voice has no natural pauses and never repeats, like scrambled audio (' + how + ').'
-             : 'Audio quality: marginal \u2014 no natural speech pauses (' + how + ').') +
+             ? 'Audio quality: likely unusable \u2014 no natural comfort-noise frames at all, like scrambled/encrypted audio (' + how + ').'
+             : 'Audio quality: marginal \u2014 very few comfort-noise frames (' + how + ').') +
             ' Signal quality only; the cause is not determined (a weak signal, a bad decode, or encryption all look the same). Provisional \u2014 thresholds calibrated on a small sample.';
   return h('span', { class: 'badge ' + (c.q === 'unusable' ? 'b-qlow' : 'b-qmarg'), title: tip, 'data-tip': tip },
            c.q === 'unusable' ? 'LOW QUALITY' : 'MARGINAL');
