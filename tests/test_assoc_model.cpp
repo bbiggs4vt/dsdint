@@ -1158,6 +1158,18 @@ int main() {
         check(ec && (*ec)["enc"].b, "quality: signalled-encrypted call is flagged enc");
         check(ec && (*ec)["q"].s.empty(), "quality: signalled-encrypted, no key -> no quality verdict");
     }
+    // D-STAR uses the AMBE 2020 codec (40-bit frames, no comfort-noise
+    // repetition), so the AMBE+2 metric does not apply -> no quality verdict.
+    {
+        AssocModel m;
+        m.begin_stream(1, "dstar", 0);
+        DsdEvent vf; vf.kind = "voice"; vf.talkgroup = "CQCQCQ"; vf.source_id = "TESTER";
+        vf.voice_frame = 0xF012A2D4F4ULL; vf.voice_err = 0;   // real D-STAR codeword (40-bit)
+        for (int i = 0; i < 120; ++i) m.ingest(1, vf, 1000 + i);
+        J j = snap(m, 1100);
+        const J& c = j["families"]["dstar"]["calls"].at(0);
+        check(c["voice"].b && c["q"].s.empty(), "quality: D-STAR voice call -> no verdict (not AMBE+2)");
+    }
 
     if (g_failures == 0) {
         std::printf("\nALL ASSOC MODEL TESTS PASSED\n");

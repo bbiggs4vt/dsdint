@@ -72,8 +72,16 @@ Status: **Layer 2 built** on branch `claude/audio-quality-check`. Layer 1
     point of this feature.
   - Tests: `tests/test_audio_quality.cpp`, `tests/test_dsd_fme_parse.cpp`,
     `tests/test_assoc_model.cpp` integration -- all keyed to the real stats.
-  - Scope: AMBE+2 only (DMR / NXDN / P25 Phase 2). P25 Phase 1 uses IMBE
-    (different marker), so those calls get no frames -> verdict "unknown".
+  - Scope: AMBE+2 2450 codec only, gated by family (`quality_ambe2_family`):
+    dmr / nxdn / p25 / dpmr / ysf / x2tdma. D-STAR uses the older AMBE 2020
+    codec (40-bit codewords, e.g. `F012A2D4F4`, vs AMBE+2's 56-bit
+    `F801A99F8CE080`; no comfort-noise repetition -- its frames read 100%
+    unique), so the metric gives false "unusable" there and MUST be skipped;
+    TETRA / EDACS / ProVoice / pagers likewise use other codecs. Those
+    families get no verdict at all (not even "unknown"). Within P25, Phase 1
+    is IMBE (no AMBE lines) so those calls get no frames -> "unknown"
+    (couldn't assess); Phase 2 is AMBE+2 and works. Verified on DMR and
+    D-STAR captures.
 
 - **Calibration (on several real captures, clear + encrypted traffic).**
   | call | comfort-noise codeword frames | verdict |

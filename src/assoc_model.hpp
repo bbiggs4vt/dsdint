@@ -82,6 +82,19 @@ inline std::string assoc_family(const std::string& label) {
     return label;
 }
 
+// Whether the voice-quality (comfort-noise) metric applies to a family. It is
+// calibrated on the AMBE+2 2450 vocoder (56-bit codewords, silence frame
+// F801A99F8CE080), used by these protocols. D-STAR uses the older AMBE 2020
+// codec (40-bit frames, a different silence frame and no comfort-noise
+// repetition), and TETRA/EDACS/ProVoice/pagers use other codecs entirely, so
+// the metric does not hold for them -- it must not run there (see
+// audio_quality.hpp). Verified on DMR; NXDN/P25 Phase 2/dPMR/YSF/X2-TDMA share
+// the same AMBE+2 2450 decoder and silence frame.
+inline bool quality_ambe2_family(const std::string& fam) {
+    return fam == "dmr" || fam == "nxdn" || fam == "p25" ||
+           fam == "dpmr" || fam == "ysf" || fam == "x2tdma";
+}
+
 class AssocModel {
 public:
     // ---- tunables -------------------------------------------------------
@@ -457,8 +470,11 @@ public:
         }
         // Voice-quality: feed this AMBE frame (its codeword + FEC errors) to
         // the call's analyzer. From the event stream, so it runs whenever voice
-        // is decoded -- independent of recording. DSD_NET_QUALITY=0 off.
-        if (ev.voice_err >= 0 && quality_on_.load(std::memory_order_relaxed))
+        // is decoded -- independent of recording. DSD_NET_QUALITY=0 off. Only
+        // for AMBE+2 families -- the comfort-noise metric is meaningless for
+        // D-STAR's AMBE 2020 codec and others (see quality_ambe2_family).
+        if (ev.voice_err >= 0 && quality_on_.load(std::memory_order_relaxed) &&
+            quality_ambe2_family(c.family))
             call_quality_[cur->id].feed_frame(ev.voice_frame, ev.voice_err);
         if (data) cur->data = true;
         note_service(F, *cur, extra, now);
@@ -1283,7 +1299,7 @@ private:
                 // Voice quality: the finalized verdict, or -- for a still-open
                 // call -- a live running one from its active analyzer, so an
                 // ongoing bad call shows up before it ends.
-                {
+                if (quality_ambe2_family(fk.first)) {   // metric is AMBE+2 only; skip D-STAR / TETRA / etc.
                     VoiceQuality::Summary s = k.qual;
                     if (k.open)
                         if (auto qit = call_quality_.find(k.id); qit != call_quality_.end())
