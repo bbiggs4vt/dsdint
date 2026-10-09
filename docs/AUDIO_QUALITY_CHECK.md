@@ -154,6 +154,22 @@ vocoder on top. That is the real per-stream cost.
   counts and prints the lines; `classify_dsd_fme_line` already parses every
   line. Addition = pull a number from lines currently dropped as `unknown` +
   a running per-call sum. No per-sample work.
+
+  **dsd-fme verbosity cost.** Layer 1 needs dsd-fme run at a verbosity that
+  emits the FEC/sync-error fields (the current command line does not; we drop
+  them as `unknown`). This does NOT add decode cost: the Golay/Hamming/BPTC
+  correction and sync-error counting *are* the FEC decode and already run —
+  verbosity only controls whether the already-computed numbers get printed.
+  Marginal cost at a modest level = extra stderr text (tens of lines/sec per
+  active call, a few KB/sec) + those lines going through the reader's existing
+  `strip_ansi` + `classify_line`. Negligible.
+  CAVEAT: do NOT enable full payload/symbol debug (per-dibit / per-codeword /
+  hex dumps). That emits orders of magnitude more (hundreds of lines/burst,
+  potentially MB/sec), loads the reader thread, and — if the stderr pipe fills
+  faster than we drain it — back-pressures dsd-fme (blocks on write), which can
+  throttle decode timing. Request the LOWEST verbosity that surfaces the
+  FEC/sync-error fields. The verbose capture needed to pin the log-line strings
+  also confirms the right level (and that the heavy dumps stay off).
 - **Layer 2 (acoustic): small, active-only.** Works on decoded voice PCM
   (8 kHz mono per slot; DMR up to 2 slots). Dominant cost is a 256-pt FFT at
   50% overlap for spectral flatness: ~62 frames/sec/slot -> ~0.5M flops/sec/
