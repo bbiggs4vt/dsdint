@@ -574,7 +574,7 @@ inline std::string render_net_page_html() {
         <div class="panel" id="v-calls">
           <div class="callbar">
             <label class="audctl" title="List only calls whose voice was recorded"><input type="checkbox" id="audonly"> With audio only</label>
-            <label class="sigctl" id="nosigctl" title="Hide signalling-only calls: a call was announced (source / target) but no voice or data was heard here, so there is no audio"><input type="checkbox" id="nosig"> Hide signalling</label>
+            <label class="sigctl" id="nosigctl" title="Hide signaling-only calls: a call was announced (source / target) but no voice or data was heard here, so there is no audio"><input type="checkbox" id="nosig"> Hide signaling</label>
             <span class="grow"></span>
             <label class="audctl live-only" id="asrctl" title="Turn each call's speech into text when you play it (runs in this browser)"><input type="checkbox" id="asron"> Transcribe on play</label>
             <select id="asrlang" class="audctl live-only" aria-label="Spoken language" title="Spoken language"></select>
@@ -1119,7 +1119,7 @@ function qm() {
 // Calls-list option; the stat cards count every call).
 function fCalls(list, allAudio) {
   var aud = S.audOnly && (!S.file || !fAll(FILEAUDIO)) && !allAudio;
-  var sig = S.noSig && !allAudio;                    // hide signalling-only calls (list option, not the stat counts)
+  var sig = S.noSig && !allAudio;                    // hide signaling-only calls (list option, not the stat counts)
   return (list || IX.calls).filter(function (c) {
     return (netAll() || netOk(c.net)) && callTgOk(c) && callROk(c) && (!aud || hasAudio(c)) &&
       (!sig || c.voice || c.data) &&
@@ -1743,7 +1743,7 @@ function keyAddForm() {
 function typeBadges(c) {
   var rx = 'Heard by ' + c.streams + ' receivers (one call, deduplicated)';
   var et = c.kid ? 'Encrypted: ' + keyText(c.alg, c.kid) : 'Encrypted (its key id wasn\u2019t decoded)';
-  var sig = 'Signalling only \u2014 a call was announced (source / target decoded) but no voice or data was heard on this channel, so there is no audio.';
+  var sig = 'Signaling only \u2014 a call was announced (source / target decoded) but no voice or data was heard on this channel, so there is no audio.';
   return h('span', null, [
     c.voice ? badge('b-voice', 'VOICE') : c.data ? badge('b-data', 'DATA')
             : h('span', { class: 'badge b-sig', title: sig, 'data-tip': sig }, 'SIGNALING'),
