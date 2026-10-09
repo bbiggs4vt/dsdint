@@ -446,6 +446,24 @@ tablet or phone the details are a drawer: **Close** or Esc.
     never shown again, listed in a **TYT Enhanced Privacy** list with
     **Clear** — and it takes effect when a stream next starts, or now with
     **↻ Apply to live streams**.
+  - **Anytone Basic Privacy and TYT / Baofeng / Retevis Advanced Privacy
+    (DMR).** More keys for radios that send no key id or encryption flag,
+    set the same way from the form's algorithm list:
+
+    | Option | Key | Radios | dsd-fme |
+    |---|---|---|---|
+    | **Anytone Basic Privacy** | 16 bits, up to 4 hex digits | Anytone AT-D878 / D578 | `-A` |
+    | **TYT Advanced Privacy** (PC4) | 128 or 256 bits: up to 32, or exactly 64, hex digits | TYT MD-UV380 / 390 | `-!` |
+    | **Baofeng Advanced Privacy** (PC5) | 128 or 256 bits, as above | Baofeng DM-1701, DM-32 | `-+` |
+    | **Retevis Advanced Privacy** (RC2) | 128 or 256 bits, as above | Retevis RT3S / RT90 | `-@` |
+
+    Like TYT EP, each is stored per network, applied to **every** voice frame
+    on the network's frequency (a clear call there is garbled), kept secret,
+    and listed under its own heading on the DMR Keys tab with **Clear**. A
+    channel can have only **one** of these "all voice" keys (TYT EP, Anytone
+    BP or an Advanced Privacy key) — two can't both be right — so setting one
+    replaces any other on that network. Basic Privacy and Motorola EP are
+    separate and stay as they are.
 
 ## 9. Searching, filtering and sorting
 
