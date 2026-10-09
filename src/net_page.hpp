@@ -270,6 +270,8 @@ inline std::string render_net_page_html() {
   .b-sig { background: rgba(255,255,255,.05); color: var(--muted); border-color: var(--table-bd); }
   .b-emerg { background: var(--danger); color: #fff; }
   .b-enc { background: rgba(248,148,6,.2); color: var(--warn); }
+  .b-qlow { background: var(--danger); color: #fff; }
+  .b-qmarg { background: rgba(248,148,6,.18); color: var(--warn); border-color: var(--warn); }
   .b-strong { background: rgba(98,196,98,.18); color: var(--success); }
   .b-weak { background: rgba(248,148,6,.18); color: var(--warn); }
   .b-channel { background: rgba(91,192,222,.16); color: var(--info); }
@@ -1658,7 +1660,23 @@ function typeBadges(c) {
             : h('span', { class: 'badge b-sig', title: sig, 'data-tip': sig }, 'SIGNALING'),
     c.priv ? badge('b-priv', 'PRIVATE') : badge('b-group', 'GROUP'),
     c.emerg ? badge('b-emerg', 'EMERGENCY') : null, c.enc ? h('span', { class: 'badge b-enc', title: et, 'data-tip': et }, 'ENCRYPTED') : null,
+    qualBadge(c),
     c.streams > 1 ? h('span', { class: 'badge b-group', title: rx, 'data-tip': rx }, c.streams + ' RX') : null]);
+}
+// A quality badge, only for audio that may not be usable (marginal / unusable);
+// "good" is the norm and shows nothing. Signal-quality only -- it never names a
+// cause (noise, a bad decode, and encryption all read the same), and the
+// thresholds are provisional/uncalibrated. See docs/AUDIO_QUALITY_CHECK.md.
+function qualBadge(c) {
+  if (c.q !== 'unusable' && c.q !== 'marginal') return null;
+  var how = 'spectral flatness ' + (c.qf != null ? Number(c.qf).toFixed(2) : '?') +
+            (c.qn ? ' over ' + c.qn + ' voiced frames' : '');
+  var tip = (c.q === 'unusable'
+             ? 'Audio quality: likely unusable \u2014 the decoded voice doesn\u2019t resemble intelligible speech (' + how + ').'
+             : 'Audio quality: marginal \u2014 the decoded voice is partly unlike speech (' + how + ').') +
+            ' Signal quality only; the cause is not determined (a weak signal, a bad decode, or encryption all look the same). Provisional \u2014 thresholds not yet calibrated.';
+  return h('span', { class: 'badge ' + (c.q === 'unusable' ? 'b-qlow' : 'b-qmarg'), title: tip, 'data-tip': tip },
+           c.q === 'unusable' ? 'LOW QUALITY' : 'MARGINAL');
 }
 // ---------- call audio ----------
 var PLAYER = { a: null, name: null, call: null };

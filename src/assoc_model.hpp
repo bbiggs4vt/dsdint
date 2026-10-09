@@ -39,6 +39,7 @@
 #include "assoc_log.hpp"
 #include "assoc_merge.hpp"
 #include "assoc_keys.hpp"
+#include "audio_quality.hpp"
 #include "dsd_backend_types.hpp"
 
 #include <algorithm>
@@ -561,9 +562,12 @@ public:
     // records themselves (what a recording replays), only adds its file.
     void audio(std::uint64_t sid, int slot, const int16_t* pcm, std::size_t n, bool keyed = false,
                std::int64_t now = now_ms()) {
-        if (!audio_on_.load(std::memory_order_relaxed) || !n) return;
+        if (!n) return;
+        const bool want_rec = audio_on_.load(std::memory_order_relaxed);
+        const bool want_qual = quality_on_.load(std::memory_order_relaxed);
+        if (!want_rec && !want_qual) return;
         std::lock_guard<std::mutex> lk(mu_);
-        if (!audio_.on()) return;
+        const bool rec_on = want_rec && audio_.on();   // write a file for this audio?
         auto sit = sess_.find(sid);
         if (sit == sess_.end() || !sit->second.live) return;
         Ctx& c = sit->second;
@@ -600,7 +604,9 @@ public:
             slot = vslot;
         }
         if (!k) {
-            if (silent) return;
+            // No call to attribute this audio to yet. Quality needs a call, so
+            // there is nothing to measure; only recording buffers the preroll.
+            if (silent || !rec_on) return;
             Ctx::Preroll& p = c.preroll[slot];
             if (now - p.last > kPrerollMs) { p.pcm.clear(); p.audible = false; }
             p.audible = p.audible || audible;
@@ -609,6 +615,15 @@ public:
             p.last = now;
             return;
         }
+        // Voice-quality (Layer 2): measure the attributed call's audio BEFORE
+        // the recording gates below, so encrypted/garbled audio (which recording
+        // discards) is still measured. The analyzer excludes silence internally;
+        // skipping digital-silent blocks here just saves the work. Independent
+        // of recording -- this is the only place that must run when rec_on is
+        // false. (A keyed encrypted call is clear here and reads as good; an
+        // unkeyed one reads as structureless -> unusable, which is the point.)
+        if (want_qual && !silent) call_quality_[k->id].feed(pcm, n);
+        if (!rec_on) return;
         if (k->no_audio) return;
         if (k->encrypted && !keyed) {
             k->no_audio = true;
@@ -1175,6 +1190,20 @@ private:
                 c.alias = k.alias; c.text = k.text; c.svc = k.svc; c.pos = k.pos;
                 c.priv = k.priv; c.voice = k.voice; c.data = k.data; c.emerg = k.emergency; c.enc = k.encrypted;
                 c.alg = k.alg; c.kid = k.kid;
+                // Voice quality: the finalized verdict, or -- for a still-open
+                // call -- a live running one from its active analyzer, so an
+                // ongoing bad call shows up before it ends.
+                {
+                    VoiceQuality::Summary s = k.qual;
+                    if (k.open)
+                        if (auto qit = call_quality_.find(k.id); qit != call_quality_.end())
+                            s = qit->second.summary();
+                    if (s.verdict != VoiceQuality::Verdict::Unknown) {
+                        c.qual = VoiceQuality::verdict_str(s.verdict);
+                        c.qflat = s.mean_flatness;
+                        c.qframes = s.voiced_frames;
+                    }
+                }
                 c.open = k.open && now - k.last_ms <= kContinueMs;
                 // Its length ends when the talker unkeyed, not with the
                 // repeater's hang time after it.
@@ -1313,6 +1342,7 @@ private:
         std::uint32_t frames = 0;
         std::uint32_t streams = 1;                      // receivers that heard it (see adopt_twin)
         std::int64_t freq = 0;                          // channel, Hz (0 = unknown)
+        VoiceQuality::Summary qual;                     // voice-quality verdict, finalized at close_call
     };
     struct Network {
         std::string key, label, confidence;            // confidence: strong | channel | weak | none
@@ -1945,6 +1975,7 @@ private:
         // re-find the twin by id afterwards.
         for (auto it = F.calls.begin(); it != F.calls.end(); ++it)
             if (it->id == dup_id) { F.calls.erase(it); break; }
+        call_quality_.erase(dup_id);   // the twin keeps its own analyzer
         Call* t = find_call(F, twin_id);
         if (t) note_enc_counts(F, *t);                // the key the duplicate knew
         return t;
@@ -2003,6 +2034,11 @@ private:
     void close_call(Family& F, Call& k) {
         if (!k.open) return;
         k.open = false;
+        // Finalize the voice-quality verdict from this call's active analyzer.
+        if (auto qit = call_quality_.find(k.id); qit != call_quality_.end()) {
+            k.qual = qit->second.summary();
+            call_quality_.erase(qit);
+        }
         if (!k.audio.empty()) {
             // Flagged encrypted late, turned out to carry only data, or too
             // short to be worth a file: delete.
@@ -2155,6 +2191,17 @@ private:
     std::size_t max_calls_ = max_calls_setting();
     CallAudioStore audio_;
     std::atomic<bool> audio_on_{false};
+    // Voice-quality (intelligibility) analysis, independent of recording:
+    // runs whenever voice is decoded unless DSD_NET_QUALITY=0. The active
+    // per-call analyzers live here, keyed by call id; a call's verdict is
+    // finalized onto its Call record (Call::qual) when it closes.
+    std::atomic<bool> quality_on_{quality_default()};
+    std::map<std::uint64_t, VoiceQuality> call_quality_;
+
+    static bool quality_default() {
+        const char* v = std::getenv("DSD_NET_QUALITY");
+        return !(v && (v[0] == '0' || v[0] == 'n' || v[0] == 'N' || v[0] == 'f' || v[0] == 'F'));
+    }
 };
 
 } // namespace dsdsrv

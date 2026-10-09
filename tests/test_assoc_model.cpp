@@ -10,9 +10,11 @@
 #include "../src/dsd_process.hpp"
 
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <cstdio>
 #include <map>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -125,6 +127,26 @@ static void line(AssocModel& m, std::uint64_t sid, const std::string& l, std::in
     m.ingest(sid, classify_dsd_fme_line(l), t);
 }
 static J snap(const AssocModel& m, std::int64_t t, bool* ok = nullptr) { return parse(m.to_json(t), ok); }
+
+// Synthetic 8 kHz mono PCM for the voice-quality path: white noise reads as
+// structureless (-> "unusable"); a harmonic tone reads as speech-like (-> good).
+static std::vector<std::int16_t> noise_pcm(int samples, unsigned seed) {
+    std::mt19937 rng(seed);
+    std::normal_distribution<double> nd(0.0, 5000.0);
+    std::vector<std::int16_t> v(static_cast<std::size_t>(samples));
+    for (int i = 0; i < samples; ++i)
+        v[static_cast<std::size_t>(i)] = static_cast<std::int16_t>(std::clamp(nd(rng), -32767.0, 32767.0));
+    return v;
+}
+static std::vector<std::int16_t> voiced_pcm(int samples) {
+    std::vector<std::int16_t> v(static_cast<std::size_t>(samples));
+    for (int i = 0; i < samples; ++i) {
+        double s = 0.0;
+        for (int hmc = 1; hmc <= 5; ++hmc) s += std::sin(2.0 * M_PI * 160.0 * hmc * i / 8000.0) / hmc;
+        v[static_cast<std::size_t>(i)] = static_cast<std::int16_t>(9000.0 * s / 2.0);
+    }
+    return v;
+}
 
 int main() {
     std::printf("test_assoc_model\n");
@@ -1081,6 +1103,35 @@ int main() {
         J j = snap(m, 1100, &ok);
         check(ok && j["families"]["dmr"]["calls"].at(0)["text"].s.find("quote\" back\\slash <b>") == 0,
               "JSON: quotes / backslashes / control chars escaped, text round-trips");
+    }
+
+    // ---- voice quality: the Layer 2 verdict reaches a call's JSON ----
+    // Runs without recording (quality_on_ defaults on). White noise on a voice
+    // call -> "unusable"; a harmonic tone -> "good". The live (open-call)
+    // verdict is read straight from the snapshot.
+    {
+        AssocModel m;
+        m.begin_stream(1, "dmr", 0);
+        line(m, 1, "19:54:55 Sync: +DMR  slot1  [SLOT1] | Color Code=01 | VC6 ", 900);
+        line(m, 1, " SLOT 1 TGT=9 SRC=3112 Group Call ", 1000);
+        auto garb = noise_pcm(8000, 999);                 // ~1 s -> plenty of frames
+        m.audio(1, 1, garb.data(), garb.size(), false, 1000);
+        J j = snap(m, 1000);
+        const J& c = j["families"]["dmr"]["calls"].at(0);
+        check(c["q"].s == "unusable", "quality: noisy voice call -> q=unusable in JSON");
+        check(c.has("qf") && c["qf"].n > 0.0, "quality: flatness diagnostic present");
+        check(c.has("qn") && c["qn"].n >= 30, "quality: voiced-frame count present");
+    }
+    {
+        AssocModel m;
+        m.begin_stream(1, "dmr", 0);
+        line(m, 1, "19:54:55 Sync: +DMR  slot1  [SLOT1] | Color Code=01 | VC6 ", 900);
+        line(m, 1, " SLOT 1 TGT=9 SRC=3112 Group Call ", 1000);
+        auto good = voiced_pcm(8000);
+        m.audio(1, 1, good.data(), good.size(), false, 1000);
+        J j = snap(m, 1000);
+        const J& c = j["families"]["dmr"]["calls"].at(0);
+        check(c["q"].s == "good", "quality: speech-like voice call -> q=good in JSON");
     }
 
     if (g_failures == 0) {

@@ -1,6 +1,33 @@
-# Audio quality / intelligibility check (design, parked)
+# Audio quality / intelligibility check
 
-Status: **not built** — design parked on branch `claude/audio-quality-check`.
+Status: **Layer 2 built** on branch `claude/audio-quality-check`. Layer 1
+(FEC error rate) and threshold calibration are still to do.
+
+## Implementation status
+
+- **Built — Layer 2 (acoustic intelligibility).**
+  - `src/audio_quality.hpp` — `VoiceQuality`: streaming spectral-flatness
+    analyzer (self-contained radix-2 FFT, Hann window, silence floor,
+    min-voiced-frames gate) producing a good/marginal/unusable verdict.
+    Thresholds are provisional/uncalibrated and marked as such.
+  - Wired into `AssocModel`: runs whenever voice is decoded, independent of
+    recording (`DSD_NET_QUALITY=0` disables). Active per-call analyzers live
+    in `call_quality_`, fed in `audio()` before the recording gates (so
+    encrypted/garbled audio is measured too), finalized onto `Call::qual` in
+    `close_call`. Open calls get a live running verdict in the snapshot.
+  - Surfaced in `/net.json` per call as `q` (verdict) + `qf` (mean flatness)
+    + `qn` (voiced frames); round-trips through export/import; merges in
+    `fold_call`. The explorer shows a LOW QUALITY / MARGINAL badge (good shows
+    nothing) with a tooltip that gives the numbers and states cause is not
+    determined.
+  - Tests: `tests/test_audio_quality.cpp` (synthetic signals) and a
+    `tests/test_assoc_model.cpp` integration block (noisy call -> unusable,
+    tone -> good, reaching the JSON).
+- **To do — Layer 1 (FEC error rate).** Parse dsd-fme's FEC/sync-error fields
+  for the noisy-link-vs-clean-link-content-problem distinction. Needs the
+  verbose capture (below) to pin the log-line format.
+- **To do — calibration.** The Layer 2 thresholds are guesses until tuned
+  against an AWGN gradient + a real encrypted capture (below).
 
 ## Goal
 
