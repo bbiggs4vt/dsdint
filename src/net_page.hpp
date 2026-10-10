@@ -1330,6 +1330,16 @@ function keyLen(alg) {
   if (p === ENCALG.dmr) return alg === '25' ? 64 : alg === '24' ? 32 : alg === '21' ? 10 : alg === '22' ? 16 : 0;
   return 0;
 }
+// Zero-pad a hex key to its algorithm's known length: typing 12345 for a
+// 64-digit AES-256 key becomes 000...012345, the way these keys are written.
+// Only pads a valid hex value shorter than the known length; anything else is
+// left untouched for the server (and the form) to validate.
+function padKeyHex(val, want) {
+  var hx = String(val == null ? '' : val).replace(/\s+/g, '');
+  if (want && hx && /^[0-9A-Fa-f]+$/.test(hx) && hx.length < want)
+    while (hx.length < want) hx = '0' + hx;
+  return hx;
+}
 // S.d.keyed is {fam:{net:{kid:alg}}} -- which key ids have a key loaded on the
 // server, with the algorithm; NEVER the values. keyedOf(net, fam) -> {kid:alg}.
 function keyedOf(net, fam) { var K = S.d && S.d.keyed && S.d.keyed[fam || S.fam]; return (K && K[net]) || {}; }
@@ -1521,13 +1531,13 @@ function keysSection(d, m, what, opts) {
         var inp = h('input', { class: 'ki', type: 'text', spellcheck: 'false', autocomplete: 'off', value: S.keyEdit.val,
                                placeholder: want ? want + ' hex digits' : 'key (hex)', 'aria-label': 'Key for ' + keyText(alg, kid) });
         inp.addEventListener('input', function () { if (S.keyEdit) S.keyEdit.val = inp.value; });
-        var save = function () { if (inp.value.trim()) setKey(editNet, kid, alg, inp.value.trim()); };
+        var save = function () { var v = padKeyHex(inp.value, want); if (v) setKey(editNet, kid, alg, v); };
         var cancel = function () { S.keyEdit = null; showButtons(); };
         inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancel(); });
         act.appendChild(inp);
         act.appendChild(h('button', { class: 'btn sm', type: 'button', onclick: save }, 'Save'));
         act.appendChild(h('button', { class: 'btn sm', type: 'button', onclick: cancel }, 'Cancel'));
-        act.appendChild(h('span', { class: 'kh', text: 'Hex, up to 64 digits' + (want ? ' (' + algName(alg) + ' uses ' + want + ')' : '') + '. Stored on the server; never shown again.' }));
+        act.appendChild(h('span', { class: 'kh', text: (want ? 'Hex — ' + algName(alg) + ' uses ' + want + ' digits; a shorter value is padded with leading zeros.' : 'Hex, up to 64 digits.') + ' Stored on the server; never shown again.' }));
         if (!restore) {                                 // opening it: focus; restoring after a rebuild: don't steal focus
           inp.focus();
           var n = inp.value.length; try { inp.setSelectionRange(n, n); } catch (e) {}
@@ -1747,7 +1757,7 @@ function keyAddForm() {
       return;
     }
     if (isDmr && NETKEY[alg]) {
-      var nk = NETKEY[alg], hx = val.replace(/\s+/g, '');
+      var nk = NETKEY[alg], hx = padKeyHex(val, nk.digits);
       if (!/^[0-9A-Fa-f]+$/.test(hx) || (hx.length > nk.digits && !(nk.ap && hx.length === 64)) || /^0+$/.test(hx)) {
         toast('Enter the ' + nk.short + ' key: ' + nkDigitsText(nk) + '.'); valInp.focus(); return;
       }
@@ -1756,7 +1766,7 @@ function keyAddForm() {
     }
     if (!kid) { toast('Enter a key id.'); kidInp.focus(); return; }
     if (!val) { toast('Enter the key value (hex).'); valInp.focus(); return; }
-    setKey(net, kid, alg, val, function (ok) { if (ok) S.keyAdd = null; if (S.view === 'keys') viewKeys(); });
+    setKey(net, kid, alg, padKeyHex(val, keyLen(alg)), function (ok) { if (ok) S.keyAdd = null; if (S.view === 'keys') viewKeys(); });
   };
   valInp.addEventListener('keydown', function (e) { if (e.key === 'Enter') save(); if (e.key === 'Escape') { S.keyAdd = null; viewKeys(); } });
   kidInp.addEventListener('keydown', function (e) { if (e.key === 'Escape') { S.keyAdd = null; viewKeys(); } });

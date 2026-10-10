@@ -356,7 +356,10 @@ tablet or phone the details are a drawer: **Close** or Esc.
     **Add key…** — type the key (hex, up to 64 digits) and **Save**. It then
     shows **✓ key loaded**, with **Replace key** / **Remove**. A key is stored
     per network and key id; talkgroup and radio panels show **✓ key loaded**
-    for reference but are managed on the network.
+    for reference but are managed on the network. When the algorithm's key
+    length is known (e.g. AES-256 = 64 hex digits, AES-128 = 32), a shorter
+    value is padded with leading zeros, so `12345` becomes `0000…012345` —
+    you need not type the leading zeros.
   - **Using it.** The server applies the stored keys to **its own** decoder
     (the dsd-fme backend): when a stream starts, this protocol's keys are
     handed to dsd-fme as a `-K` key list, so an encrypted call whose key id
