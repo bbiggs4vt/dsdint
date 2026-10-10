@@ -408,6 +408,12 @@ inline std::string render_net_page_html() {
                  pointer-events: none; text-shadow: 0 1px 2px #000; }
   body.np-on { padding-bottom: 10.5rem; }
   body.np-on .toast { bottom: 11rem; }
+  /* Spectrogram off: fall back to a plain progress bar, no spectrogram. */
+  body.np-noviz .np .sg { display: none; }
+  body.np-noviz .np .seek { height: 3px; cursor: default; }
+  body.np-noviz .np .seek .thumb { display: none; }
+  body.np-on.np-noviz { padding-bottom: 6.5rem; }
+  body.np-on.np-noviz .toast { bottom: 7rem; }
   @media (pointer: coarse) { .np .x { padding: .5rem .7rem; } .np .dl { padding: .4rem .6rem; } }
   /* Details: a drawer over the page instead of a column below it. */
   @media (max-width: 1050px) {
@@ -592,6 +598,7 @@ inline std::string render_net_page_html() {
             <label class="audctl" title="List only calls whose voice was recorded"><input type="checkbox" id="audonly"> With audio only</label>
             <label class="sigctl" id="nosigctl" title="Hide signaling-only calls: a call was announced (source / target) but no voice or data was heard here, so there is no audio"><input type="checkbox" id="nosig"> Hide signaling</label>
             <span class="grow"></span>
+            <label class="audctl" id="sgctl" title="Show the seek slider and the whole-file spectrogram in the player bar (drawn in this browser)"><input type="checkbox" id="sgon"> Spectrogram</label>
             <label class="audctl live-only" id="asrctl" title="Turn each call's speech into text when you play it (runs in this browser)"><input type="checkbox" id="asron"> Transcribe on play</label>
             <select id="asrlang" class="audctl live-only" aria-label="Spoken language" title="Spoken language"></select>
             <select id="asrmodel" class="audctl live-only" aria-label="Speech-to-text model" title="Speech-to-text model: larger is more accurate but slower" hidden></select>
@@ -1839,7 +1846,7 @@ function playAudio(c) {
   if (p && p.catch) p.catch(function () {});
   syncPlay();
   showNp();
-  if (SG.name !== c.audio || !SG.ready) { SG.name = c.audio; sgBuild(c); } else { sgSize(); sgPaint(); }
+  if (vizOn()) { if (SG.name !== c.audio || !SG.ready) { SG.name = c.audio; sgBuild(c); } else { sgSize(); sgPaint(); } }
   npTickStart();
   // A live call is transcribed once it is over (its audio is still growing).
   PLAYER.txLater = ASR.on && live(c);
@@ -1851,7 +1858,7 @@ function callNow(c) { return (IX && IX.calls.filter(function (x) { return x.audi
 function playDone() {
   var c = PLAYER.call;
   PLAYER.name = null; syncPlay(); npTickStop(); npProgress();
-  if (PLAYER.liveSg && c) { PLAYER.liveSg = false; sgBuild(callNow(c)); }   // now the file is complete
+  if (PLAYER.liveSg && c) { PLAYER.liveSg = false; if (vizOn()) sgBuild(callNow(c)); }   // now the file is complete
   if (PLAYER.txLater && c) { PLAYER.txLater = false; transcribe(callNow(c)); }
 }
 // A live call's audio file is still being written: the server sends it as far
@@ -2364,6 +2371,30 @@ function sgCompute(buf, token) {
   SG.cols = cols;
   return true;
 }
+// Is the audio visualization (seek slider + spectrogram) enabled? The server
+// sets the default (DSD_NET_AUDIO_VIZ, on unless set to 0); a browser can
+// override it per-session via the Spectrogram checkbox.
+function vizOn() {
+  var o = load('viz');
+  if (o === '0') return false;
+  if (o === '1') return true;
+  return !(S.d && S.d.audioviz === false);
+}
+// Reflect the current setting in the footer: with it off, hide the spectrogram
+// and abandon any analysis, leaving just a plain progress bar.
+function applyViz() {
+  var on = vizOn();
+  document.body.classList.toggle('np-noviz', !on);
+  var cb = $('sgon'); if (cb) cb.checked = on;
+  if (!on) {
+    SG.token++; SG.ready = false; SG.name = null;
+    var lbl = $('npsglbl'); if (lbl) lbl.textContent = '';
+    var cv = $('npsg'); if (cv) cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
+  } else if (PLAYER.call && !$('np').hidden && SG.name !== PLAYER.name) {
+    SG.name = PLAYER.name; sgBuild(PLAYER.call);
+  }
+  npProgress();
+}
 // Fetch + decode + analyse the whole file. A stale build (the user moved on to
 // another call) is dropped via the token.
 function sgBuild(c) {
@@ -2410,6 +2441,7 @@ function showNp() {
   m.appendChild(h('span', { id: 'nptime', class: 'mono' }));
   $('npdl').href = audioUrl(c);
   $('npdl').setAttribute('download', callFile(c));
+  applyViz();
   npProgress();
   npText();
 }
@@ -2417,7 +2449,7 @@ function showNp() {
 // so there is nothing to seek within yet.
 function npSeekable() {
   var a = PLAYER.a, c = PLAYER.call;
-  return !!(a && isFinite(a.duration) && a.duration > 0 && !(c && live(c)));
+  return !!(a && isFinite(a.duration) && a.duration > 0 && !(c && live(c)) && vizOn());
 }
 function npProgress() {
   var a = PLAYER.a, c = PLAYER.call;
@@ -4184,6 +4216,7 @@ function poll() {
     applyMerges(d);
     S.d = d;
     updateDev();
+    applyViz();
     $('live').textContent = 'live · updated ' + hms(d.now) + 'Z';
     // A phone's Sort menu open: rebuilding the list would close it -- this
     // update waits for the next poll. (The details panel guards its own
@@ -4245,6 +4278,8 @@ $('audonly').addEventListener('change', function () { S.audOnly = this.checked; 
 S.noSig = load('nosig') === '1';
 $('nosig').checked = S.noSig;
 $('nosig').addEventListener('change', function () { S.noSig = this.checked; store('nosig', S.noSig ? '1' : '0'); if (S.d) render(); });
+$('sgon').checked = vizOn();
+$('sgon').addEventListener('change', function () { store('viz', this.checked ? '1' : '0'); applyViz(); });
 $('asron').checked = ASR.on;
 $('asron').addEventListener('change', function () {
   ASR.on = this.checked; store('asr', ASR.on ? '1' : '0');

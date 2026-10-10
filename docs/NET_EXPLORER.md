@@ -529,6 +529,10 @@ is started with `DSD_NET_AUDIO` set, which decides at every start).
   click or drag on it to seek too. It is computed **in your browser** (the
   audio is fetched, decoded and Fourier-transformed there), so the server
   does no analysis work.
+- The **Spectrogram** tick in the Calls toolbar turns the slider and
+  spectrogram on or off (on by default; your choice is remembered in this
+  browser). With them off the bar shows just a plain progress line. The
+  server-wide default is set with `DSD_NET_AUDIO_VIZ` (§17).
 - **⤓** next to ▶ downloads the call's WAV (8 kHz mono), named after the
   call: `call_20261002T172931Z_434.4250MHz_s1_TG1_from_123.wav`.
 - **⤓ Audio (.zip)** saves the audio of the calls **listed, in the order
@@ -715,6 +719,7 @@ Server environment variables that affect the explorer (details in the README):
 | `DSD_NET_AUDIO` | (as last left) | `1` records call audio from startup, `0` never at startup; unset, the **♫ Audio** switch is remembered across restarts. |
 | `DSD_NET_SETTINGS_FILE` | `net_settings.json` in the log dir | Where remembered switches (♫ Audio) are kept. |
 | `DSD_NET_AUDIO_DIR` | `net_audio/` in the log dir | Where call audio goes. |
+| `DSD_NET_AUDIO_VIZ` | on | `0` (or `off`) hides the player bar's seek slider and spectrogram for everyone, leaving a plain progress bar; a browser can still turn them back on with the **Spectrogram** tick. All drawing is client-side regardless. |
 | `DSD_NET_AUDIO_MAX_MB` / `DSD_NET_AUDIO_MAX_AGE_H` | 1024 / none | Audio disk cap and maximum age. |
 | `DSD_NET_IMPORT_AUDIO_MAX_MB` | 1024 | Cap on audio uploaded with imported "export with audio" zips (kept in `imported/` under the audio dir, emptied at startup). |
 | `DSD_NET_KEYS_FILE` | `net_keys.json` in the log dir | The encryption keyring (key values; owner-only). |

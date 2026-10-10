@@ -1203,6 +1203,7 @@ private:
                ",\"since\":" + std::to_string(since_) + ",\"rec\":" + rec_json_locked() +
                ",\"audio\":" + audio_json_locked() + ",\"max_calls\":" + std::to_string(max_calls_) +
                ",\"map\":" + map_json() + ",\"dev\":" + (dev_tools() ? "true" : "false") +
+               ",\"audioviz\":" + (audio_viz() ? "true" : "false") +
                ",\"streams\":" + streams_json_locked() + ",\"imports\":" + im +
                ",\"merges\":" + merges_json(view_merges_locked()) +
                ",\"keyed\":" + keyring_loaded_json(keys_) +
@@ -1220,6 +1221,17 @@ private:
         static const bool on = [] {
             const char* v = std::getenv("DSD_NET_DEV");
             return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T' || std::string(v) == "on");
+        }();
+        return on;
+    }
+    // Whether the explorer draws the audio footer's seek slider + in-browser
+    // spectrogram. On by default; DSD_NET_AUDIO_VIZ=0 (or off/no/false) turns
+    // it off for everyone (a browser can still override per-session).
+    static bool audio_viz() {
+        static const bool on = [] {
+            const char* v = std::getenv("DSD_NET_AUDIO_VIZ");
+            if (!v || !v[0]) return true;
+            return !(v[0] == '0' || v[0] == 'n' || v[0] == 'N' || v[0] == 'f' || v[0] == 'F' || std::string(v) == "off");
         }();
         return on;
     }
