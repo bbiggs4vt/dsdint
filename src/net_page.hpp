@@ -1803,7 +1803,7 @@ function qualBadge(c) {
            c.q === 'unusable' ? 'LOW QUALITY' : 'MARGINAL');
 }
 // ---------- call audio ----------
-var PLAYER = { a: null, name: null, call: null };
+var PLAYER = { a: null, name: null, call: null, loaded: null };
 function mmss(ms) { var s = Math.round(ms / 1000); return Math.floor(s / 60) + ':' + p2(s % 60); }
 // A call's identity across polls (its id can change as imports come and go).
 // In a file view, a call's audio comes from the opened "export with audio"
@@ -1838,20 +1838,30 @@ function playAudio(c) {
     PLAYER.a.addEventListener('timeupdate', npProgress);
   }
   if (PLAYER.name === c.audio) { PLAYER.a.pause(); PLAYER.name = null; syncPlay(); return; }
+  // The same call is already loaded (paused, or finished and the slider pulled
+  // back): resume from where the slider is instead of starting over. A call
+  // left at its very end restarts, which is what play() does on a finished
+  // clip anyway.
+  var resume = PLAYER.loaded === c.audio && !!PLAYER.a.src && isFinite(PLAYER.a.duration) && !live(c);
   PLAYER.name = c.audio;
   PLAYER.call = c;
-  PLAYER.waits = 0;
-  PLAYER.a.src = audioUrl(c);
+  if (!resume) {
+    PLAYER.loaded = c.audio;
+    PLAYER.waits = 0;
+    PLAYER.a.src = audioUrl(c);
+  }
   var p = PLAYER.a.play();
   if (p && p.catch) p.catch(function () {});
   syncPlay();
   showNp();
   if (vizOn()) { if (SG.name !== c.audio || !SG.ready) { SG.name = c.audio; sgBuild(c); } else { sgSize(); sgPaint(); } }
   npTickStart();
-  // A live call is transcribed once it is over (its audio is still growing).
-  PLAYER.txLater = ASR.on && live(c);
-  PLAYER.liveSg = live(c);   // rebuild the whole-file spectrogram once it ends
-  if (ASR.on && !PLAYER.txLater) transcribe(c);
+  if (!resume) {
+    // A live call is transcribed once it is over (its audio is still growing).
+    PLAYER.txLater = ASR.on && live(c);
+    PLAYER.liveSg = live(c);   // rebuild the whole-file spectrogram once it ends
+    if (ASR.on && !PLAYER.txLater) transcribe(c);
+  }
 }
 // This call's latest record (the list is rebuilt on every poll).
 function callNow(c) { return (IX && IX.calls.filter(function (x) { return x.audio === c.audio; })[0]) || c; }
@@ -2466,7 +2476,7 @@ function npProgress() {
 }
 function closeNp() {
   if (PLAYER.a && PLAYER.name) PLAYER.a.pause();
-  PLAYER.name = null; PLAYER.call = null;
+  PLAYER.name = null; PLAYER.call = null; PLAYER.loaded = null;   // reopening a call starts it afresh
   npTickStop();
   SG.token++; SG.ready = false; SG.name = null;   // abandon any in-flight analysis
   $('np').hidden = true;
