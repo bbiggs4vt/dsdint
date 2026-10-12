@@ -111,7 +111,7 @@ public:
     static constexpr std::int64_t kContinueMs = 4000; // gap that still continues a call
     static_assert(kContinueMs == kTwinGapMs, "merged twins follow the live rule");
     // Audio-less calls kept per family: max_calls_ (DSD_NET_MAX_CALLS, default
-    // 5000; set_max_calls). When full, the oldest audio-less call goes first.
+    // 10000; set_max_calls). When full, the oldest audio-less call goes first.
     // Calls with audio are kept while their file is on disk (the audio store's
     // disk/age cap bounds those), then roll off here once reconciled away.
     static constexpr std::size_t kMaxRadios = 3000;    // per family
@@ -531,7 +531,7 @@ public:
         return head + families_json(view) + "}";
     }
 
-    // Calls kept per protocol (default DSD_NET_MAX_CALLS / 5000). A replay
+    // Calls kept per protocol (default DSD_NET_MAX_CALLS / 10000). A replay
     // takes the recording's value.
     void set_max_calls(std::size_t n) {
         std::lock_guard<std::mutex> lk(mu_);

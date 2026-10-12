@@ -610,7 +610,7 @@ inline std::string render_net_page_html() {
         <div class="panel" id="v-radios" hidden><div class="scroll" id="t-radios"></div></div>
         <div class="panel" id="v-graph" hidden>
           <div class="gbar">
-            <label>Nodes <select id="g-cap"><option>100</option><option selected>250</option><option>500</option><option>1000</option></select></label>
+            <label>Nodes <select id="g-cap"><option>100</option><option>250</option><option>500</option><option selected>1000</option></select></label>
             <label><input type="checkbox" id="g-priv" checked> Private-call links</label>
             <label><input type="checkbox" id="g-labels" checked> Radio labels</label>
             <span class="gzoom"><button class="btn" id="g-zout" type="button" title="Zoom out" aria-label="Zoom out">&minus;</button><button class="btn" id="g-zin" type="button" title="Zoom in" aria-label="Zoom in">+</button></span>
@@ -3733,7 +3733,7 @@ function renderAll() {
   IX.nets.forEach(function (n) { if (netOk(n.key)) n.sites.forEach(function (s) { sites[n.key + s] = 1; }); });
   var cards = $('cards');
   cards.textContent = '';
-  var kept = 'The newest calls are listed (up to ' + (S.d.max_calls || 5000) + ' without audio per protocol; calls with recorded audio are kept as long as the audio is on disk).';
+  var kept = 'The newest calls are listed (up to ' + (S.d.max_calls || 10000) + ' without audio per protocol; calls with recorded audio are kept as long as the audio is on disk).';
   // Live: a Streams card (this protocol's connected decode streams; green
   // when one decodes now). A file view has no connections: no Streams card.
   var st = streamsOf(S.fam), stDec = st.some(decodingNow);

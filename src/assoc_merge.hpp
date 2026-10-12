@@ -466,10 +466,10 @@ struct Dataset {
 };
 
 // How many AUDIO-LESS calls the explorer keeps per protocol (the live model's
-// list and a merged view): DSD_NET_MAX_CALLS, default 5000. Calls with audio
+// list and a merged view): DSD_NET_MAX_CALLS, default 10000. Calls with audio
 // are kept beyond this for as long as their file is on disk -- the audio
 // store's own cap (DSD_NET_AUDIO_MAX_MB / _AGE_H) bounds those.
-constexpr std::size_t kDefaultMaxCalls = 5000;
+constexpr std::size_t kDefaultMaxCalls = 10000;
 inline std::size_t max_calls_setting() {
     const char* v = std::getenv("DSD_NET_MAX_CALLS");
     const unsigned long n = (v && v[0]) ? std::strtoul(v, nullptr, 10) : kDefaultMaxCalls;

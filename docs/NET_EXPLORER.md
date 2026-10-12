@@ -138,12 +138,12 @@ some call has audio.
 
 Up to 400 calls are rendered at a time; the explorer keeps many more — narrow
 the list with the search box, the **Filters** or a sort to see older ones. It
-keeps up to 5000 calls **without** audio per protocol (`DSD_NET_MAX_CALLS`),
+keeps up to 10000 calls **without** audio per protocol (`DSD_NET_MAX_CALLS`),
 and **every call that still has recorded audio on the server** on top of that —
 so a call you can play never silently drops off the list while its audio is
 kept. How much audio is kept is a disk limit, not a call count
 (`DSD_NET_AUDIO_MAX_MB` / `DSD_NET_AUDIO_MAX_AGE_H`, §10); when a call's audio
-is pruned to stay under it, that call then ages out by the 5000 count like any
+is pruned to stay under it, that call then ages out by the 10000 count like any
 other.
 
 ## 4. Talkgroups and Radios
@@ -559,7 +559,7 @@ What gets recorded:
   (unless the session has the key).
 - Disk use is capped (1 GB by default, about 18 hours of speech); the oldest
   files go first. A call keeps its place in the list for as long as its audio
-  is on disk — so this disk limit, not the 5000 call count, is what bounds how
+  is on disk — so this disk limit, not the 10000 call count, is what bounds how
   much recorded audio stays reachable. When a call's audio is pruned, its play
   button goes away and the call then ages out by the ordinary count.
 - Audio stays on the server that recorded it. A plain export notes which
@@ -688,7 +688,7 @@ half a megabyte per minute on a busy multi-channel server.
 
 - Everything is in the server's memory: it resets when the server restarts
   or someone presses **Clear**. Export (or record) what you want to keep.
-- **Calls**: the newest 5000 **without audio** per protocol
+- **Calls**: the newest 10000 **without audio** per protocol
   (`DSD_NET_MAX_CALLS`), plus every call whose recorded audio is still on the
   server (bounded by the audio disk limit, not this count — §10). Talkgroup /
   radio / network counts and associations are kept for everything heard, not
@@ -726,7 +726,7 @@ Server environment variables that affect the explorer (details in the README):
 | Variable | Default | Effect |
 |---|---|---|
 | `DSD_SERVER_NAME` | host name | This receiver's name in exports and merged views. |
-| `DSD_NET_MAX_CALLS` | 5000 | Audio-less calls kept per protocol. Calls with recorded audio are kept beyond this for as long as their audio is on disk (bounded by `DSD_NET_AUDIO_MAX_MB` / `_MAX_AGE_H`, not this count). |
+| `DSD_NET_MAX_CALLS` | 10000 | Audio-less calls kept per protocol. Calls with recorded audio are kept beyond this for as long as their audio is on disk (bounded by `DSD_NET_AUDIO_MAX_MB` / `_MAX_AGE_H`, not this count). |
 | `DSD_NET_FREQ_STEP_HZ` | 1250 | Channel raster frequencies are snapped to. |
 | `DSD_NET_MERGES_FILE` | `net_merges.json` in the log dir | Where the [network merges](#merging-networks) are kept across restarts. |
 | `DSD_NET_CHANNEL_MERGE` | (merge) | `receiver` keeps different receivers' channel networks apart when merging. |

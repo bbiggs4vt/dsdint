@@ -576,25 +576,27 @@ int main() {
 
     // ---- merged calls are bounded ----
     {
-        auto big = [](const std::string& inst, std::int64_t t0) {
+        const int per = static_cast<int>(kMergedCallsPerFamily);   // each source alone fills the cap
+        auto big = [per](const std::string& inst, std::int64_t t0) {
             Dataset d;
-            d.sources.push_back(DsSource{inst, inst, 0, t0 + 10000});
+            d.sources.push_back(DsSource{inst, inst, 0, t0 + per + 1000});
             DsFamily& F = d.fams["dmr"];
-            for (int i = 0; i < 3000; ++i) {
+            for (int i = 0; i < per; ++i) {
                 DsCall c;
-                c.id = static_cast<std::uint64_t>(3000 - i);
+                c.id = static_cast<std::uint64_t>(per - i);
                 c.src = "1";
                 c.tgt = "9";
-                c.start = t0 + 3000 - i;
+                c.start = t0 + per - i;
                 c.last = c.start;
                 F.calls.push_back(c);
             }
-            return export_json(d, t0 + 10000, inst, inst);
+            return export_json(d, t0 + per + 1000, inst, inst);
         };
         std::vector<MergeReport> rep;
-        Dataset d = merge_exports({{"x", big("x1", 100000)}, {"y", big("y1", 200000)}}, rep);
+        const std::int64_t ty = 100000 + per + 1000000;            // y is entirely newer than x
+        Dataset d = merge_exports({{"x", big("x1", 100000)}, {"y", big("y1", ty)}}, rep);
         const auto& C = d.fams["dmr"].calls;
-        check(C.size() == kMergedCallsPerFamily && C.front().start == 203000 && C.front().id == C.size() && C.back().id == 1,
+        check(C.size() == kMergedCallsPerFamily && C.front().start == ty + per && C.front().id == C.size() && C.back().id == 1,
               "bounds: merged calls capped per protocol, newest kept, renumbered");
     }
 
