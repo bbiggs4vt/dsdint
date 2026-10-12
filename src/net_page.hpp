@@ -3010,11 +3010,15 @@ function recentNote(c) {
   if (c.pos) { if (kids.length) kids.push(' '); kids.push(posLink(c.pos)); }
   return kids.length ? h('div', { class: 'alias' }, kids) : null;
 }
-function recent(filter) {
-  var cs = IX.calls.filter(filter).slice(0, 12);
-  if (!cs.length) return h('div', { class: 'hint', text: 'No calls in the recent buffer.' });
+// Recent matching calls, newest first. Collapsed to `cap` (10) with a
+// "Show all N" / "Show fewer" toggle (state in S.exp[key]); expanded shows up
+// to `max` (50) from the recent buffer.
+function recent(filter, key) {
+  var all = IX.calls.filter(filter), cap = 10, max = 50;
+  if (!all.length) return h('div', { class: 'hint', text: 'No calls in the recent buffer.' });
+  var expanded = !!(key && S.exp[key]);
   var ul = h('ul', { class: 'lst' });
-  cs.forEach(function (c) {
+  all.slice(0, expanded ? max : cap).forEach(function (c) {
     var pb = playBtn(c);
     ul.appendChild(h('li', null, [
       h('div', null, [c.src ? rlink(c.src, c.alias || null) : '?', ' → ', c.tgt ? (c.priv ? rlink(c.tgt) : tlink(c.tgt)) : '?',
@@ -3022,6 +3026,11 @@ function recent(filter) {
                       recentNote(c), sttSpan(c, 'tx')]),
       h('span', { class: 'c' }, [pb, pb ? ' ' : '', live(c) ? 'live' : hms(c.start)])]));
   });
+  if (all.length > cap)
+    ul.appendChild(h('li', { class: 'lst-more' }, [
+      h('a', { class: 'moretoggle', onclick: function () { if (key) { S.exp[key] = !expanded; renderDetail(true); } } },
+        expanded ? 'Show fewer' : (all.length > max ? 'Show ' + max + ' of ' + all.length : 'Show all ' + all.length)),
+      h('span')]));
   return ul;
 }
 // The details are rebuilt on every update: keep where the panel was scrolled
@@ -3073,7 +3082,7 @@ function detailBody(d) {
     });
     // Recent calls first, then linked talkgroups, then the radios (longest).
     d.appendChild(h('h4', { text: 'Recent calls' }));
-    d.appendChild(recent(function (c) { return !c.priv && c.tgt === sel.id; }));
+    d.appendChild(recent(function (c) { return !c.priv && c.tgt === sel.id; }, tgk + '|recent'));
     d.appendChild(h('h4', { text: 'Linked talkgroups (shared radios)' }));
     d.appendChild(lst(keys(linked).sort(function (a, b) { return linked[b] - linked[a]; })
       .map(function (o) { return { el: tlink(o), n: linked[o], lbl: linked[o] + ' shared' }; }), tgk + '|linked'));
@@ -3108,7 +3117,7 @@ function detailBody(d) {
     d.appendChild(lst(keys(co).sort(function (a, b) { return co[b] - co[a]; })
       .map(function (o) { return { el: rlink(o), n: co[o], lbl: co[o] + ' TG' + (co[o] > 1 ? 's' : '') }; }), rk + '|co'));
     d.appendChild(h('h4', { text: 'Recent calls' }));
-    d.appendChild(recent(function (c) { return c.src === sel.id || (c.priv && c.tgt === sel.id); }));
+    d.appendChild(recent(function (c) { return c.src === sel.id || (c.priv && c.tgt === sel.id); }, rk + '|recent'));
   } else if (sel.type === 'net') {
     var n = IX.netByKey[sel.id];
     if (!n) { d.appendChild(h('h3', { text: 'Network' })); d.appendChild(h('div', { class: 'hint', text: 'Not in the current data.' })); return; }
