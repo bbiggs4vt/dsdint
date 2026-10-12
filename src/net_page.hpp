@@ -2331,13 +2331,16 @@ function fftRadix2(re, im) {
     }
   }
 }
-// Inferno-style colour ramp: quiet -> dark, loud -> bright.
-var SG_RAMP = [[0,0,4],[40,11,84],[101,21,110],[159,42,99],[212,72,66],[245,125,21],[250,193,39],[252,255,164]];
+// Spectrogram colour ramp: black -> blue -> red -> yellow (quiet -> loud),
+// matching the waterfall palette used in the other UI. Each stop is
+// [position 0..1, r, g, b]; positions need not be evenly spaced.
+var SG_RAMP = [[0, 0, 0, 0], [0.333, 0, 0, 255], [0.666, 255, 0, 0], [1, 255, 255, 0]];
 function heat(v) {
-  if (v <= 0) return SG_RAMP[0];
-  if (v >= 1) return SG_RAMP[SG_RAMP.length - 1];
-  var x = v * (SG_RAMP.length - 1), i = Math.floor(x), f = x - i, a = SG_RAMP[i], b = SG_RAMP[i + 1];
-  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+  if (v < 0) v = 0; else if (v > 1) v = 1;
+  var i = 0;
+  while (i < SG_RAMP.length - 2 && v > SG_RAMP[i + 1][0]) i++;
+  var a = SG_RAMP[i], b = SG_RAMP[i + 1], span = b[0] - a[0], f = span > 0 ? (v - a[0]) / span : 0;
+  return [a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, a[3] + (b[3] - a[3]) * f];
 }
 var SG = { token: 0, ready: false, oc: null, cols: 0, win: 256, hop: 128, hann: null, raf: 0 };
 (function () { var w = SG.win, a = new Float32Array(w); for (var i = 0; i < w; i++) a[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (w - 1)); SG.hann = a; })();
