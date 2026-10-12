@@ -1,7 +1,7 @@
 # Audio quality / intelligibility check
 
-Status: **Layer 2 built** on branch `claude/audio-quality-check`. Layer 1
-(FEC error rate) and threshold calibration are still to do.
+Status: **Built and in use.** The verdict is the AMBE FEC error rate (Layer 1)
+with the comfort-noise codeword as a positive "clear" confirmation (Layer 2).
 
 ## Implementation status
 
@@ -28,25 +28,30 @@ Status: **Layer 2 built** on branch `claude/audio-quality-check`. Layer 1
     frame-to-frame.
   - A cipher XORs each frame, so the exact comfort-noise codeword NEVER appears
     in encrypted audio, and scrambled speech never repeats frame-to-frame.
-  The verdict keys on the COUNT of the exact comfort-noise codeword, which a
-  cipher can never produce (it scrambles the standard value away): its presence
-  means the call had real pauses and is clear. Calibrated on real captures --
-  clear calls always carry several comfort-noise frames (a pause is multiple
-  20 ms frames), encrypted calls carry exactly zero:
-  - `>= 2` comfort-noise frames -> **good** (clear, has natural pauses).
-  - `0` comfort-noise frames and `>= 80` frames (~1.6 s) -> **unusable** (a
-    multi-second transmission with no pause at all is scrambled; every
-    unsignalled-encrypted call flags here).
-  - `0` comfort-noise frames and a short burst (< 80 frames) -> **unknown**: a
-    quick clear word with no pause and a short encrypted burst look identical,
-    so don't risk a false "unusable".
+  The verdict is driven by the **FEC error rate** (the honest decode-quality
+  signal), with the comfort-noise codeword as a positive "clear" confirmation.
+  dsd-fme reports the AMBE FEC error counts per frame; their mean rises as the
+  signal weakens and the decode degrades. The comfort-noise codeword, which a
+  cipher can never produce, proves the call had real pauses and decoded cleanly.
+  - mean FEC errors/frame `>= kUnusableErrPerFrame` (2.0; env
+    `DSD_NET_QUALITY_MAX_ERR`) -> **unusable** (garbled decode, whatever the
+    content).
+  - else `>= 2` comfort-noise frames -> **good** (clear, clean decode with real
+    pauses).
+  - else -> **unknown** (decoded cleanly but no comfort noise -- see below).
   - `< 50` frames -> **unknown** (too short to judge).
-  There is no longer a "marginal" verdict -- it was a false-positive magnet
-  for long continuous talkers (one pause in a 30 s over reads ~1% comfort-noise
-  and used to land marginal; now it reads good). The silence fraction (`qs`),
-  repeat fraction (`qr`) and `err`/frame (`qe`) are kept as diagnostics only;
-  `qr` still separates encrypted speech (~0% rep) from encrypted silence
-  (repeats) in the hover.
+  The key thing it deliberately does NOT do: infer "unusable" from the ABSENCE
+  of comfort noise. Short, rapid, continuous CLEAR speech (a quick callsign /
+  location read) has no pause long enough to emit the comfort-noise codeword and
+  changes phoneme every 20 ms, so it carries 0 comfort-noise frames and ~0
+  repeats -- identical in frame statistics to scrambled speech. The earlier
+  "0 comfort noise + long -> unusable" rule flagged those perfectly intelligible
+  calls (e.g. a clear "294 Fredericksburg 66" over that ASR transcribed fine);
+  now such a call decodes with low FEC errors so it stays **unknown** (no badge)
+  rather than a false "unusable". Encrypted calls are surfaced by their own
+  ENCRYPTED flag, not here. There is no "marginal" verdict. The silence fraction
+  (`qs`), repeat fraction (`qr`) and `err`/frame (`qe`) are all in the hover;
+  `qe` now also sets the verdict.
   - Wired into `AssocModel`: fed from the **event stream** in `ingest()` (not
     the PCM), so it runs whenever voice is decoded, independent of recording
     (`DSD_NET_QUALITY=0` disables). Per-call analyzers in `call_quality_`,
@@ -83,31 +88,30 @@ Status: **Layer 2 built** on branch `claude/audio-quality-check`. Layer 1
     (couldn't assess); Phase 2 is AMBE+2 and works. Verified on DMR and
     D-STAR captures.
 
-- **Calibration (on several real captures, clear + encrypted traffic).**
-  | call | comfort-noise codeword frames | verdict |
+- **Calibration (mean AMBE FEC errors per frame, over real DMR captures).**
+  | call group | mean FEC errors/frame | verdict |
   |---|---|---|
-  | clear speech (~100 calls) | 4-19 (several; always >= 2) | good |
-  | unsignalled-encrypted (440.425) | 0 | unusable |
-  | short clear word, no pause (57 frames) | 0 | unknown (not flagged) |
-  Validated across five real recordings: every unsignalled-encrypted 440.425
-  call reads unusable, every clear call reads good, and the two false-positive
-  modes are fixed -- long continuous talkers (12-30 s, one pause, ~1% of
-  frames comfort-noise) now read good, and a 1 s no-pause clear burst reads
-  unknown instead of a false unusable.
-  Tunable to widen against: `kNoPauseUnusable` (80 frames ~1.6 s) is the
-  boundary for the zero-comfort-noise case. The shortest observed false-
-  positive clear-no-pause call was 57 frames and the shortest real encrypted
-  call ~90; 80 sits between. A longer clear burst with truly no pause (>= 80
-  frames, ~1.6 s) would still false-flag unusable, and a short (< 80 frame)
-  encrypted burst reads unknown rather than unusable -- both are the price of
-  the zero-comfort-noise ambiguity. A radio using a non-standard comfort-noise
-  frame would read 0 -> false flag; the codeword is the AMBE+2 standard, so
-  unlikely but unverified across radios.
+  | clear speech, clean decode (57 calls) | 0.33 - 1.35 (median 0.53) | good |
+  | continuous clear speech, no pause | 0.2 - 1.5 | unknown (not flagged) |
+  | garbled / weak decode | 2.1 - 2.7 | unusable |
+  The `kUnusableErrPerFrame = 2.0` threshold sits clearly above the clean-decode
+  population (which tops out ~1.35) with margin. On the recording that
+  prompted this (`a60a09c3`, ~90 DMR voice calls), the previous
+  comfort-noise rule flagged **18** calls unusable -- most of them clear,
+  continuous, pause-less transmissions (one transcribed cleanly) -- while the
+  FEC-rate verdict flags only the **2** genuinely error-heavy decodes and reads
+  the clear ones as good/unknown. Lower `DSD_NET_QUALITY_MAX_ERR` to flag more
+  aggressively, raise it to flag only the worst.
+  Trade-off: a cleanly-received encrypted call (encryption is above the FEC, so
+  its bits arrive intact -> low error rate) no longer reads "unusable" from the
+  quality metric; it is surfaced by the ENCRYPTED badge instead. Catching
+  *unsignalled* encryption via the audio is no longer attempted -- it was not
+  separable from clear continuous speech without false positives.
 
-- **To do — Layer 1 (RF error rate) as a verdict input.** The `err` counts
-  are parsed and exposed but don't yet gate the verdict (no weak-signal
-  captures to calibrate the RF threshold -- the AWGN gradient below). Adding
-  it gives the noisy-link vs. clean-link-content distinction directly.
+- **Done — Layer 1 (RF error rate) IS the verdict.** The `err` counts now gate
+  the verdict directly: a high mean (`>= DSD_NET_QUALITY_MAX_ERR`, default 2.0)
+  reads unusable. This is the noisy-link / bad-decode signal, independent of
+  content. Comfort noise remains the positive clear confirmation on top of it.
 
 ## Goal
 

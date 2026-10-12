@@ -130,9 +130,9 @@ static J snap(const AssocModel& m, std::int64_t t, bool* ok = nullptr) { return 
 // one per ms from `t`. If `unique`, each frame gets a distinct codeword
 // (scrambled/encrypted); otherwise the given fixed `frame` codeword repeats.
 static void feed_frames(AssocModel& m, std::uint64_t sid, std::uint64_t frame, bool unique,
-                        int n, std::int64_t t, const std::string& slot = "1") {
+                        int n, std::int64_t t, const std::string& slot = "1", int err = 0) {
     for (int i = 0; i < n; ++i) {
-        DsdEvent vf; vf.kind = "voice"; vf.slot = slot; vf.voice_err = 0;
+        DsdEvent vf; vf.kind = "voice"; vf.slot = slot; vf.voice_err = err;
         vf.voice_frame = unique ? frame + static_cast<std::uint64_t>(i) * 0x1111 : frame;
         m.ingest(sid, vf, t + i);
     }
@@ -1111,27 +1111,28 @@ int main() {
         check(c["q"].s == "good", "quality: clear call (has comfort-noise) -> good");
         check(c.has("qs") && c.has("qr") && c.has("qn"), "quality: silence/repeat/frame diagnostics present");
     }
-    // Encrypted speech: no silence codeword, never repeats -> unusable.
+    // Clean decode, no comfort noise (continuous clear speech, or scrambled):
+    // low FEC errors -> unknown, NOT a false "unusable".
     {
         AssocModel m;
         m.begin_stream(1, "dmr", 0);
         line(m, 1, " SLOT 1 TGT=9 SRC=3112 Group Call ", 1000);
-        feed_frames(m, 1, 0x123456789A00ULL, true, 250, 1001);   // all unique, no silence frame
+        feed_frames(m, 1, 0x123456789A00ULL, true, 250, 1001, "1", 1);   // unique, light FEC (<2)
         J j = snap(m, 1300);
         const J& c = j["families"]["dmr"]["calls"].at(0);
-        check(c["q"].s == "unusable", "quality: encrypted speech (no silence, no repeats) -> unusable");
-        check(c["qs"].n == 0.0, "quality: 0% silence codeword in JSON");
+        // Unknown-with-frames emits no quality field: no badge, not a false unusable.
+        check(c["q"].s.empty(), "quality: clean decode, no comfort noise -> no badge (not a false unusable)");
     }
-    // Encrypted silence: a non-silence frame repeats, but 0% real comfort-noise
-    // -> unusable (encrypted calls all flag red).
+    // Garbled decode: heavy AMBE FEC errors -> unusable (whatever the content).
     {
         AssocModel m;
         m.begin_stream(1, "dmr", 0);
         line(m, 1, " SLOT 1 TGT=9 SRC=3112 Group Call ", 1000);
-        feed_frames(m, 1, 0xDEADBEEFCAFEULL, false, 250, 1001);  // a non-silence value repeats
+        feed_frames(m, 1, 0x123456789A00ULL, true, 250, 1001, "1", 3);   // ~3 FEC errors/frame
         J j = snap(m, 1300);
         const J& c = j["families"]["dmr"]["calls"].at(0);
-        check(c["q"].s == "unusable", "quality: encrypted silence (no real comfort-noise) -> unusable");
+        check(c["q"].s == "unusable", "quality: heavy FEC errors -> unusable");
+        check(c["qe"].n >= 2.0, "quality: high err/frame in JSON");
     }
     // Voice call with no AMBE frames decoded -> q=unknown (couldn't assess).
     {

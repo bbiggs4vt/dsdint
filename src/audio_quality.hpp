@@ -15,18 +15,29 @@
 // pseudo-random (content XOR keystream), so encrypted calls landed anywhere --
 // some looked like 18% "silence" and read "good". Verified on real captures.
 //
-// The robust signal is FRAME REPETITION. Clear digital voice repeats the exact
-// standard AMBE comfort-noise ("silence") codeword during natural pauses, and
-// repeats sustained phonemes frame-to-frame. A cipher XORs each frame, so the
-// exact silence codeword NEVER appears in encrypted audio, and scrambled speech
-// never repeats frame-to-frame. Measured over clear vs. encrypted captures:
-//   clear          : silence-codeword 6-20%, consecutive repeats 8-20%
-//   encrypted speech: silence-codeword 0%,    consecutive repeats 0-2%
-//   encrypted silence: silence-codeword 0%,   consecutive repeats ~8%
-// So: real-silence-codeword present -> clear; absent + no repeats -> scrambled
-// speech (unusable); absent but repetitive -> ambiguous (encrypted silence, or
-// an unusually continuous talker) -> marginal. The per-frame err counts are
-// accumulated as the FEC/RF signal (diagnostic only; not yet in the verdict).
+// What the verdict keys on:
+//
+//  1. FEC/RF ERRORS (the real signal-quality measure). dsd-fme reports the AMBE
+//     FEC error counts per frame ("err = [a] [b]"); their mean per frame rises
+//     as the signal weakens and the decode degrades. A high mean -> the audio
+//     is genuinely garbled -> UNUSABLE. This is independent of content: it is
+//     the honest "how well did this decode" signal.
+//
+//  2. COMFORT NOISE (a positive "clear" confirmation). Clear digital voice
+//     repeats the exact standard AMBE comfort-noise ("silence") codeword during
+//     natural pauses; a cipher scrambles it away so it never appears. Its
+//     presence proves real pauses -> a clear, cleanly-decoded call -> GOOD.
+//     Measured: clear calls 6-20% silence codeword; encrypted calls 0%.
+//
+// What it deliberately does NOT do: infer "unusable" from the ABSENCE of comfort
+// noise. Short, rapid, continuous CLEAR speech (a quick callsign/location read)
+// has no pause long enough to emit the comfort-noise codeword and changes
+// phoneme every 20 ms, so it has no silence frames and few repeats -- identical
+// in frame statistics to scrambled speech. Flagging that as unusable gave false
+// positives on perfectly intelligible calls, so a call that decodes cleanly
+// (low FEC errors) but shows no comfort noise is left UNKNOWN (no badge), not
+// unusable. Encrypted calls are surfaced by their own ENCRYPTED flag, not here.
+// The consecutive-repeat fraction (Summary::rep) is kept as a diagnostic only.
 //
 // SIGNAL QUALITY ONLY -- never a cause. The verdict is "usable / not usable",
 // never "encrypted". Not thread-safe; feed one call's frames from one thread.
@@ -60,11 +71,18 @@ public:
     // captures -- clear calls always carry several of these frames (a brief
     // pause is multiple 20 ms frames); encrypted calls carry exactly zero.
     static constexpr std::uint32_t kClearSilenceFrames = 2;  // >= -> clear (has real pauses)
-    // With ZERO comfort-noise frames, a transmission this long or longer has
-    // gone ~1.6 s+ without any pause -> scrambled / unusable. Below it, a quick
-    // clear word with no pause and a short encrypted burst look identical, so
-    // the verdict stays "unknown" rather than risk a false "unusable".
-    static constexpr std::uint32_t kNoPauseUnusable = 80;
+    // Mean AMBE FEC errors per frame at or above which the decode is judged
+    // unusable (garbled). Calibrated on real captures: cleanly-decoded clear
+    // calls sit well under this (around 0.5, up to ~1.3); genuinely weak decodes
+    // run 2+. Tunable with DSD_NET_QUALITY_MAX_ERR.
+    static double unusable_err_per_frame() {
+        static const double v = [] {
+            const char* e = std::getenv("DSD_NET_QUALITY_MAX_ERR");
+            if (e && e[0]) { double d = std::atof(e); if (d > 0) return d; }
+            return 2.0;
+        }();
+        return v;
+    }
 
     struct Summary {
         std::uint32_t frames = 0;
@@ -111,20 +129,19 @@ public:
             s.rep = static_cast<double>(repeats_) / frames_;
         }
         if (err_frames_) s.err_per_frame = static_cast<double>(err_sum_) / err_frames_;
-        s.verdict = classify(frames_, silence_);
+        s.verdict = classify(frames_, silence_, s.err_per_frame);
         return s;
     }
 
-    // Verdict from the exact comfort-noise codeword count. Present -> the call
-    // has real pauses -> clear. Absent in a multi-second transmission ->
-    // scrambled/unusable (encrypted calls all flag). Absent in a short burst ->
-    // unknown: a quick clear word with no pause looks the same as a short
-    // encrypted burst, so we don't risk a false "unusable". The repeat fraction
-    // (Summary::rep) is kept as a diagnostic only.
-    static Verdict classify(std::uint32_t frames, std::uint32_t silence) {
+    // Heavy FEC errors -> the decode is garbled -> unusable (whatever the
+    // content). Otherwise, the exact comfort-noise codeword proves real pauses
+    // and a clean clear call -> good. A clean decode with no comfort noise is
+    // left unknown: continuous clear speech looks the same as scrambled speech
+    // in the frame stats, so we don't guess "unusable" from missing pauses.
+    static Verdict classify(std::uint32_t frames, std::uint32_t silence, double err_per_frame) {
         if (frames < kMinFrames) return Verdict::Unknown;
+        if (err_per_frame >= unusable_err_per_frame()) return Verdict::Unusable;
         if (silence >= kClearSilenceFrames) return Verdict::Good;
-        if (frames >= kNoPauseUnusable) return Verdict::Unusable;
         return Verdict::Unknown;
     }
 
