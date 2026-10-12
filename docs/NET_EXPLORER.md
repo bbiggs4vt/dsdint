@@ -394,7 +394,12 @@ tablet or phone the details are a drawer: **Close** or Esc.
     key list** as the network details, so you can manage every key for a
     protocol in one place. A key id with a key loaded but not yet heard in a
     call still appears (marked **not heard yet**), so a key you added by hand
-    is always visible with its **Replace key** / **Remove** controls.
+    is always visible with its **Replace key** / **Remove** controls. A key
+    stored for a network **not heard this session** (e.g. kept across a
+    restart, before any traffic on it) still shows too — under a **· not seen
+    this session** label, fully manageable — and its protocol gets a tab even
+    with no traffic yet, so stored keys are never hidden just because their
+    network is quiet.
     **Download all (<protocol>)** gives a zip of per-network key lists (one
     `-K` CSV per network, so there are no key-id collisions), and **Remove
     all** clears every loaded key for the protocol (with a confirm). A value

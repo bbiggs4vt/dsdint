@@ -1606,10 +1606,29 @@ function keysSection(d, m, what, opts) {
 function keyNets() {
   if (!IX) return [];
   var kf = (S.d && S.d.keyed && S.d.keyed[S.fam]) || {};
-  return IX.nets.filter(function (n) {
+  var out = IX.nets.filter(function (n) {
     if (Object.keys(n.keys || {}).length) return true;
     return (n.parts || [n]).some(function (p) { return Object.keys(keyedOf(p.key)).length; });
   });
+  // A key loaded for a network not heard this session (e.g. kept across a
+  // restart, before any traffic on it) still belongs here: synthesize a
+  // standalone entry so it shows and can be managed. Skip keys already covered
+  // by a seen network (including its merge parts).
+  var covered = {};
+  out.forEach(function (n) { (n.parts || [n]).forEach(function (p) { covered[p.key] = 1; }); });
+  Object.keys(kf).forEach(function (net) {
+    if (!covered[net] && Object.keys(kf[net]).length) out.push({ key: net, keys: {}, calls: 0, unseen: true });
+  });
+  return out;
+}
+// A readable label for a network key we have no live record of (unseen keys):
+// the server's own key format spells out the channel; fall back to the raw key.
+function unseenNetLabel(key) {
+  var m = /^cc:(\w+)@(\d+)$/.exec(key);
+  if (m) return 'Color Code ' + m[1] + ' · ' + mhz(+m[2]) + ' MHz';
+  m = /^nac:([0-9A-Fa-f]+)@(\d+)$/.exec(key);
+  if (m) return 'NAC ' + m[1].toUpperCase() + ' · ' + mhz(+m[2]) + ' MHz';
+  return key;
 }
 function keysLoadedCount() {
   var kf = (S.d && S.d.keyed && S.d.keyed[S.fam]) || {}, n = 0;
@@ -1716,7 +1735,13 @@ function viewKeys() {
       for (var k in (n.keys || {})) { var i = k.indexOf(':'); seen[k.slice(i + 1)] = 1; }
       (n.parts || [n]).forEach(function (p) { for (var id in keyedOf(p.key)) seen[id] = 1; });
       var idc = Object.keys(seen).length;
-      blk.appendChild(h('h4', { class: 'keynet-h' }, [netc(n.key), h('span', { class: 'alias', text: ' · ' + idc + ' key id' + (idc === 1 ? '' : 's') })]));
+      // A seen network gets its clickable chip; an unseen one (key only) gets a
+      // plain label and a "not seen yet" marker.
+      var head = n.unseen
+        ? [h('span', { class: 'netc', title: n.key }, [sw(n.key), unseenNetLabel(n.key)]),
+           h('span', { class: 'alias', text: ' · ' + idc + ' key id' + (idc === 1 ? '' : 's') + ' · not seen this session' })]
+        : [netc(n.key), h('span', { class: 'alias', text: ' · ' + idc + ' key id' + (idc === 1 ? '' : 's') })];
+      blk.appendChild(h('h4', { class: 'keynet-h' }, head));
       keysSection(blk, n.keys, 'on it', { nets: (n.parts || [n]).map(function (p) { return p.key; }), net: n.key, compact: true });
       cont.appendChild(blk);
     });
@@ -3675,6 +3700,28 @@ function addStreamFams(d) {
     d.families[x.fam] = { networks: [], talkgroups: [], radios: [], calls: [] };
   });
 }
+// Does this protocol have any stored key (per-network encryption key, DMR
+// Basic Privacy, or a channel privacy key)? Used so a protocol whose only
+// presence is kept keys still gets a tab -- the keys are reachable before any
+// traffic is heard on it (e.g. right after a restart).
+var NETKEY_KINDS = ['ep', 'tytep', 'tytbp', 'anybp', 'tytap', 'bfap', 'rtap'];
+function famHasStoredKeys(d, f) {
+  var k = (d.keyed || {})[f] || {};
+  if (Object.keys(k).some(function (n) { return Object.keys(k[n] || {}).length; })) return true;
+  if (Object.keys((d.bp || {})[f] || {}).length) return true;
+  return NETKEY_KINDS.some(function (kind) { return (((d[kind] || {})[f]) || []).length; });
+}
+// Ensure a family exists for every protocol that has stored keys, so its tab
+// (and Keys view) shows even with no traffic / stream yet.
+function addKeyedFams(d) {
+  var fams = {};
+  Object.keys(d.keyed || {}).forEach(function (f) { fams[f] = 1; });
+  Object.keys(d.bp || {}).forEach(function (f) { fams[f] = 1; });
+  NETKEY_KINDS.forEach(function (kind) { Object.keys(d[kind] || {}).forEach(function (f) { fams[f] = 1; }); });
+  Object.keys(fams).forEach(function (f) {
+    if (!d.families[f] && famHasStoredKeys(d, f)) d.families[f] = { networks: [], talkgroups: [], radios: [], calls: [] };
+  });
+}
 // The protocol tabs and the clients/imports chips are UPDATED IN PLACE, not
 // rebuilt, every poll: the nodes stay the same so a native tooltip the pointer
 // is on (a tab's "… streams connected …", which ticks) doesn't flicker as the
@@ -3757,7 +3804,7 @@ function renderAll() {
   // (receiving, nothing identified yet). A protocol with only bare
   // "Unidentified · <freq>" buckets and no live stream is dropped with them.
   var fams = famOrder(Object.keys(S.d.families).filter(function (f) {
-    return streamsOf(f).length || S.d.families[f].networks.some(netShown);
+    return streamsOf(f).length || S.d.families[f].networks.some(netShown) || famHasStoredKeys(S.d, f);
   }));
   $('empty').hidden = fams.length > 0;
   $('main').hidden = !fams.length;
@@ -4273,6 +4320,7 @@ function poll() {
                   JSON.stringify((d.streams || []).map(function (x) { return [x.s, x.fam, decodingNow(x)]; })) !==
                   JSON.stringify((S.d.streams || []).map(function (x) { return [x.s, x.fam, decodingNow(x)]; }));
     addStreamFams(d);
+    addKeyedFams(d);
     applyMerges(d);
     S.d = d;
     updateDev();
