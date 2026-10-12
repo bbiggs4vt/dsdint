@@ -308,6 +308,9 @@ inline std::string render_net_page_html() {
   .lst li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .5rem; align-items: center;
             padding: .22rem 0; border-bottom: 1px solid rgba(0,0,0,.25); }
   .lst li .c { color: var(--muted); font-variant-numeric: tabular-nums; font-size: .8rem; }
+  .lst li.lst-more { border-bottom: 0; padding-top: .35rem; }
+  a.moretoggle { color: var(--info); cursor: pointer; font-size: .8rem; }
+  a.moretoggle:hover { text-decoration: underline; }
   .bar { height: 3px; background: var(--info); border-radius: 2px; margin-top: 2px; opacity: .7; }
   .tagrow { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .4rem; }
   .mrow { display: flex; align-items: center; gap: .5rem; padding: .22rem 0; border-bottom: 1px solid rgba(0,0,0,.25); }
@@ -671,7 +674,7 @@ var FAMN = {dmr:'DMR', p25:'P25', nxdn:'NXDN', tetra:'TETRA', dpmr:'dPMR', dstar
 var PAL = ['#5bc0de','#62c462','#f89406','#ee5f5b','#b38bff','#e6c229','#3fc1a5','#ff7eb6','#8fa8ff',
            '#c3e88d','#ffab70','#4dd0e1','#d4a5ff','#a3d977'];
 var S = { d: null, fam: null, nets: {}, tgf: {}, rf: {}, view: 'calls', sel: null, q: '', paused: false, skew: 0,
-          ncol: {}, nidx: {}, sort: {}, rows: {}, audOnly: false, noSig: false, fOpen: false, keyAdd: null };
+          ncol: {}, nidx: {}, sort: {}, rows: {}, audOnly: false, noSig: false, fOpen: false, keyAdd: null, exp: {} };
 var IX = null;
 
 function $(id) { return document.getElementById(id); }
@@ -2977,15 +2980,25 @@ function viewLinks() {
 }
 
 // ---------- detail panel ----------
-function lst(items, max) {
+// A ranked list with bars. Long lists collapse to `cap` rows (default 10) with
+// a "Show all N" / "Show fewer" toggle; `key` keeps that open/closed state
+// across the panel's poll rebuilds (S.exp[key]).
+function lst(items, key, cap) {
+  if (!items.length) return h('div', { class: 'hint', text: 'None.' });
+  cap = cap || 10;
+  var expanded = !!(key && S.exp[key]);
+  var top = items[0].n || 1;
   var ul = h('ul', { class: 'lst' });
-  var top = items.length ? items[0].n : 1;
-  items.slice(0, max || 25).forEach(function (it) {
+  items.slice(0, expanded ? items.length : cap).forEach(function (it) {
     ul.appendChild(h('li', null, [h('div', null, [it.el, h('div', { class: 'bar', style: 'width:' + Math.max(4, 100 * it.n / top) + '%' })]),
                                   h('span', { class: 'c', text: it.lbl != null ? it.lbl : it.n })]));
   });
-  if (items.length > (max || 25)) ul.appendChild(h('li', null, [h('span', { class: 'alias', text: '+' + (items.length - (max || 25)) + ' more' }), h('span')]));
-  return items.length ? ul : h('div', { class: 'hint', text: 'None.' });
+  if (items.length > cap)
+    ul.appendChild(h('li', { class: 'lst-more' }, [
+      h('a', { class: 'moretoggle', title: expanded ? 'Collapse' : 'Show all ' + items.length,
+               onclick: function () { if (key) { S.exp[key] = !expanded; renderDetail(true); } } },
+        expanded ? 'Show fewer' : 'Show all ' + items.length), h('span')]));
+  return ul;
 }
 function kv(pairs) { return h('div', { class: 'kv' }, pairs.map(function (p) { return h('div', null, [h('b', { text: String(p[1]) }), h('span', { text: p[0] })]); })); }
 // Under a recent call: its text (quoted), else what the data call carried;
@@ -3051,20 +3064,22 @@ function detailBody(d) {
     d.appendChild(kv([['Calls', t.calls], ['Radios', keys(t.radios).length], ['Emergency', t.emerg],
                       ['Encrypted', t.enc], ['First', ago(t.first)], ['Last', ago(t.last)]]));
     keysSection(d, t.keys, 'on it', { nets: t.networks });
-    d.appendChild(h('h4', { text: 'Radios on this talkgroup' }));
-    d.appendChild(lst(keys(t.radios).sort(function (a, b) { return t.radios[b] - t.radios[a]; })
-      .map(function (r) { return { el: rlink(r), n: t.radios[r] }; })));
+    var tgk = 'tg:' + sel.id;
     // Talkgroups tied to this one through the radios they share.
     var linked = {};
     keys(t.radios).forEach(function (r) {
       var R = IX.rById[r];
       if (R) keys(R.tgs).forEach(function (o) { if (o !== sel.id) linked[o] = (linked[o] || 0) + 1; });
     });
-    d.appendChild(h('h4', { text: 'Linked talkgroups (shared radios)' }));
-    d.appendChild(lst(keys(linked).sort(function (a, b) { return linked[b] - linked[a]; })
-      .map(function (o) { return { el: tlink(o), n: linked[o], lbl: linked[o] + ' shared' }; })));
+    // Recent calls first, then linked talkgroups, then the radios (longest).
     d.appendChild(h('h4', { text: 'Recent calls' }));
     d.appendChild(recent(function (c) { return !c.priv && c.tgt === sel.id; }));
+    d.appendChild(h('h4', { text: 'Linked talkgroups (shared radios)' }));
+    d.appendChild(lst(keys(linked).sort(function (a, b) { return linked[b] - linked[a]; })
+      .map(function (o) { return { el: tlink(o), n: linked[o], lbl: linked[o] + ' shared' }; }), tgk + '|linked'));
+    d.appendChild(h('h4', { text: 'Radios on this talkgroup' }));
+    d.appendChild(lst(keys(t.radios).sort(function (a, b) { return t.radios[b] - t.radios[a]; })
+      .map(function (r) { return { el: rlink(r), n: t.radios[r] }; }), tgk + '|radios'));
   } else if (sel.type === 'radio') {
     var r = IX.rById[sel.id];
     d.appendChild(h('h3', { text: 'Radio ' + sel.id }));
@@ -3076,12 +3091,13 @@ function detailBody(d) {
                       ['Networks', r.networks.length], ['First', ago(r.first)], ['Last', ago(r.last)]]));
     if (r.pos) positionsSection(d, r);
     keysSection(d, r.keys, 'from it', { nets: r.networks });
+    var rk = 'radio:' + sel.id;
     d.appendChild(h('h4', { text: 'Talkgroups used' }));
     d.appendChild(lst(keys(r.tgs).sort(function (a, b) { return r.tgs[b] - r.tgs[a]; })
-      .map(function (t) { return { el: tlink(t), n: r.tgs[t] }; })));
+      .map(function (t) { return { el: tlink(t), n: r.tgs[t] }; }), rk + '|tgs'));
     d.appendChild(h('h4', { text: 'Private calls with' }));
     d.appendChild(lst(keys(r.peers).sort(function (a, b) { return r.peers[b] - r.peers[a]; })
-      .map(function (p) { return { el: rlink(p), n: r.peers[p] }; })));
+      .map(function (p) { return { el: rlink(p), n: r.peers[p] }; }), rk + '|peers'));
     // Radios this one shares talkgroups with.
     var co = {};
     keys(r.tgs).forEach(function (t) {
@@ -3090,7 +3106,7 @@ function detailBody(d) {
     });
     d.appendChild(h('h4', { text: 'Shares talkgroups with' }));
     d.appendChild(lst(keys(co).sort(function (a, b) { return co[b] - co[a]; })
-      .map(function (o) { return { el: rlink(o), n: co[o], lbl: co[o] + ' TG' + (co[o] > 1 ? 's' : '') }; }), 20));
+      .map(function (o) { return { el: rlink(o), n: co[o], lbl: co[o] + ' TG' + (co[o] > 1 ? 's' : '') }; }), rk + '|co'));
     d.appendChild(h('h4', { text: 'Recent calls' }));
     d.appendChild(recent(function (c) { return c.src === sel.id || (c.priv && c.tgt === sel.id); }));
   } else if (sel.type === 'net') {
@@ -3121,12 +3137,13 @@ function detailBody(d) {
           : n.confidence === 'weak'
           ? 'Weak identity: only a short code (color code / NAC / RAN) was seen, which unrelated systems can share, and the stream\'s frequency is unknown, so this bucket covers just one stream. Talkgroups and radios it shares with other buckets are listed under Links.'
           : 'No network identity has been decoded on this stream yet.' }));
+    var nk = 'net:' + sel.id;
     d.appendChild(h('h4', { text: 'Busiest talkgroups' }));
     d.appendChild(lst(IX.tgs.filter(function (t) { return t.networks.indexOf(n.key) >= 0; })
-      .sort(function (a, b) { return b.calls - a.calls; }).map(function (t) { return { el: tlink(t.id), n: t.calls }; }), 15));
+      .sort(function (a, b) { return b.calls - a.calls; }).map(function (t) { return { el: tlink(t.id), n: t.calls }; }), nk + '|tgs'));
     d.appendChild(h('h4', { text: 'Busiest radios' }));
     d.appendChild(lst(IX.radios.filter(function (r) { return r.networks.indexOf(n.key) >= 0; })
-      .sort(function (a, b) { return b.calls - a.calls; }).map(function (r) { return { el: rlink(r.id), n: r.calls }; }), 15));
+      .sort(function (a, b) { return b.calls - a.calls; }).map(function (r) { return { el: rlink(r.id), n: r.calls }; }), nk + '|radios'));
   }
 }
 
