@@ -110,8 +110,10 @@ public:
     // ---- tunables -------------------------------------------------------
     static constexpr std::int64_t kContinueMs = 4000; // gap that still continues a call
     static_assert(kContinueMs == kTwinGapMs, "merged twins follow the live rule");
-    // Calls kept per family: max_calls_ (DSD_NET_MAX_CALLS, default 5000;
-    // set_max_calls). When full, the oldest call without audio goes first.
+    // Audio-less calls kept per family: max_calls_ (DSD_NET_MAX_CALLS, default
+    // 5000; set_max_calls). When full, the oldest audio-less call goes first.
+    // Calls with audio are kept while their file is on disk (the audio store's
+    // disk/age cap bounds those), then roll off here once reconciled away.
     static constexpr std::size_t kMaxRadios = 3000;    // per family
     static constexpr std::size_t kMaxTalkgroups = 1500;
     static constexpr std::size_t kMaxNetworks = 200;
@@ -556,6 +558,7 @@ public:
         if (audio_.on()) return true;
         const bool ok = audio_.enable(dir, cap_bytes, max_age_ms, now);
         audio_on_ = ok;
+        if (ok) reconcile_evicted_audio_locked(now);   // re-indexing may have pruned over-cap files
         ++version_;
         return ok;
     }
@@ -685,6 +688,7 @@ public:
         }
         audio_.append(k->audio, pcm, n, now);
         k->audio_samples += n;
+        reconcile_evicted_audio_locked(now);         // the append may have pushed the store over its cap
     }
 
     // ---- export / import ----------------------------------------------------
@@ -2234,14 +2238,17 @@ private:
         // grants for several talkgroups -- may hold concurrent calls.)
         if (!slot.empty())
             if (Call* prev = fresh_call(c, F, slot, now)) close_call(F, *prev);
-        if (F.calls.size() >= max_calls_) {
-            // Roll off the oldest call -- but calls with audio last.
-            auto victim = F.calls.begin();
+        // The count caps only audio-LESS calls (cheap metadata). A call with
+        // audio (keep) is kept as long as its file is on disk: the audio store's
+        // own cap (DSD_NET_AUDIO_MAX_MB / _AGE_H) bounds those, and when it
+        // prunes a file reconcile_evicted_audio_locked() clears that call's keep
+        // flag so the call ages out here too. So disk use -- not this count --
+        // bounds how much recorded audio stays reachable.
+        std::size_t audioless = 0;
+        for (const auto& ec : F.calls) if (!ec.keep) ++audioless;
+        if (audioless >= max_calls_)
             for (auto it = F.calls.begin(); it != F.calls.end(); ++it)
-                if (!it->keep) { victim = it; break; }
-            close_call(F, *victim);
-            F.calls.erase(victim);
-        }
+                if (!it->keep) { close_call(F, *it); F.calls.erase(it); break; }
         Call k;
         k.id = ++next_call_;
         k.session = sid;
@@ -2266,6 +2273,29 @@ private:
     void set_keep_locked(Family& F, Call& k, bool on) {
         for (const auto& fk : fam_)
             if (&fk.second == &F) { set_keep_locked(fk.first, k, on, k.last_ms); return; }
+    }
+    // The audio store deleted some finished files to stay under its disk/age
+    // cap. Drop those calls' audio so the player stops offering a file that is
+    // gone and -- now audio-less -- they roll off the list by count. The keep
+    // flag goes off as a recorded op, so a replay drops the same calls.
+    void reconcile_evicted_audio_locked(std::int64_t now) {
+        std::vector<std::string> gone = audio_.take_evicted();
+        if (gone.empty()) return;
+        bool changed = false;
+        for (const auto& name : gone)
+            for (auto& fk : fam_) {
+                bool hit = false;
+                for (auto& k : fk.second.calls)
+                    if (k.audio == name) {
+                        set_keep_locked(fk.first, k, false, now);
+                        k.audio.clear();
+                        k.audio_samples = 0;
+                        hit = changed = true;
+                        break;
+                    }
+                if (hit) break;
+            }
+        if (changed) ++version_;
     }
     void close_call(Family& F, Call& k) {
         if (!k.open) return;

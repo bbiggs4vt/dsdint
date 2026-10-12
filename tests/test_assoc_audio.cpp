@@ -439,12 +439,36 @@ int main() {
         check(st.bytes <= 20000 && !fs::exists(file("g", names[0])) && fs::exists(file("g", names[3])) &&
                   m.audio_path(names[0], 6000).empty(),
               "cap: total stays under the cap; the oldest file was deleted, the newest kept");
+        // The pruned file's call loses its audio in the list (no dead play
+        // button); the call kept on disk still points at its file.
+        const auto cg = calls(m, "dmr", 6000);
+        check(by_src(cg, "100") && by_src(cg, "100")->audio.empty() &&
+                  by_src(cg, "103") && !by_src(cg, "103")->audio.empty(),
+              "reconcile: the pruned call is cleared of audio; the call still on disk keeps it");
         // A restart finds the files already there and counts them.
         m.stop_audio();
         AssocModel m2;
         m2.start_audio((dir / "g").string(), 20000, 0, 7000);
         check(m2.audio_status().files == st.files && !m2.audio_path(names[3], 7000).empty(),
               "restart: earlier runs' files are counted against the cap and still play");
+    }
+
+    // ---- the count cap bounds audio-less calls only; audio follows disk ----
+    {
+        AssocModel m;
+        m.set_max_calls(10);                                   // clamped minimum
+        m.start_audio((dir / "n").string(), 1 << 30, 0, 1000); // big disk cap: nothing pruned
+        m.begin_stream(1, "dmr", 0);
+        for (int k = 0; k < 2; ++k) line(m, 1, kCC, 1000 + k);
+        for (int i = 0; i < 14; ++i) {                         // 14 calls with audio
+            const std::int64_t t = 2000 + 100 * i;
+            line(m, 1, " SLOT 1 TGT=9 SRC=" + std::to_string(200 + i) + " Group Call ", t);
+            for (int f = 0; f < 3; ++f) tone(m, 1, 1, static_cast<int16_t>(1 + i), t + 10 + 20 * f);
+        }
+        const auto cs = calls(m, "dmr", 9000);
+        std::size_t aud = 0; for (const auto& c : cs) if (!c.audio.empty()) ++aud;
+        check(aud == 14 && cs.size() >= 14,
+              "count: all 14 recorded calls are kept though the count cap is 10 (disk, not count, bounds audio)");
     }
 
     // ---- audio never reaches a recording's snapshots or an import ----

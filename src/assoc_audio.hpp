@@ -134,6 +134,14 @@ public:
         }
         return { n, bytes };
     }
+    // Finished files the disk/age cap deleted since the last call, so the model
+    // can drop those calls' audio (clears a stale play button, and lets the
+    // call roll off the list by count). Taken (cleared) on read.
+    std::vector<std::string> take_evicted() {
+        std::vector<std::string> v;
+        v.swap(evicted_);
+        return v;
+    }
     std::uint64_t samples(const std::string& name) const {
         auto it = open_.find(name);
         return it == open_.end() ? 0 : it->second.samples;
@@ -239,6 +247,7 @@ private:
             total_ -= std::min(total_, it->bytes);
             std::error_code ec;
             std::filesystem::remove(dir_ + "/" + it->name, ec);
+            evicted_.push_back(it->name);           // tell the model this call's audio is gone
             it = index_.erase(it);
         }
     }
@@ -249,6 +258,7 @@ private:
     std::int64_t max_age_ = 0;
     std::deque<Entry> index_;                       // oldest first
     std::map<std::string, Writer> open_;
+    std::vector<std::string> evicted_;              // finished files the cap/age limit deleted
 };
 
 } // namespace dsdsrv

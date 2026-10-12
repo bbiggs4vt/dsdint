@@ -598,6 +598,20 @@ int main() {
               "bounds: merged calls capped per protocol, newest kept, renumbered");
     }
 
+    {   // cap_calls: audio-bearing calls survive past the cap (disk bounds
+        // those); only audio-less calls are capped, oldest dropped first.
+        std::vector<DsCall> C;
+        for (int i = 0; i < 12; ++i) { DsCall c; c.start = 2000 + i; c.last = c.start; c.audio = "call_x.wav"; C.push_back(c); }
+        for (int i = 0; i < 12; ++i) { DsCall c; c.start = 1000 + i; c.last = c.start; C.push_back(c); }  // audio-less
+        std::stable_sort(C.begin(), C.end(), [](const DsCall& a, const DsCall& b) { return a.start > b.start; });
+        cap_calls(C, 5);
+        std::size_t aud = 0, noaud = 0;
+        std::int64_t oldest_noaud = 1LL << 60;
+        for (const auto& c : C) { if (c.audio.empty()) { ++noaud; oldest_noaud = std::min(oldest_noaud, c.last); } else ++aud; }
+        check(aud == 12 && noaud == 5 && oldest_noaud == 1007,
+              "cap_calls: all audio calls kept past the cap; audio-less capped to the cap, newest kept");
+    }
+
     if (g_failures) {
         std::printf("\n%d CHECK(S) FAILED\n", g_failures);
         return 1;

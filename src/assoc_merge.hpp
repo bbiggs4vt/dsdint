@@ -465,8 +465,10 @@ struct Dataset {
     NetMerges merges;                          // network merges (see NetMerges)
 };
 
-// How many calls the explorer keeps per protocol (the live model's list and
-// a merged view): DSD_NET_MAX_CALLS, default 5000.
+// How many AUDIO-LESS calls the explorer keeps per protocol (the live model's
+// list and a merged view): DSD_NET_MAX_CALLS, default 5000. Calls with audio
+// are kept beyond this for as long as their file is on disk -- the audio
+// store's own cap (DSD_NET_AUDIO_MAX_MB / _AGE_H) bounds those.
 constexpr std::size_t kDefaultMaxCalls = 5000;
 inline std::size_t max_calls_setting() {
     const char* v = std::getenv("DSD_NET_MAX_CALLS");
@@ -1013,18 +1015,20 @@ inline void merge_into(Dataset& into, const Dataset& from) {
     into.sources.insert(into.sources.end(), from.sources.begin(), from.sources.end());
 }
 
-// Bound a newest-first call list to `cap`: the oldest calls WITHOUT audio go
-// first, then (if still over) the oldest of the rest -- as the live model.
+// Bound a newest-first call list. Keep every call that has audio -- the audio
+// store bounds those by disk use (DSD_NET_AUDIO_MAX_MB / _AGE_H), not by this
+// count -- and cap only the audio-less calls to `cap`, dropping the oldest
+// first (as the live model does). C is newest-first.
 inline void cap_calls(std::vector<DsCall>& C, std::size_t cap) {
-    if (C.size() <= cap) return;
-    std::size_t over = C.size() - cap;
+    std::size_t audioless = 0;
+    for (const auto& c : C) if (c.audio.empty()) ++audioless;
+    if (audioless <= cap) return;
+    std::size_t over = audioless - cap;
     std::vector<bool> drop(C.size(), false);
     for (std::size_t i = C.size(); i-- > 0 && over;)
         if (C[i].audio.empty()) { drop[i] = true; --over; }
-    for (std::size_t i = C.size(); i-- > 0 && over;)
-        if (!drop[i]) { drop[i] = true; --over; }
     std::vector<DsCall> keep;
-    keep.reserve(cap);
+    keep.reserve(C.size() - (audioless - cap));
     for (std::size_t i = 0; i < C.size(); ++i) if (!drop[i]) keep.push_back(std::move(C[i]));
     C.swap(keep);
 }

@@ -3730,7 +3730,7 @@ function renderAll() {
   IX.nets.forEach(function (n) { if (netOk(n.key)) n.sites.forEach(function (s) { sites[n.key + s] = 1; }); });
   var cards = $('cards');
   cards.textContent = '';
-  var kept = 'The newest calls are listed (up to ' + (S.d.max_calls || 5000) + ' per protocol; calls with audio are kept longest).';
+  var kept = 'The newest calls are listed (up to ' + (S.d.max_calls || 5000) + ' without audio per protocol; calls with recorded audio are kept as long as the audio is on disk).';
   // Live: a Streams card (this protocol's connected decode streams; green
   // when one decodes now). A file view has no connections: no Streams card.
   var st = streamsOf(S.fam), stDec = st.some(decodingNow);
