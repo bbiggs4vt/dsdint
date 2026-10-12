@@ -1,0 +1,13 @@
+# This repo builds and runs on Linux. Normalize text to LF in the repo and on
+# checkout on EVERY platform: a CRLF checkout of patches/*.patch makes the
+# Docker build's `git apply` fail with "patch does not apply", and CRLF shell
+# scripts break at the shebang.
+* text=auto eol=lf
+
+# Binary assets: never convert these.
+*.png  binary
+*.pdf  binary
+*.blue binary
+*.gz   binary
+*.zip  binary
+*.wav  binary

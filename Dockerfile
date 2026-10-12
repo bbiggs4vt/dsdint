@@ -91,6 +91,7 @@ ARG DSDFME_COMMIT=198f0eacb5ef3873fab23186640c90789152894c
 COPY patches/dsd-fme-keep-bp-key.patch /opt/src/
 RUN git clone https://github.com/lwvmobile/dsd-fme /opt/src/dsd-fme \
     && git -C /opt/src/dsd-fme checkout ${DSDFME_COMMIT} \
+    && sed -i 's/\r$//' /opt/src/dsd-fme-keep-bp-key.patch \
     && git -C /opt/src/dsd-fme apply /opt/src/dsd-fme-keep-bp-key.patch \
     && cmake -S /opt/src/dsd-fme -B /opt/src/dsd-fme/build -DCMAKE_BUILD_TYPE=Release \
     && cmake --build /opt/src/dsd-fme/build -j"$(nproc)" \
