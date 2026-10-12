@@ -1107,6 +1107,20 @@ public:
         std::lock_guard<std::mutex> lk(mu_);
         return keyring_csv(keys_, fam, net);
     }
+    // The stored key VALUES for one network, {kid: value} (hex). Like keys_csv,
+    // a deliberate readout of the secret for the authorized operator -- here so
+    // the editable keys panel can show a value on request. Never in /net.json.
+    std::string net_key_values_json(const std::string& fam, const std::string& net) const {
+        std::lock_guard<std::mutex> lk(mu_);
+        using assocjson::q;
+        std::string o = "{";
+        if (auto f = keys_.find(fam); f != keys_.end())
+            if (auto n = f->second.find(net); n != f->second.end()) {
+                bool first = true;
+                for (const auto& ik : n->second) { o += (first ? "" : ",") + q(ik.first) + ":" + q(ik.second.value); first = false; }
+            }
+        return o + "}";
+    }
     // The dsd-fme hex key list (-K) covering a whole family (or, with fam "",
     // every family), so a decoder can be handed the keyring at start. Returns
     // at least a header.

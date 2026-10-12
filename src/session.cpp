@@ -889,6 +889,15 @@ void Session::serve_http() {
         res->set(http::field::content_disposition, "attachment; filename=\"" + fn + "\"");
         res->set(http::field::cache_control, "no-store");
         res->body() = stats_ ? stats_->assoc().keys_csv(fam, net) : std::string("KEY ID,KEY\n");
+    } else if (target == "/net/keys/values") {
+        // The stored key values for one network, {kid: value}, for the editable
+        // keys panel's "Show key". Like /net/keys/list, a deliberate value
+        // readout for the operator; never part of /net.json.
+        const std::string fam = query_param(query, "fam"), net = query_param(query, "net");
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "application/json");
+        res->set(http::field::cache_control, "no-store");
+        res->body() = stats_ ? stats_->assoc().net_key_values_json(fam, net) : std::string("{}");
     } else if (target == "/net/keys/reload") {
         // Restart every running decoder so it re-reads the keyring (keys are
         // applied to dsd-fme as a -K list at start). The operator triggers

@@ -360,12 +360,13 @@ tablet or phone the details are a drawer: **Close** or Esc.
   flagged encrypted without its key id decoded counts as encrypted only.)
   - **Loading a key.** On a **network's** details (live view), each key id has
     **Add key…** — type the key (hex, up to 64 digits) and **Save**. It then
-    shows **✓ key loaded**, with **Replace key** / **Remove**. A key is stored
-    per network and key id; talkgroup and radio panels show **✓ key loaded**
-    for reference but are managed on the network. When the algorithm's key
-    length is known (e.g. AES-256 = 64 hex digits, AES-128 = 32), a shorter
-    value is padded with leading zeros, so `12345` becomes `0000…012345` —
-    you need not type the leading zeros.
+    shows **✓ key loaded**, with **Replace key** / **Remove** / **Show key**
+    (reveals the stored value, fetched on request; **Hide key** puts it back).
+    A key is stored per network and key id; talkgroup and radio panels show
+    **✓ key loaded** for reference but are managed on the network. When the
+    algorithm's key length is known (e.g. AES-256 = 64 hex digits, AES-128 =
+    32), a shorter value is padded with leading zeros, so `12345` becomes
+    `0000…012345` — you need not type the leading zeros.
   - **Using it.** The server applies the stored keys to **its own** decoder
     (the dsd-fme backend): when a stream starts, this protocol's keys are
     handed to dsd-fme as a `-K` key list, so an encrypted call whose key id
@@ -381,10 +382,10 @@ tablet or phone the details are a drawer: **Close** or Esc.
     network's keys as a dsd-fme hex key list (`keyid,key`) to point your own
     decoder at with `-K`. Keys are kept on the server across restarts
     (`DSD_NET_KEYS_FILE`, default `net_keys.json` in the recordings folder,
-    written readable only by the server's user). A key value is never shown
-    again, never sent in `/net.json`, and never put in an export — only the
-    key-list download (or the server handing its own decoder the list)
-    returns it. (`DSD_NET_NO_APPLY_KEYS=1` keeps the keys for download only
+    written readable only by the server's user). A key value is never sent in
+    `/net.json` and never put in an export; it leaves the server only when the
+    operator asks for it — **Show key** in the panel, or the key-list download
+    (and when the server hands its own decoder the list). (`DSD_NET_NO_APPLY_KEYS=1` keeps the keys for download only
     and does not hand them to the server's decoder.)
   - Only enter keys for systems you are **authorized to monitor**.
   - **Keys tab.** Each protocol tab gains a **Keys** sub-tab when it has any
@@ -396,8 +397,8 @@ tablet or phone the details are a drawer: **Close** or Esc.
     is always visible with its **Replace key** / **Remove** controls.
     **Download all (<protocol>)** gives a zip of per-network key lists (one
     `-K` CSV per network, so there are no key-id collisions), and **Remove
-    all** clears every loaded key for the protocol (with a confirm). Values
-    are never shown.
+    all** clears every loaded key for the protocol (with a confirm). A value
+    is shown only when you ask for it with **Show key**.
   - **Adding a key by hand.** **+ Add a key manually** (Keys tab) opens a
     short form — pick the **network**, type the **key id** (hex, e.g. `1` or
     `666A`), optionally choose the **algorithm**, and enter the **key value**

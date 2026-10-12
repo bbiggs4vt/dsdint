@@ -232,6 +232,9 @@ inline std::string render_net_page_html() {
                 padding: .25rem .4rem; background: var(--input-bg, #11161b); color: var(--text);
                 border: 1px solid var(--table-bd); border-radius: 3px; }
   .keyact .kh { color: var(--muted); font-size: .74rem; flex-basis: 100%; }
+  .keyval { margin-top: .3rem; font-size: .8rem; color: var(--heading); word-break: break-all;
+            background: var(--panel2); border: 1px solid var(--table-bd); border-radius: 3px; padding: .25rem .45rem; }
+  .keyval.off { display: none; }
   a.keyrm { color: var(--muted); font-size: .78rem; cursor: pointer; }
   a.keyrm:hover { color: var(--text); }
   /* Keys tab: the manual "Add a key" form. */
@@ -1360,12 +1363,18 @@ function markKeyed(net, kid, on, alg) {                  // reflect a set/remove
   var F = S.d.keyed[S.fam] = S.d.keyed[S.fam] || {}, a = F[net] = F[net] || {}, id = (kid || '').toUpperCase();
   if (on) a[id] = alg || ''; else delete a[id];
 }
+// Key VALUES the operator has chosen to reveal: KEYSHOW is the set of revealed
+// "fam|net|kid"; KEYVALS caches a network's {kid: value} fetched on Show. Held
+// only in memory, only once revealed -- never in a poll, never persisted.
+var KEYSHOW = {}, KEYVALS = {};
+function forgetKeyVals(net) { delete KEYVALS[S.fam + '|' + net]; }
 function setKey(net, kid, alg, value, done) {
   fetch('/net/keys/set', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
                            body: JSON.stringify({ fam: S.fam, net: net, kid: kid, alg: alg, key: value }) })
     .then(function (r) { return r.json().then(function (j) { return r.ok && j.ok; }, function () { return false; }); })
     .then(function (ok) {
-      if (ok) { S.keyEdit = null; markKeyed(net, kid, true, alg); toast('Key loaded for ' + keyText(alg, kid) + '.'); if (S.d) render(); }
+      if (ok) { S.keyEdit = null; forgetKeyVals(net); delete KEYSHOW[S.fam + '|' + net + '|' + kid];   // value changed: re-reveal to see it
+                markKeyed(net, kid, true, alg); toast('Key loaded for ' + keyText(alg, kid) + '.'); if (S.d) render(); }
       else toast('That key wasn’t accepted (expected hex digits, up to 64).');
       if (done) done(ok);
     }).catch(function () { toast('Could not reach the server to set the key.'); });
@@ -1374,7 +1383,8 @@ function removeKey(net, kid) {
   fetch('/net/keys/remove?fam=' + encodeURIComponent(S.fam) + '&net=' + encodeURIComponent(net) + '&kid=' + encodeURIComponent(kid),
         { cache: 'no-store' })
     .then(function (r) { return r.json(); }).then(function (j) {
-      if (j.ok) { if (S.keyEdit && S.keyEdit.kid === kid) S.keyEdit = null; markKeyed(net, kid, false); toast('Key removed.'); if (S.d) render(); }
+      if (j.ok) { if (S.keyEdit && S.keyEdit.kid === kid) S.keyEdit = null; forgetKeyVals(net); delete KEYSHOW[S.fam + '|' + net + '|' + kid];
+                  markKeyed(net, kid, false); toast('Key removed.'); if (S.d) render(); }
     }).catch(function () { toast('Could not reach the server to remove the key.'); });
 }
 // DMR Basic Privacy: a key NUMBER (1-255) per network, applied with dsd-fme's
@@ -1525,6 +1535,22 @@ function keysSection(d, m, what, opts) {
       h('span', { class: 'c', text: cnt ? (cnt + ' call' + (cnt > 1 ? 's' : '')) : 'not heard yet' })])]);
     if (editNet) {
       var act = h('div', { class: 'keyact' });
+      var sk = S.fam + '|' + editNet + '|' + kid;          // reveal state key
+      var valEl = h('div', { class: 'keyval mono off' });  // the key value, shown on request
+      var renderVal = function () {
+        var c = KEYVALS[S.fam + '|' + editNet], v = c && (c[kid] != null ? c[kid] : c[(kid || '').toUpperCase()]);
+        if (KEYSHOW[sk] && v != null) { valEl.textContent = v; valEl.classList.remove('off'); }
+        else { valEl.textContent = ''; valEl.classList.add('off'); }
+      };
+      var reveal = function () {
+        KEYSHOW[sk] = true;
+        if (KEYVALS[S.fam + '|' + editNet]) { renderVal(); showButtons(); return; }
+        fetch('/net/keys/values?fam=' + encodeURIComponent(S.fam) + '&net=' + encodeURIComponent(editNet), { cache: 'no-store' })
+          .then(function (r) { return r.json(); })
+          .then(function (j) { KEYVALS[S.fam + '|' + editNet] = j || {}; renderVal(); showButtons(); })
+          .catch(function () { delete KEYSHOW[sk]; toast('Could not fetch the key value.'); });
+      };
+      var hide = function () { delete KEYSHOW[sk]; renderVal(); showButtons(); };
       // The open form and what has been typed survive a panel rebuild
       // (S.keyEdit), the way the Merge picker does (S.mpick) -- a poll must
       // not make the entry box vanish mid-type.
@@ -1542,7 +1568,7 @@ function keysSection(d, m, what, opts) {
         act.appendChild(inp);
         act.appendChild(h('button', { class: 'btn sm', type: 'button', onclick: save }, 'Save'));
         act.appendChild(h('button', { class: 'btn sm', type: 'button', onclick: cancel }, 'Cancel'));
-        act.appendChild(h('span', { class: 'kh', text: (want ? 'Hex — ' + algName(alg) + ' uses ' + want + ' digits; a shorter value is padded with leading zeros.' : 'Hex, up to 64 digits.') + ' Stored on the server; never shown again.' }));
+        act.appendChild(h('span', { class: 'kh', text: (want ? 'Hex — ' + algName(alg) + ' uses ' + want + ' digits; a shorter value is padded with leading zeros.' : 'Hex, up to 64 digits.') + ' Stored on the server; kept out of /net.json and exports.' }));
         if (!restore) {                                 // opening it: focus; restoring after a rebuild: don't steal focus
           inp.focus();
           var n = inp.value.length; try { inp.setSelectionRange(n, n); } catch (e) {}
@@ -1551,11 +1577,17 @@ function keysSection(d, m, what, opts) {
       var showButtons = function () {
         act.textContent = '';
         act.appendChild(h('button', { class: 'btn sm', type: 'button', onclick: function () { showForm(false); } }, loaded ? 'Replace key' : 'Add key…'));
-        if (loaded) act.appendChild(h('a', { class: 'keyrm', onclick: function () { removeKey(editNet, kid); } }, 'Remove'));
+        if (loaded) {
+          act.appendChild(h('a', { class: 'keyrm', onclick: function () { removeKey(editNet, kid); } }, 'Remove'));
+          act.appendChild(h('a', { class: 'keyrm', title: 'Show / hide the stored key value',
+                                   onclick: KEYSHOW[sk] ? hide : reveal }, KEYSHOW[sk] ? 'Hide key' : 'Show key'));
+        }
+        renderVal();
       };
       if (S.keyEdit && S.keyEdit.net === editNet && S.keyEdit.kid === kid) showForm(true);
       else showButtons();
       row.appendChild(act);
+      row.appendChild(valEl);
     }
     ul.appendChild(row);
   });
@@ -1673,7 +1705,7 @@ function viewKeys() {
     cont.appendChild(bar);
   }
   if (!S.file && S.keyAdd) cont.appendChild(keyAddForm());
-  cont.appendChild(h('div', { class: 'note', style: 'margin-top:0', text: 'Keys are stored on the server (never shown again) and applied to its own dsd-fme decoder — matched by the key id a call announces, so clear calls are unaffected and take effect when a stream next starts. You can also download them as a key list for a decoder you run yourself. A key belongs to a talkgroup or channel; enter keys only for systems you are authorized to monitor.' }));
+  cont.appendChild(h('div', { class: 'note', style: 'margin-top:0', text: 'Keys are stored on the server (kept out of /net.json and exports) and applied to its own dsd-fme decoder — matched by the key id a call announces, so clear calls are unaffected and take effect when a stream next starts. Use Show key to reveal a stored value, or download them as a key list for a decoder you run yourself. A key belongs to a talkgroup or channel; enter keys only for systems you are authorized to monitor.' }));
   if (!kn.length) {
     cont.appendChild(h('div', { class: 'note', text: 'No encryption key ids ' + (loaded ? '' : 'seen or ') + 'loaded on ' + (FAMN[S.fam] || S.fam) +
       ' yet. Add one above, or when an encrypted call names a key id it appears here (and in the network’s details) with a place to enter the key.' }));
@@ -1779,7 +1811,7 @@ function keyAddForm() {
   wrap.appendChild(h('div', { class: 'keyact' }, [
     h('button', { class: 'btn sm', type: 'button', onclick: save }, 'Save key'),
     h('button', { class: 'btn sm', type: 'button', onclick: function () { S.keyAdd = null; viewKeys(); } }, 'Cancel')]));
-  wrap.appendChild(h('div', { class: 'kh', text: 'A hex key (up to 64 digits), matched by the key id a call announces' + (isDmr ? '; or DMR Basic Privacy, a key number 1–255 with no key id; or a Motorola Enhanced Privacy key (10 hex digits) applied to every EP call on the network whatever its key id; or a TYT EP, TYT BP, Anytone BP or TYT / Baofeng / Retevis AP key, applied to ALL voice on the channel — clear calls there are garbled, so only for channels that always use it (one of these per network)' : '') + '. Stored on the server; never shown again. Only enter keys for systems you are authorized to monitor.' }));
+  wrap.appendChild(h('div', { class: 'kh', text: 'A hex key (up to 64 digits), matched by the key id a call announces' + (isDmr ? '; or DMR Basic Privacy, a key number 1–255 with no key id; or a Motorola Enhanced Privacy key (10 hex digits) applied to every EP call on the network whatever its key id; or a TYT EP, TYT BP, Anytone BP or TYT / Baofeng / Retevis AP key, applied to ALL voice on the channel — clear calls there are garbled, so only for channels that always use it (one of these per network)' : '') + '. Stored on the server; kept out of /net.json and exports. Only enter keys for systems you are authorized to monitor.' }));
   applyMode();
   return wrap;
 }
