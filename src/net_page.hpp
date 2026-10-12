@@ -41,6 +41,9 @@ inline std::string render_net_page_html() {
   a { color: var(--info); text-decoration: none; }
   a:hover { text-decoration: underline; }
   .wrap { max-width: 1500px; margin: 0 auto; padding: 0 1.25rem; }
+  /* Widescreen: use the extra width instead of wide empty margins. Unchanged
+     at 1600px and below. */
+  @media (min-width: 1600px) { .wrap { max-width: min(95vw, 2200px); } }
   header { background-image: linear-gradient(#484e55, #3a3f44 60%, #2e3236);
            border-bottom: 1px solid var(--comp-bd); box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
            margin-bottom: 1.1rem; }
@@ -274,6 +277,8 @@ inline std::string render_net_page_html() {
   .b-qmarg { background: rgba(248,148,6,.18); color: var(--warn); border-color: var(--warn); }
   .b-qunk { background: rgba(255,255,255,.06); color: var(--muted); border-color: var(--table-bd); }
   .audcell { display: flex; flex-direction: column; align-items: flex-start; gap: .2rem; }   /* play/download on one line, quality badge below */
+  /* With the room a widescreen gives, keep the quality badge on the same line. */
+  @media (min-width: 1600px) { .audcell { flex-direction: row; flex-wrap: wrap; align-items: center; gap: .25rem .5rem; } }
   .b-strong { background: rgba(98,196,98,.18); color: var(--success); }
   .b-weak { background: rgba(248,148,6,.18); color: var(--warn); }
   .b-channel { background: rgba(91,192,222,.16); color: var(--info); }
