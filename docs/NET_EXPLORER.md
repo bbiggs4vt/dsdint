@@ -674,6 +674,30 @@ easy to tell apart. `net-merge` does the same from the command line.
 Exports carry their [network merges](#merging-networks); combined files keep
 them all (a merge made on this server wins over an imported one).
 
+### Comparing to a baseline (what's new)
+
+**Compare…** loads a saved export as a *baseline* — yesterday's run, say —
+and flags what is **new** in what you are looking at now (the live view, or
+another export you have open). It does not change the view: a green bar under
+the stat cards sums it up — **+N radios · +N talkgroups · +N networks** new
+since the baseline, any **newly encrypted** talkgroups (encrypted now, clear
+or absent in the baseline), and how many radios/talkgroups in the baseline
+were **not heard** this time. Click a count to jump to that list; the new
+talkgroups, radios and networks there (and in their details) carry a green
+**NEW** badge.
+
+"New" means not present in the baseline for that protocol. Talkgroups and
+radios match by id, so those are exact; a network matches on its strong
+identifiers (system id) and falls back to its channel key, which **can drift
+between days** on weakly identified systems — so a "new network" is worth a
+glance rather than trusting blindly (radios and talkgroups are the reliable
+signal). The baseline is held in your browser only (it survives the page's
+own reloads) and compares against whatever protocol tab you are on. Load a
+different export to replace it, or **Compare… → Comparing ✕** (or the bar's
+**Clear**) to stop. This is a first, lightweight comparison; a fuller
+day-over-day diff (new associations, activity up/down, a dedicated report) is
+a planned next step.
+
 ## 13. Recording a session for troubleshooting
 
 If something in the explorer looks wrong (phantom calls, calls cut short,
