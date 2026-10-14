@@ -321,6 +321,13 @@ inline std::string render_net_page_html() {
   .ids { font-family: Menlo, Monaco, Consolas, monospace; font-size: .8rem; color: var(--text); }
   .grid2 { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(330px, 100%), 1fr)); gap: .8rem; padding: .8rem; }
   .comm { background: var(--panel2); border: 1px solid var(--comp-bd); border-radius: 4px; padding: .6rem .75rem; }
+  .comm.commsel { border-color: var(--info); box-shadow: inset 0 0 0 1px var(--info); }
+  .commhdr { display: flex; align-items: baseline; gap: .5rem; text-decoration: none; cursor: pointer; }
+  .commhdr:hover h5 { color: var(--info); }
+  .commact { margin-left: auto; font-size: .68rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
+             white-space: nowrap; border: 1px solid var(--comp-bd); border-radius: 3px; padding: .05rem .35rem; }
+  .commhdr:hover .commact { color: var(--info); border-color: var(--info); }
+  .comm.commsel .commact { color: var(--info); border-color: var(--info); }
   .comm h5 { margin: 0 0 .35rem; color: var(--heading); font-size: .85rem; font-weight: 500; }
   .comm .meta { color: var(--muted); font-size: .75rem; margin-bottom: .4rem; }
   .comm.same h5 { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; }
@@ -674,7 +681,7 @@ var FAMN = {dmr:'DMR', p25:'P25', nxdn:'NXDN', tetra:'TETRA', dpmr:'dPMR', dstar
 var PAL = ['#5bc0de','#62c462','#f89406','#ee5f5b','#b38bff','#e6c229','#3fc1a5','#ff7eb6','#8fa8ff',
            '#c3e88d','#ffab70','#4dd0e1','#d4a5ff','#a3d977'];
 var S = { d: null, fam: null, nets: {}, tgf: {}, rf: {}, view: 'calls', sel: null, q: '', paused: false, skew: 0,
-          ncol: {}, nidx: {}, sort: {}, rows: {}, audOnly: false, noSig: false, fOpen: false, keyAdd: null, exp: {} };
+          ncol: {}, nidx: {}, sort: {}, rows: {}, audOnly: false, noSig: false, fOpen: false, keyAdd: null, exp: {}, comm: null };
 var IX = null;
 
 function $(id) { return document.getElementById(id); }
@@ -1143,7 +1150,23 @@ function radioTgOk(r) {
   if (ts.some(tgOk)) return true;
   return !tgPicked() && (!ts.length || keys(r.peers).length > 0);
 }
-function anyFilter() { return !netAll() || !tgAll() || !fAll(S.rf); }
+function anyFilter() { return !netAll() || !tgAll() || !fAll(S.rf) || !!S.comm; }
+// A "community" (Links tab) is a connected clump of radios + talkgroups.
+// Clicking one pins it as a filter (S.comm): the graph and the Calls /
+// Talkgroups / Radios lists then show only its members. S.comm holds the
+// picked member set -- a snapshot of ids, so it stays put as new calls arrive
+// -- plus a signature used to keep the clicked card marked across rebuilds.
+function commSig(c) { return c.t.map(function (x) { return 't:' + x; }).concat(c.r.map(function (x) { return 'r:' + x; })).sort().join(','); }
+function commSet(c) {
+  var t = {}, r = {};
+  c.t.forEach(function (x) { t[x] = 1; }); c.r.forEach(function (x) { r[x] = 1; });
+  return { sig: commSig(c), t: t, r: r, nt: c.t.length, nr: c.r.length };
+}
+function commTgOk(id) { return !S.comm || !!S.comm.t[id]; }
+function commROk(id) { return !S.comm || !!S.comm.r[id]; }
+// A call is in the community if a member radio keyed it, or (group call) its
+// talkgroup is a member, or (private call) its partner radio is.
+function commCallOk(c) { return !S.comm || !!S.comm.r[c.src] || (c.priv ? !!S.comm.r[c.tgt] : !!S.comm.t[c.tgt]); }
 function qm() {
   var q = S.q.toLowerCase();
   for (var i = 0; i < arguments.length; i++) {
@@ -1160,14 +1183,14 @@ function fCalls(list, allAudio) {
   var aud = S.audOnly && (!S.file || !fAll(FILEAUDIO)) && !allAudio;
   var sig = S.noSig && !allAudio;                    // hide signaling-only calls (list option, not the stat counts)
   return (list || IX.calls).filter(function (c) {
-    return (netAll() || netOk(c.net)) && callTgOk(c) && callROk(c) && (!aud || hasAudio(c)) &&
+    return (netAll() || netOk(c.net)) && commCallOk(c) && callTgOk(c) && callROk(c) && (!aud || hasAudio(c)) &&
       (!sig || c.voice || c.data) &&
       (!S.q || qm(c.src, c.tgt, c.alias, c.text, svcLabel(c.svc), mhz(c.freq), IX.rById[c.src] && IX.rById[c.src].aliases,
                    c.kid ? ['0x' + c.kid, algName(c.alg)] : null));
   });
 }
-function fTgs() { return IX.tgs.filter(function (t) { return inNet(t.networks) && tgOk(t.id) && tgROk(t) && (!S.q || qm(t.id)); }); }
-function fRadios() { return IX.radios.filter(function (r) { return inNet(r.networks) && radioTgOk(r) && fOk(S.rf, r.id) && (!S.q || qm(r.id, r.aliases)); }); }
+function fTgs() { return IX.tgs.filter(function (t) { return inNet(t.networks) && commTgOk(t.id) && tgOk(t.id) && tgROk(t) && (!S.q || qm(t.id)); }); }
+function fRadios() { return IX.radios.filter(function (r) { return inNet(r.networks) && commROk(r.id) && radioTgOk(r) && fOk(S.rf, r.id) && (!S.q || qm(r.id, r.aliases)); }); }
 
 // ---------- entity widgets ----------
 function aliasOf(id) { var r = IX.rById[id]; return r && r.aliases.length ? r.aliases[r.aliases.length - 1] : ''; }
@@ -2939,8 +2962,14 @@ function viewLinks() {
     tl.slice(0, 30).forEach(function (t) { te.appendChild(tlink(t)); });
     rl.slice(0, 40).forEach(function (r) { re.appendChild(rlink(r)); });
     if (rl.length > 40) re.appendChild(h('span', { class: 'alias', text: '+' + (rl.length - 40) + ' more' }));
-    grid.appendChild(h('div', { class: 'comm' }, [
-      h('h5', { text: 'Community ' + (i + 1) }),
+    var sig = commSig(c), active = !!(S.comm && S.comm.sig === sig);
+    grid.appendChild(h('div', { class: 'comm' + (active ? ' commsel' : '') }, [
+      h('a', { class: 'commhdr', href: '#',
+               title: active ? 'Showing only this community — click to clear the filter'
+                             : 'Filter the graph and the Calls / Talkgroups / Radios lists to this community',
+               onclick: function (e) { e.preventDefault(); setComm(active ? null : c); } },
+        [h('h5', { text: 'Community ' + (i + 1) }),
+         h('span', { class: 'commact', text: active ? '✓ filtering' : 'Filter ▸' })]),
       h('div', { class: 'meta' }, [c.r.length + ' radios · ' + c.t.length + ' talkgroups · ', nets(Object.keys(netset))]),
       c.t.length ? te : null, h('div', { style: 'height:.35rem' }), re]));
   });
@@ -3164,7 +3193,8 @@ var GR = { nodes: [], links: [], by: {}, adj: {}, sig: '', t: { k: 1, x: 0, y: 0
 function gSig() {
   return [S.d.version, S.fam, netKeys().sort().map(function (k) { return S.nets[k] + ':' + k; }).join(','),
           keys(S.tgf).sort().map(function (k) { return S.tgf[k] + ':' + k; }).join(','),
-          keys(S.rf).sort().map(function (k) { return S.rf[k] + ':' + k; }).join(','), S.q, $('g-cap').value, $('g-priv').checked].join('|');
+          keys(S.rf).sort().map(function (k) { return S.rf[k] + ':' + k; }).join(','), (S.comm ? S.comm.sig : ''),
+          S.q, $('g-cap').value, $('g-priv').checked].join('|');
 }
 function buildGraph() {
   var sig = gSig();
@@ -3518,6 +3548,8 @@ document.addEventListener('keydown', function (e) {
   if (S.sel && !(t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA'))) closeSheet();
 });
 function setNets(keys) { S.nets = {}; keys.forEach(function (k) { S.nets[k] = 'in'; }); GR.sig = ''; render(); }
+// Pin a community (Links tab) as a filter, or clear it (null).
+function setComm(c) { S.comm = c ? commSet(c) : null; GR.sig = ''; render(); }
 // A network chip picks its network, or takes it out of the filter (picked or
 // excluded).
 function toggleNet(k) { if (S.nets[k]) delete S.nets[k]; else S.nets[k] = 'in'; GR.sig = ''; render(); }
@@ -3540,7 +3572,7 @@ function filterBtns(name, id, what, hideTip) {
                   onclick: function () { fExclude(name, id); } }, out ? 'Include' : 'Exclude')]);
 }
 function clearSearch() { S.q = ''; $('q').value = ''; GR.sig = ''; render(); }
-function clearFilters() { S.nets = {}; S.tgf = {}; S.rf = {}; S.q = ''; $('q').value = ''; GR.sig = ''; render(); }
+function clearFilters() { S.nets = {}; S.tgf = {}; S.rf = {}; S.comm = null; S.q = ''; $('q').value = ''; GR.sig = ''; render(); }
 function onlyNet(k) { var ks = netKeys(); return ks.length === 1 && ks[0] === k && S.nets[k] === 'in'; }
 // The network list's collapsed / open state (remembered per browser).
 // The Filters section's collapsed / open state (remembered per browser).
@@ -3609,9 +3641,9 @@ function renderFilters() {
   if (!FUI) {
     var mk = function (label) { var items = h('span', { class: 'fitems' }); return { el: h('div', { class: 'frow' }, [h('span', { class: 'lbl', text: label }), items]), items: items }; };
     FUI = { head: h('div', { class: 'frow fhead' }), body: h('div', { class: 'fbody' }), net: mk('Networks'), tg: mk('Talkgroups'),
-            r: mk('Radios'), q: mk('Search'), tgAdd: filterAdd('tgf', 'talkgroup', 'TG id…'), rAdd: filterAdd('rf', 'radio', 'Radio id or alias…'), dl: '' };
+            r: mk('Radios'), comm: mk('Community'), q: mk('Search'), tgAdd: filterAdd('tgf', 'talkgroup', 'TG id…'), rAdd: filterAdd('rf', 'radio', 'Radio id or alias…'), dl: '' };
     FUI.tg.el.appendChild(FUI.tgAdd.el); FUI.r.el.appendChild(FUI.rAdd.el);
-    [FUI.net, FUI.tg, FUI.r, FUI.q].forEach(function (x) { FUI.body.appendChild(x.el); });
+    [FUI.net, FUI.tg, FUI.r, FUI.comm, FUI.q].forEach(function (x) { FUI.body.appendChild(x.el); });
     fp.textContent = '';
     fp.appendChild(FUI.head); fp.appendChild(FUI.body);
   }
@@ -3619,7 +3651,7 @@ function renderFilters() {
   var byCalls = IX.nets.slice().sort(function (a, b) { return b.calls - a.calls; });
   var numSort = function (a, b) { return (+a - +b) || (a < b ? -1 : 1); };
   var tgIds = keys(S.tgf).sort(numSort), rIds = keys(S.rf).sort(numSort);
-  var nAct = netKeys().length + tgIds.length + rIds.length + (S.q ? 1 : 0);
+  var nAct = netKeys().length + tgIds.length + rIds.length + (S.comm ? 1 : 0) + (S.q ? 1 : 0);
   var netChip = function (n) {
     var st = S.nets[n.key];
     return h('span', { class: 'chip' + (st === 'in' ? ' active' : st === 'out' ? ' excl' : ''),
@@ -3639,6 +3671,11 @@ function renderFilters() {
   var qChip = function () {
     return h('span', { class: 'chip active', title: 'The search (click to clear it)', onclick: clearSearch }, '“' + S.q + '” ✕');
   };
+  var commChip = function () {
+    return h('span', { class: 'chip active',
+      title: 'Showing only this community (' + S.comm.nr + ' radios · ' + S.comm.nt + ' talkgroups) — click to clear it',
+      onclick: function () { setComm(null); } }, 'Community · ' + S.comm.nr + 'r · ' + S.comm.nt + 't ✕');
+  };
   var head = FUI.head;
   head.textContent = '';
   head.appendChild(h('button', { class: 'ftog', type: 'button', 'aria-expanded': S.fOpen ? 'true' : 'false',
@@ -3649,6 +3686,7 @@ function renderFilters() {
     byCalls.forEach(function (n) { if (S.nets[n.key]) head.appendChild(netChip(n)); });
     tgIds.forEach(function (id) { head.appendChild(tgChip(id)); });
     rIds.forEach(function (id) { head.appendChild(rChip(id)); });
+    if (S.comm) head.appendChild(commChip());
     if (S.q) head.appendChild(qChip());
     head.appendChild(h('span', { class: 'fmore', onclick: function () { setFOpen(true); },
       text: (IX.nets.length ? IX.nets.length + ' network' + (IX.nets.length === 1 ? '' : 's') : 'more') + '…' }));
@@ -3669,6 +3707,8 @@ function renderFilters() {
     .concat(tgIds.map(tgChip)));
   fill(FUI.r, [h('span', { class: 'chip' + (fAll(S.rf) ? ' active' : ''), onclick: function () { setF('rf', {}); } }, 'All radios')]
     .concat(rIds.map(rChip)));
+  FUI.comm.el.hidden = !S.comm;
+  if (S.comm) fill(FUI.comm, [commChip()]);
   FUI.q.el.hidden = !S.q;
   if (S.q) fill(FUI.q, [qChip()]);
   // Suggestions for the boxes: this protocol's talkgroups and radios (with
@@ -3760,7 +3800,7 @@ function famTabEl(f) {
   if (!b) {
     b = document.createElement('button');
     b.type = 'button';
-    b.addEventListener('click', function () { S.fam = f; store('fam', f); S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; GR.sig = ''; render(); });
+    b.addEventListener('click', function () { S.fam = f; store('fam', f); S.nets = {}; S.tgf = {}; S.rf = {}; S.comm = null; S.sel = null; GR.sig = ''; render(); });
     FT.tab[f] = b;
   }
   return b;
@@ -3834,7 +3874,7 @@ function renderAll() {
   }));
   $('empty').hidden = fams.length > 0;
   $('main').hidden = !fams.length;
-  if (fams.length && fams.indexOf(S.fam) < 0) { S.fam = fams[0]; S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; }
+  if (fams.length && fams.indexOf(S.fam) < 0) { S.fam = fams[0]; S.nets = {}; S.tgf = {}; S.rf = {}; S.comm = null; S.sel = null; }
   renderFamtabs(fams);
   if (!fams.length) { IX = null; return; }
   index();
@@ -3930,7 +3970,7 @@ function openData(d, name, report) {
   FT.order = null;                                    // a new view: sort its tabs afresh
   S.d = { version: -Date.now(), now: d.now || d.exported, families: d.families, rec: {}, merges: d.merges || {} };
   applyMerges(S.d);
-  S.fam = null; S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; S.q = ''; $('q').value = ''; GR.sig = ''; GR.fitted = false; GR.userView = false;
+  S.fam = null; S.nets = {}; S.tgf = {}; S.rf = {}; S.comm = null; S.sel = null; S.q = ''; $('q').value = ''; GR.sig = ''; GR.fitted = false; GR.userView = false;
   document.body.classList.add('filemode');
   var fb = $('filebar'), srcs = d.sources || [];
   fb.textContent = '';
@@ -4053,7 +4093,7 @@ function openFiles(fl) {
 function backToLive() {
   if (PLAYER.a && PLAYER.name && S.file) { PLAYER.a.pause(); PLAYER.name = null; }
   clearFileAudio();
-  S.file = null; S.d = null; IX = null; S.fam = load('fam'); S.nets = {}; S.tgf = {}; S.rf = {}; S.sel = null; GR.sig = ''; GR.fitted = false; GR.userView = false;
+  S.file = null; S.d = null; IX = null; S.fam = load('fam'); S.nets = {}; S.tgf = {}; S.rf = {}; S.comm = null; S.sel = null; GR.sig = ''; GR.fitted = false; GR.userView = false;
   FT.order = null;
   document.body.classList.remove('filemode');
   $('filebar').hidden = true;
@@ -4310,7 +4350,7 @@ function uiCheck(ui) {
   }
   try {
     sessionStorage.setItem('netx.reloadedFor', ui);
-    sessionStorage.setItem('netx.reload', JSON.stringify({ fam: S.fam, nets: S.nets, tgf: S.tgf, rf: S.rf, sel: S.sel, q: S.q,
+    sessionStorage.setItem('netx.reload', JSON.stringify({ fam: S.fam, nets: S.nets, tgf: S.tgf, rf: S.rf, comm: S.comm, sel: S.sel, q: S.q,
                                                            y: window.scrollY, dy: $('detail').scrollTop }));
   } catch (e) {}
   location.reload();
@@ -4321,7 +4361,7 @@ function uiRestore() {
   try { r = JSON.parse(sessionStorage.getItem('netx.reload') || 'null'); sessionStorage.removeItem('netx.reload'); } catch (e) {}
   if (!r) return;
   if (r.fam) S.fam = r.fam;
-  S.nets = r.nets || {}; S.tgf = r.tgf || {}; S.rf = r.rf || {}; S.sel = r.sel || null;
+  S.nets = r.nets || {}; S.tgf = r.tgf || {}; S.rf = r.rf || {}; S.comm = r.comm || null; S.sel = r.sel || null;
   S.q = r.q || ''; $('q').value = S.q;
   S.restoreY = { y: r.y || 0, dy: r.dy || 0 };   // applied once the first data is drawn (poll)
 }
@@ -4391,7 +4431,7 @@ $('clear').addEventListener('click', function () {
                     ') from the server?\n\nOK deletes them \u2014 they can\u2019t be recovered. Cancel keeps them (still playable from exports and downloads made earlier).');
   if (audio && PLAYER.a && PLAYER.name) { PLAYER.a.pause(); PLAYER.name = null; syncPlay(); }
   fetch('/net/clear' + (audio ? '?audio=1' : ''), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (r) {
-    S.sel = null; S.nets = {}; S.tgf = {}; S.rf = {}; GR.sig = '';
+    S.sel = null; S.nets = {}; S.tgf = {}; S.rf = {}; S.comm = null; GR.sig = '';
     toast('Cleared.' + (audio ? ' Deleted ' + r.audio_files + ' audio file' + (r.audio_files === 1 ? '' : 's') + ' (' + mb(r.audio_bytes) + ').' : ''));
   }, function () { toast('Could not clear (is the server reachable?).'); });
 });

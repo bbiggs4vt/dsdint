@@ -205,7 +205,12 @@ The analysis view — evidence of how radios, talkgroups and systems relate:
   it has nothing to match on and comes and goes with its stream.
 - **Talk communities** — groups of radios tied together through talkgroups
   they share or private calls between them, largest first. A community is
-  often one agency, fleet or work group.
+  often one agency, fleet or work group. Click a community's heading
+  (**Filter ▸**) to pin it as a filter: the graph, the Calls, Talkgroups and
+  Radios lists and the stat cards then show only that community's members, and
+  a **Community · Nr · Mt** chip appears in the [Filters](#9-searching-filtering-and-sorting)
+  row. Click the heading again (now **✓ filtering**), the chip's ✕, or
+  **Clear all** to drop it.
 - **Seen on more than one network** — talkgroups and radios heard on two or
   more networks. On weakly identified systems (see
   [Appendix A.2](#a2-which-network-a-stream-is-on)) this is how you spot
@@ -508,6 +513,10 @@ tablet or phone the details are a drawer: **Close** or Esc.
     which also takes an alias. Picking a
     radio shows its calls (both ends of a private call count) and the
     talkgroups it used; excluding one hides it and its calls.
+  - **Community** — set by clicking a community on the [Links](#6-links) view;
+    it shows only that community's radios and talkgroups (and their calls). It
+    has no box of its own — the chip's ✕ (or clicking the community again)
+    drops it.
   - **Search** — the search box's text, shown here so it can be cleared.
 
   An id not heard yet is still added (the page says so), so you can filter
