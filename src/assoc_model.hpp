@@ -1222,6 +1222,7 @@ private:
                ",\"audio\":" + audio_json_locked() + ",\"max_calls\":" + std::to_string(max_calls_) +
                ",\"map\":" + map_json() + ",\"dev\":" + (dev_tools() ? "true" : "false") +
                ",\"audioviz\":" + (audio_viz() ? "true" : "false") +
+               ",\"automerge\":" + (auto_merge() ? "true" : "false") +
                ",\"streams\":" + streams_json_locked() + ",\"imports\":" + im +
                ",\"merges\":" + merges_json(view_merges_locked()) +
                ",\"keyed\":" + keyring_loaded_json(keys_) +
@@ -1248,6 +1249,19 @@ private:
     static bool audio_viz() {
         static const bool on = [] {
             const char* v = std::getenv("DSD_NET_AUDIO_VIZ");
+            if (!v || !v[0]) return true;
+            return !(v[0] == '0' || v[0] == 'n' || v[0] == 'N' || v[0] == 'f' || v[0] == 'F' || std::string(v) == "off");
+        }();
+        return on;
+    }
+    // Whether the explorer auto-merges the strongest "same network" suggestions
+    // (likely / very likely AND channels within 2.5 kHz). On by default;
+    // DSD_NET_AUTO_MERGE=0 (or off/no/false) sets the default off for everyone
+    // (a browser can still override per-session on the Links view). The judging
+    // and the merge both happen in the page; this is only the default.
+    static bool auto_merge() {
+        static const bool on = [] {
+            const char* v = std::getenv("DSD_NET_AUTO_MERGE");
             if (!v || !v[0]) return true;
             return !(v[0] == '0' || v[0] == 'n' || v[0] == 'N' || v[0] == 'f' || v[0] == 'F' || std::string(v) == "off");
         }();

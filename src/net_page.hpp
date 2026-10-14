@@ -332,6 +332,10 @@ inline std::string render_net_page_html() {
   .comm .meta { color: var(--muted); font-size: .75rem; margin-bottom: .4rem; }
   .comm.same h5 { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; }
   .comm.same .amp { color: var(--muted); }
+  .amtoggle { display: inline-flex; align-items: center; gap: .4rem; margin: 0 .9rem .3rem; padding: .25rem .55rem;
+              font-size: .78rem; color: var(--text); border: 1px solid var(--comp-bd); border-radius: 4px;
+              background: var(--panel2); cursor: pointer; user-select: none; }
+  .amtoggle input { cursor: pointer; }
   .tier { margin-left: auto; font-size: .68rem; text-transform: uppercase; letter-spacing: .05em; padding: .05rem .35rem;
           border-radius: 3px; border: 1px solid var(--comp-bd); color: var(--muted); }
   .tier.t3 { color: #62c462; border-color: #62c462; }
@@ -964,13 +968,91 @@ function sameSuggestions() {
   return { list: out, hidden: nh };
 }
 var TIER = { 3: 'very likely', 2: 'likely', 1: 'possible' };
+// ---- auto-merge ----
+// Merge the strongest "same network" pairs without being asked: tier >= 2
+// (likely / very likely) AND their channels within 2.5 kHz of each other.
+// Runs once per data version per protocol, from render(). It only ever acts on
+// pairs sameSuggestions() offers, so it honours "Not the same" (hidden pairs
+// are never suggested) and never touches unidentified or strongly-conflicting
+// networks; every auto-merge is undoable with Unmerge. The server sets the
+// default (DSD_NET_AUTO_MERGE, on unless 0); a browser overrides it per session
+// with the checkbox on the Links view.
+var AUTO_MERGE_MAX_GAP = 2500;                         // Hz
+var AM = { sig: '', busy: false };
+function autoMergeOn() {
+  var o = load('automerge');
+  if (o === '0') return false;
+  if (o === '1') return true;
+  return !(S.d && S.d.automerge === false);
+}
+// The pairs that qualify right now: { from, to } (from = the less busy one,
+// merged into the busier to).
+function autoMergePairs() {
+  if (!IX) return [];
+  var pairs = [];
+  sameSuggestions().list.forEach(function (x) {
+    if (x.j.tier >= 2 && isFinite(x.j.gap) && x.j.gap <= AUTO_MERGE_MAX_GAP) pairs.push({ from: x.b.key, to: x.a.key });
+  });
+  return pairs;
+}
+// Called at the end of every render: merge any qualifying pairs, once per
+// (protocol, data version, pair set). A merge triggers another render, which
+// re-checks until nothing qualifies.
+function maybeAutoMerge() {
+  if (!IX || AM.busy || !autoMergeOn()) return;
+  var pairs = autoMergePairs();
+  if (!pairs.length) return;
+  var sig = S.fam + '|' + (S.file ? 'file' : 'live') + '|' + S.d.version + '|' +
+            pairs.map(function (p) { return p.to + '<' + p.from; }).sort().join(',');
+  if (AM.sig === sig) return;                          // this exact set already handled this version
+  AM.sig = sig;
+  applyAutoMerges(pairs);
+}
+function applyAutoMerges(pairs) {
+  var fam = S.fam;
+  var finish = function (merges, n) {
+    S.d.merges = merges;
+    applyMerges(S.d);
+    GR.sig = '';
+    render();
+    renderDetail(true);
+    if (n) toast('Auto-merged ' + n + ' network pair' + (n > 1 ? 's' : '') + ' — likely+ and within 2.5 kHz' +
+                 (S.file ? ' (this file view)' : '') + '. Unmerge in the network’s details undoes it.');
+  };
+  if (S.file) {                                        // file view: local, synchronous
+    var M = JSON.parse(JSON.stringify(S.d.merges || {})), fn = 0;
+    pairs.forEach(function (p) { if (mergesAdd(M, fam, p.from, p.to)) ++fn; });
+    finish(M, fn);
+    return;
+  }
+  AM.busy = true;                                      // live: apply on the server, for everyone
+  var res = S.d.merges, n = 0, chain = Promise.resolve();
+  pairs.forEach(function (p) {
+    chain = chain.then(function () {
+      return fetch('/net/networks/merge?fam=' + encodeURIComponent(fam) + '&from=' + encodeURIComponent(p.from) + '&to=' + encodeURIComponent(p.to),
+                   { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) { if (j.merges) res = j.merges; if (j.ok) ++n; });
+    });
+  });
+  chain.then(function () { AM.busy = false; finish(res, n); }).catch(function () { AM.busy = false; });
+}
 // The Links view's "Probably the same network" cards.
 function sameSection(cont) {
   var sg = sameSuggestions();
   if (!sg.list.length && !sg.hidden) return false;
   cont.appendChild(h('div', { class: 'section', text: 'Probably the same network — merge suggestions (' + sg.list.length + ')' }));
+  var amOn = autoMergeOn();
   cont.appendChild(h('div', { class: 'note', text: 'Networks that look like one channel heard at different frequency offsets (or by different receivers). ' +
-    'Nothing is merged until you press Merge' + (S.file ? ' (in this file view only)' : ' (for everyone viewing this server; Unmerge in the network’s details undoes it)') + '.' }));
+    (amOn ? 'Pairs that are likely+ and within 2.5 kHz are merged automatically (below are the rest); press Merge for any of these'
+          : 'Nothing is merged until you press Merge') +
+    (S.file ? ' (in this file view only)' : ' (for everyone viewing this server; Unmerge in the network’s details undoes it)') + '.' }));
+  var amBox = h('input', { type: 'checkbox' });
+  amBox.checked = amOn;
+  amBox.addEventListener('change', function () { store('automerge', this.checked ? '1' : '0'); render(); });
+  cont.appendChild(h('label', { class: 'amtoggle',
+    title: 'Automatically merge pairs that are “likely” or “very likely” and whose channels are within 2.5 kHz of each other. ' +
+           'Honours “Not the same” and is undoable (Unmerge). Your choice is remembered in this browser' +
+           (!S.file && S.d && S.d.automerge === false ? '; the server default is off.' : '.') },
+    [amBox, h('span', { text: ' Auto-merge likely+ within 2.5 kHz' })]));
   var grid = h('div', { class: 'grid2' });
   sg.list.slice(0, 40).forEach(function (x) {
     grid.appendChild(h('div', { class: 'comm same' }, [
@@ -3915,6 +3997,7 @@ function renderAll() {
   if (S.view === 'keys' && !(keyable || kn.length)) setView('calls');
   renderView();
   renderDetail();
+  maybeAutoMerge();                                    // merge the strongest same-network pairs (last: a merge re-renders)
 }
 
 // ---------- export / open ----------

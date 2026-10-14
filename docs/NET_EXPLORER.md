@@ -300,9 +300,21 @@ are more than 6.25 kHz apart (or unknown) with no call heard on both.
 
 **Merge** merges the less busy one into the busier. **Not the same** stops
 suggesting that pair in this browser (**Suggest them again** brings them back).
-The suggestions only advise: nothing is merged until you press Merge. The
-**Merge into…** list in a network's details is ordered by the same evidence
-(its rating first).
+The **Merge into…** list in a network's details is ordered by the same
+evidence (its rating first).
+
+**Auto-merge.** A checkbox at the top of the section — **Auto-merge likely+
+within 2.5 kHz** — merges the strongest pairs for you: those rated *likely* or
+*very likely* **and** whose channels are within 2.5 kHz of each other. Only
+those; a *possible* rating, or a larger frequency gap, is always left for you
+to decide, and the pairs you marked **Not the same** are never touched. Each
+auto-merge is an ordinary merge — it shows under **Merged networks** and
+**Unmerge** undoes it. It is on by default (the server sets the default with
+`DSD_NET_AUTO_MERGE`; see [§17](#17-settings-reference)); the
+checkbox overrides that for your browser. On the live server an auto-merge
+applies for everyone, exactly as if you had pressed Merge; in a file view it
+stays in that view. Turning the checkbox off stops further auto-merges but
+leaves ones already made (Unmerge them if you want them back).
 
 ![Figure 6c](img/links-same.png)
 *Figure 6c: Merge suggestions: a pair heard together (very likely), a hand-off 2.5 kHz apart (likely) and a pair 5 kHz apart (possible). A pair with different calls at the same moment is not suggested.*
@@ -744,6 +756,7 @@ Server environment variables that affect the explorer (details in the README):
 | `DSD_NET_MAX_CALLS` | 10000 | Audio-less calls kept per protocol. Calls with recorded audio are kept beyond this for as long as their audio is on disk (bounded by `DSD_NET_AUDIO_MAX_MB` / `_MAX_AGE_H`, not this count). |
 | `DSD_NET_FREQ_STEP_HZ` | 1250 | Channel raster frequencies are snapped to. |
 | `DSD_NET_MERGES_FILE` | `net_merges.json` in the log dir | Where the [network merges](#merging-networks) are kept across restarts. |
+| `DSD_NET_AUTO_MERGE` | on | `0` (or `off`) sets the default off for the **Auto-merge likely+ within 2.5 kHz** tick ([merge suggestions](#merge-suggestions)); a browser can still override it. The judging and merging run in the page. |
 | `DSD_NET_CHANNEL_MERGE` | (merge) | `receiver` keeps different receivers' channel networks apart when merging. |
 | `DSD_NET_AUDIO` | (as last left) | `1` records call audio from startup, `0` never at startup; unset, the **♫ Audio** switch is remembered across restarts. |
 | `DSD_NET_SETTINGS_FILE` | `net_settings.json` in the log dir | Where remembered switches (♫ Audio) are kept. |
