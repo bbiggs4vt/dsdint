@@ -686,6 +686,12 @@ were **not heard** this time. Click a count to jump to that list; the new
 talkgroups, radios and networks there (and in their details) carry a green
 **NEW** badge.
 
+With **New first** ticked in the bar (on by default while comparing), the
+Calls, Talkgroups, Radios and Networks lists float their new rows to the
+top — the column sort you pick still orders within the new and the older
+groups. In the Calls list, a call counts as new when a new radio or talkgroup
+is at either end, and the new one wears the badge. Untick it to sort normally.
+
 "New" means not present in the baseline for that protocol. Talkgroups and
 radios match by id, so those are exact; a network matches on its strong
 identifiers (system id) and falls back to its channel key, which **can drift

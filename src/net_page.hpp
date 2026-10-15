@@ -89,7 +89,9 @@ inline std::string render_net_page_html() {
   .filebar.cmp .cmpnew { display: inline-flex; flex-wrap: wrap; gap: .25rem .5rem; }
   .filebar.cmp .cmpn { color: var(--success); font-weight: 600; font-size: .82rem; white-space: nowrap; }
   .filebar.cmp .cmpn.enc { color: var(--warn); }
-  .filebar.cmp .cmpclear { margin-left: auto; color: var(--muted); font-size: .82rem; }
+  .filebar.cmp .cmptog { margin-left: auto; display: inline-flex; align-items: center; gap: .3rem; font-size: .82rem; color: var(--heading); cursor: pointer; user-select: none; }
+  .filebar.cmp .cmptog input { cursor: pointer; }
+  .filebar.cmp .cmpclear { color: var(--muted); font-size: .82rem; }
   .btn.on { border-color: var(--success); color: var(--success); }
   .filebar .imp-item { background: rgba(0,0,0,.25); border-radius: 3px; padding: .1rem .45rem; font-size: .8rem; }
   .filebar .imp-item a { margin-left: .35rem; }
@@ -1380,6 +1382,13 @@ function table(cont, view, cols, rows, empty, onRow, selFn, card, sub) {
       return (x < y ? -1 : x > y ? 1 : 0) * st.dir;
     });
   }
+  // Comparing to a baseline with "New first" on: float new rows to the top,
+  // keeping the chosen order within the new and the older groups (stable).
+  if (newFirstOn()) {
+    var nw = [], old = [];
+    rows.forEach(function (r) { (rowIsNew(view, r) ? nw : old).push(r); });
+    if (nw.length && old.length) rows = nw.concat(old);
+  }
   S.rows[view] = rows;                                  // as listed (the audio .zip follows it)
   var head = h('tr', null, cols.map(function (c) {
     var i = c.i, arrow = st && st.i === i ? (st.dir > 0 ? ' ▲' : ' ▼') : '';
@@ -1438,7 +1447,10 @@ function durCell(c) {
   return live(c) ? h('span', { class: 'livecell' }, [h('span', { class: 'dot' }), dur(now() - c.start)])
                  : dur(c.last - c.start);
 }
-function toCell(c) { return !c.tgt ? '—' : c.priv ? h('span', null, ['⇄ ', rlink(c.tgt)]) : tlink(c.tgt); }
+function toCell(c) {
+  if (!c.tgt) return '—';
+  return c.priv ? withNew(h('span', null, ['⇄ ', rlink(c.tgt)]), isNewRadio(c.tgt)) : withNew(tlink(c.tgt), isNewTg(c.tgt));
+}
 // Encryption: the algorithm and key id an encrypted call named (hex, as the
 // protocol numbers them; the server counts each "alg:kid" per network,
 // talkgroup and radio). Names per protocol, as dsd-fme reports them.
@@ -2936,7 +2948,7 @@ function callCard(c) {
   var pb = playBtn(c);
   return h('div', { class: 'ccard' }, [
     h('div', { class: 'r1' }, [h('span', { class: 't mono', text: hms(c.start) }), durCell(c), typeBadges(c), pb, pb ? dlLink(c) : null]),
-    h('div', { class: 'r2' }, [c.src ? rlink(c.src, c.alias || null) : '—', ' → ', toCell(c)]),
+    h('div', { class: 'r2' }, [c.src ? withNew(rlink(c.src, c.alias || null), isNewRadio(c.src)) : '—', ' → ', toCell(c)]),
     h('div', { class: 'r3' }, [c.net ? netc(c.net) : null,
                                c.freq && !(IX.netByKey[c.net] && IX.netByKey[c.net].label.indexOf(mhz(c.freq)) >= 0)
                                  ? h('span', { class: 'mono', text: mhz(c.freq) + ' MHz' }) : null,
@@ -2958,7 +2970,7 @@ function viewCalls() {
       dropEmpty: function (c) { return !!c.freq; } },
     { label: 'Slot', cls: 'num', k: function (c) { return c.slot; }, cell: function (c) { return c.slot || '—'; },
       dropEmpty: function (c) { return !!c.slot; } },
-    { label: 'From', k: function (c) { return c.src; }, cell: function (c) { return c.src ? rlink(c.src, c.alias || null) : '—'; } },
+    { label: 'From', k: function (c) { return c.src; }, cell: function (c) { return c.src ? withNew(rlink(c.src, c.alias || null), isNewRadio(c.src)) : '—'; } },
     { label: 'To', cls: 'tgcell', k: function (c) { return c.tgt; }, cell: toCell },
     { label: 'Type', cls: 'ctype', cell: typeBadges },
     { label: 'Audio', cls: 'nowrap', k: function (c) { return hasAudio(c) ? 1 : 0; }, cell: audioCell,
@@ -4103,6 +4115,20 @@ function changeStats() {
   keys(b.radios).forEach(function (id) { if (!curRad[id]) ++s.goneRadio; });
   return s;
 }
+// Is a row of a list "new" versus the baseline? Calls count as new when a new
+// radio or talkgroup is at either end.
+function rowIsNew(view, r) {
+  if (!baseFam()) return false;
+  if (view === 'radios') return isNewRadio(r.id);
+  if (view === 'tgs') return isNewTg(r.id);
+  if (view === 'nets') return isNewNet(r);
+  if (view === 'calls') return isNewRadio(r.src) || (r.priv ? isNewRadio(r.tgt) : isNewTg(r.tgt));
+  return false;
+}
+// "New first" sorts each list so new rows float to the top (the chosen column
+// order still holds within the new and the older groups). On by default while
+// comparing; the Changes bar has the tick.
+function newFirstOn() { return !!BASE && load('cmpnewfirst') !== '0'; }
 function baseSave() { try { if (BASE) sessionStorage.setItem('netx.baseline', JSON.stringify(BASE)); else sessionStorage.removeItem('netx.baseline'); } catch (e) {} }
 function baseRestore() { try { BASE = JSON.parse(sessionStorage.getItem('netx.baseline') || 'null'); } catch (e) { BASE = null; } }
 function loadBaselineFile(f) {
@@ -4156,6 +4182,11 @@ function updateChangebar() {
       bar.appendChild(h('span', { class: 'm', title: 'In the baseline but not heard in the current view', text: ' · ' + gone + ' not heard' }));
     }
   }
+  var nf = h('input', { type: 'checkbox' });
+  nf.checked = newFirstOn();
+  nf.addEventListener('change', function () { store('cmpnewfirst', this.checked ? '1' : '0'); render(); });
+  bar.appendChild(h('label', { class: 'cmptog', title: 'Sort the Calls, Talkgroups, Radios and Networks lists so new rows come first' },
+    [nf, h('span', { text: ' New first' })]));
   bar.appendChild(h('a', { href: '#', class: 'cmpclear', title: 'Stop comparing',
                            onclick: function (e) { e.preventDefault(); clearBaseline(); } }, 'Clear'));
 }
