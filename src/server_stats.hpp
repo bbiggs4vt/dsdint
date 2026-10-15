@@ -46,6 +46,11 @@ struct SessionRow {
     // including ones whose pipeline failed to start (not in protocols_used).
     std::vector<std::string> protocols_requested;
     std::chrono::steady_clock::time_point active_since;  // valid while active
+    // When a decoder event last came across for this session (data flowing).
+    // `got_data` stays false until the first event, so the status page can show
+    // "-" rather than a misleading "0s ago" for a stream that never produced.
+    std::chrono::steady_clock::time_point last_data_mono;
+    bool got_data = false;
     // The channel frequency (Hz) being decoded, when the client said where its
     // tuner is ("center_freq" in its start message); 0 = not known.
     double freq_hz = 0.0;
@@ -209,9 +214,20 @@ public:
         row.remote = remote;
         row.connected = std::chrono::system_clock::now();
         row.connected_mono = std::chrono::steady_clock::now();
+        row.last_data_mono = row.connected_mono;
         sessions_[id] = std::move(row);
         ++total_sessions_;
         return id;
+    }
+
+    // A decoder event came across for this session: mark when, so the status
+    // page can show how long since data last flowed (spotting stale streams).
+    void note_data(std::uint64_t id) {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto it = sessions_.find(id);
+        if (it == sessions_.end()) return;
+        it->second.last_data_mono = std::chrono::steady_clock::now();
+        it->second.got_data = true;
     }
 
     // A client asked for a protocol (a "start" message, resolved to its

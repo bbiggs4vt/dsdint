@@ -179,6 +179,25 @@ int main() {
         check(contains(j, "\"remote\":\"a\\\"b\\\\c\""), "json escapes quotes/backslashes");
     }
 
+    // ---- per-session last-data timestamp: "-" until data, then "N ago" ----
+    {
+        ServerStats st;
+        auto id = st.add_session("5.6.7.8:9");
+        st.set_protocol(id, "dmr", "fm", true);
+        auto s0 = st.snapshot();
+        check(!s0.rows[0].got_data, "fresh session: no data seen yet");
+        std::string j0 = render_status_json(s0);
+        check(contains(j0, "\"last_data_seconds\":-1"), "json: last_data_seconds -1 before any event");
+        std::string h0 = render_status_html(s0);
+        check(contains(h0, "<th class=\"num\">Last data</th>"), "html has the Last data column");
+        check(contains(h0, "&mdash;"), "html shows an em dash for a session with no data yet");
+        st.note_data(id);
+        auto s1 = st.snapshot();
+        check(s1.rows[0].got_data, "note_data marks that data was seen");
+        std::string j1 = render_status_json(s1);
+        check(contains(j1, "\"last_data_seconds\":0"), "json: 0s since data arrived just now");
+    }
+
     // ---- HTML renderer: contains the counts and escapes markup ----
     {
         ServerStats st;

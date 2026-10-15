@@ -1417,7 +1417,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         if (!self) return;
         // Feed the network explorer's association model (structured, before
         // serialization). It has its own lock; this runs on the reader thread.
-        if (self->stats_ && self->stats_id_) self->stats_->assoc().ingest(self->stats_id_, ev);
+        if (self->stats_ && self->stats_id_) { self->stats_->assoc().ingest(self->stats_id_, ev); self->stats_->note_data(self->stats_id_); }
         std::string s = json::Writer()
             .field("type", std::string("event"))
             .field("kind", ev.kind)
@@ -1664,7 +1664,7 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         dcfg.udp_audio_port = udp_audio_port_;
         dcfg.on_suppressed = [weak_self](const DsdEvent& ev) {
             auto self = weak_self.lock();
-            if (self && self->stats_ && self->stats_id_) self->stats_->assoc().ingest(self->stats_id_, ev);
+            if (self && self->stats_ && self->stats_id_) { self->stats_->assoc().ingest(self->stats_id_, ev); self->stats_->note_data(self->stats_id_); }
         };
         // Decryption key -> the matching dsd-fme flag, appended as a separate
         // argv token (never a shell string, and key was validated digits-only

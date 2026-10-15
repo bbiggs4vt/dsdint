@@ -173,6 +173,9 @@ inline std::string render_status_json(const ServerStats::Snapshot& s) {
         o << ",\"freq_hz\":" << static_cast<long long>(r.freq_hz + 0.5);
         o << ",\"connected\":\"" << json_escape(format_utc(r.connected)) << "\"";
         o << ",\"duration_seconds\":" << static_cast<long>(dur);
+        long since = r.got_data ? static_cast<long>(std::chrono::duration<double>(
+                         std::chrono::steady_clock::now() - r.last_data_mono).count()) : -1;
+        o << ",\"last_data_seconds\":" << since;      // -1 = no data yet
         o << "}";
     }
     o << "]";
@@ -310,6 +313,8 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
       << "  .off { background: var(--muted); }\n"
       << "  .state-on { color: var(--success); }\n"
       << "  .state-off { color: var(--muted); }\n"
+      << "  .stale { color: #e6c229; }\n"   // active session, but data hasn't flowed recently
+
       << "  .empty { color: var(--muted); padding: 1rem 0.85rem; }\n"
       // Slate badge/button: gray gradient, white text, dark border.
       << "  .tag { display: inline-block; color: var(--heading);\n"
@@ -420,13 +425,16 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
     o << "<div class=\"panel\" id=\"tab-sessions\">\n<table>\n<thead><tr>"
       << "<th>#</th><th>Client</th><th>Protocols</th><th class=\"num\">MHz</th>"
       << "<th>State</th><th>Connected (UTC)</th><th class=\"num\">Duration</th>"
+      << "<th class=\"num\">Last data</th>"
       << "</tr></thead>\n<tbody id=\"rows\">\n";
     if (s.rows.empty()) {
-        o << "<tr><td colspan=\"7\" class=\"empty\">no clients connected</td></tr>\n";
+        o << "<tr><td colspan=\"8\" class=\"empty\">no clients connected</td></tr>\n";
     } else {
+        const auto mono_now = std::chrono::steady_clock::now();
         for (const auto& r : s.rows) {
-            double dur = std::chrono::duration<double>(
-                             std::chrono::steady_clock::now() - r.connected_mono).count();
+            double dur = std::chrono::duration<double>(mono_now - r.connected_mono).count();
+            double since = std::chrono::duration<double>(mono_now - r.last_data_mono).count();
+            const bool stale = r.got_data && r.active && since > 60.0;
             o << "<tr>"
               << "<td class=\"num\">" << r.id << "</td>"
               << "<td class=\"mono\">" << html_escape(r.remote.empty() ? "-" : r.remote) << "</td>"
@@ -437,6 +445,8 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
               << (r.active ? "decoding" : "idle") << "</td>"
               << "<td class=\"mono\">" << html_escape(format_utc(r.connected)) << "</td>"
               << "<td class=\"num\">" << html_escape(human_duration(dur)) << "</td>"
+              << "<td class=\"num" << (stale ? " stale" : "") << "\">"
+              << (r.got_data ? html_escape(human_duration(since)) + " ago" : std::string("&mdash;")) << "</td>"
               << "</tr>\n";
         }
     }
@@ -536,7 +546,7 @@ function render(d){
   var rows=d.sessions||[];
   setText('cnt-sessions',''+rows.length);
   var tb=document.getElementById('rows');tb.textContent='';
-  if(!rows.length){emptyRow(tb,'no clients connected');}
+  if(!rows.length){emptyRow(tb,'no clients connected',8);}
   else rows.forEach(function(r){
     var tr=document.createElement('tr');
     tr.appendChild(cell('num',''+r.id));
@@ -546,6 +556,10 @@ function render(d){
     tr.appendChild(stateCell(r.active));
     tr.appendChild(cell('mono',r.connected));
     tr.appendChild(cell('num',dur(r.duration_seconds)));
+    var ld=r.last_data_seconds;
+    var ldc=cell('num', ld<0 ? '—' : dur(ld)+' ago');
+    if(ld>=0 && r.active && ld>60) ldc.className='num stale';
+    tr.appendChild(ldc);
     tb.appendChild(tr);});
   var hist=d.history||[];
   setText('cnt-history',''+hist.length);

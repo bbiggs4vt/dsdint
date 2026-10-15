@@ -430,6 +430,12 @@ The live update is a tiny `/status.json` poll that patches the page in
 place — cheap on the server (no decode work, just a mutex-guarded snapshot
 and a few hundred bytes) and flicker-free in the browser.
 
+The **Sessions** table has a **Last data** column: how long ago a decoder
+event last came across for that session (`last_data_seconds` in the JSON;
+`—` until the first event). It makes a stalled stream easy to spot — a
+session still shown as *decoding* but with no recent data is flagged amber
+once it passes a minute.
+
 Both show the number of **currently connected** sessions, the
 **cumulative total** since the server started, how many are **actively
 decoding**, a per-protocol breakdown of the active ones, and a table of
