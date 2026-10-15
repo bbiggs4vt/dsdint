@@ -94,6 +94,10 @@ inline std::string render_net_page_html() {
   .filebar.cmp .cmpclear { color: var(--muted); font-size: .82rem; }
   .cmphead { display: flex; align-items: center; gap: .6rem; }
   .cmphead .cmpexport { margin-left: auto; text-transform: none; letter-spacing: 0; font-size: .78rem; }
+  /* Changes view: indent the lists to line up with the section headers (which
+     carry .9rem side padding) and keep the bars off both edges. */
+  #t-changes .lst { padding: 0 .9rem; }
+  #t-changes .section { padding-top: 1rem; }
   .btn.on { border-color: var(--success); color: var(--success); }
   .filebar .imp-item { background: rgba(0,0,0,.25); border-radius: 3px; padding: .1rem .45rem; font-size: .8rem; }
   .filebar .imp-item a { margin-left: .35rem; }
