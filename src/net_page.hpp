@@ -102,7 +102,6 @@ inline std::string render_net_page_html() {
      carry .9rem side padding) and keep the bars off both edges. */
   #t-changes .lst { padding: 0 .9rem; }
   #t-changes .section { padding-top: 1rem; }
-  .btn.on { border-color: var(--success); color: var(--success); }
   .filebar .imp-item { background: rgba(0,0,0,.25); border-radius: 3px; padding: .1rem .45rem; font-size: .8rem; }
   .filebar .imp-item a { margin-left: .35rem; }
   .filebar .x { cursor: pointer; color: var(--muted); margin-left: auto; }
