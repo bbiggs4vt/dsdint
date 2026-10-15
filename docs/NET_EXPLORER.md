@@ -651,6 +651,18 @@ goes into the audio zip's `calls.csv`.
   audio has its own cap (`DSD_NET_IMPORT_AUDIO_MAX_MB`, 1 GB by default);
   past it, the rest is left out and the report says so. A plain `.json`
   export has no audio to upload.
+- **Only what the filters show** — a tick at the top of the **Export ▾** menu,
+  offered only while a filter is in force (a network, talkgroup or radio
+  filter, a search, or a pinned community). With it on, the two data exports
+  above — **Explorer data (.json)** and **with audio (.zip)** — save just the
+  **current protocol**, and within it only the networks, talkgroups, radios and
+  calls that pass the filters (the same ones the lists show). The display-only
+  toggles (**With audio only**, **Hide signaling**) don't narrow it — they only
+  shorten the on-screen list. The file name gets `_filtered`, it carries a
+  `filtered` marker, and it re-opens and imports like any other export. Off (the
+  default), the exports hold everything on the server, every protocol. The
+  graph and positions exports below aren't affected (Positions already follows
+  the filters).
 - **Export ▾ → Association graph (.graphml)** is for graph tools (Gephi,
   Cytoscape, yEd, networkx).
 - **Export ▾ → Positions (.kml)** saves the position reports of the radios

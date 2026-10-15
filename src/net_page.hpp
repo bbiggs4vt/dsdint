@@ -78,6 +78,10 @@ inline std::string render_net_page_html() {
   .menu a { display: block; padding: .45rem .8rem; color: var(--heading); text-decoration: none; }
   .menu a:hover { background: rgba(255,255,255,.07); }
   .menu a small { display: block; color: var(--muted); font-size: .72rem; }
+  .menu label.expfilt { display: block; padding: .45rem .8rem; color: var(--heading); font-size: .9rem;
+                        border-bottom: 1px solid var(--comp-bd); cursor: pointer; user-select: none; }
+  .menu label.expfilt input { margin-right: .4rem; vertical-align: middle; cursor: pointer; }
+  .menu label.expfilt small { display: block; color: var(--muted); font-size: .72rem; margin-left: 1.3rem; }
   .filebar { background: #2c4a56; border: 1px solid var(--info); color: var(--heading); border-radius: 4px;
              padding: .5rem .8rem; margin-bottom: .9rem; display: flex; flex-wrap: wrap; gap: .4rem .8rem;
              align-items: center; }
@@ -595,7 +599,8 @@ inline std::string render_net_page_html() {
     <span class="dropdown live-only">
       <button id="exp" class="btn" type="button" title="Save what the explorer shows">Export &#9662;</button>
       <div id="expmenu" class="menu" hidden>
-        <a href="/net/export.json" download>Explorer data (.json)<small>re-open later here with Open&hellip;</small></a>
+        <label id="exp-filtered-row" class="expfilt" hidden><input type="checkbox" id="exp-filtered"> Only what the filters show<small>this protocol, the networks/talkgroups/radios/search in force &middot; applies to the two data exports below</small></label>
+        <a href="/net/export.json" id="exp-json" download>Explorer data (.json)<small>re-open later here with Open&hellip;</small></a>
         <a href="#" id="exp-audio">Explorer data with audio (.zip)<small>the same, plus the calls&rsquo; audio &middot; Open&hellip; plays it</small></a>
         <a href="/net/export.graphml" download>Association graph (.graphml)<small>Gephi &middot; Cytoscape &middot; yEd &middot; networkx</small></a>
         <a href="#" id="exp-kml">Positions (.kml)<small>the listed radios' position reports &middot; Google Earth &middot; My Maps</small></a>
@@ -4041,7 +4046,19 @@ function renderAll() {
 }
 
 // ---------- export / open ----------
-$('exp').addEventListener('click', function (e) { e.stopPropagation(); $('expmenu').hidden = !$('expmenu').hidden; });
+$('exp').addEventListener('click', function (e) {
+  e.stopPropagation();
+  var open = $('expmenu').hidden;                         // about to open?
+  $('expmenu').hidden = !open;
+  if (open) $('exp-filtered-row').hidden = !(anyFilter() || S.q);   // offer the filter box only when there's a filter
+});
+$('exp-filtered-row').addEventListener('click', function (e) { e.stopPropagation(); });   // toggling the box keeps the menu open
+// Plain .json link: let the href download the full export, unless the filter
+// box is ticked -- then build and save the filtered copy in the browser.
+$('exp-json').addEventListener('click', function (e) {
+  $('expmenu').hidden = true;
+  if (expFilterOn()) { e.preventDefault(); exportFilteredJson(); }
+});
 $('exp-audio').addEventListener('click', function (e) { e.preventDefault(); $('expmenu').hidden = true; exportWithAudio(); });
 $('exp-kml').addEventListener('click', function (e) {
   e.preventDefault();
@@ -4385,13 +4402,55 @@ function readZip(f, audio, wavs) {
     return new TextDecoder().decode(js.data);
   });
 }
+// ---- export only what the filters show (opt-in) ----
+// A copy of a full export holding only the current protocol's data that passes
+// the filters in force (networks / talkgroups / radios / search / community) --
+// the same tests the on-screen lists use. The display-only toggles (With audio
+// only, Hide signaling) are NOT applied: they shorten the list, not the data.
+// Other protocols are dropped. Re-opens and re-imports like any export.
+function exportFiltered(d) {
+  var fam = S.fam, F = (d.families && d.families[fam]) || { networks: [], talkgroups: [], radios: [], calls: [] };
+  var erById = {}; (F.radios || []).forEach(function (r) { erById[r.id] = r; });
+  var tgs = (F.talkgroups || []).filter(function (t) { return inNet(t.networks) && commTgOk(t.id) && tgOk(t.id) && tgROk(t) && (!S.q || qm(t.id)); });
+  var radios = (F.radios || []).filter(function (r) { return inNet(r.networks) && commROk(r.id) && radioTgOk(r) && fOk(S.rf, r.id) && (!S.q || qm(r.id, r.aliases)); });
+  var calls = (F.calls || []).filter(function (c) {
+    return (netAll() || netOk(c.net)) && commCallOk(c) && callTgOk(c) && callROk(c) &&
+      (!S.q || qm(c.src, c.tgt, c.alias, c.text, svcLabel(c.svc), mhz(c.freq), erById[c.src] && erById[c.src].aliases, c.kid ? ['0x' + c.kid, algName(c.alg, fam)] : null));
+  });
+  var nk = {};
+  calls.forEach(function (c) { if (c.net) nk[c.net] = 1; });
+  tgs.forEach(function (t) { (t.networks || []).forEach(function (k) { nk[k] = 1; }); });
+  radios.forEach(function (r) { (r.networks || []).forEach(function (k) { nk[k] = 1; }); });
+  var nets = (F.networks || []).filter(function (n) { return nk[n.key]; });
+  var out = {};
+  keys(d).forEach(function (k) { if (k !== 'families' && k !== 'merges') out[k] = d[k]; });
+  if (d.merges && d.merges[fam]) { out.merges = {}; out.merges[fam] = d.merges[fam]; }
+  out.families = {}; out.families[fam] = { networks: nets, talkgroups: tgs, radios: radios, calls: calls };
+  out.filtered = { protocol: fam, at: now() };           // a hint that this export was narrowed
+  return out;
+}
+// Is the "Only what the filters show" box ticked (and offered)?
+function expFilterOn() { return !$('exp-filtered-row').hidden && $('exp-filtered').checked; }
+function exportFilteredJson() {
+  toast('Making the filtered export…');
+  fetch('/net/export.json', { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+    .then(function (txt) {
+      var out = exportFiltered(JSON.parse(txt)), F = out.families[S.fam];
+      saveText('dsd_net_export_' + (S.fam || '') + '_filtered_' + stamp(now()) + '.json', JSON.stringify(out), 'application/json');
+      toast('Saved ' + F.calls.length + ' call' + (F.calls.length === 1 ? '' : 's') + ', ' + F.talkgroups.length + ' TG' +
+            (F.talkgroups.length === 1 ? '' : 's') + ' and ' + F.radios.length + ' radio' + (F.radios.length === 1 ? '' : 's') +
+            ' (' + (FAMN[S.fam] || S.fam) + ', filtered).');
+    }).catch(function (e) { toast('Could not make the export (' + (e.message || e) + ').'); });
+}
 var EXPORT_AUDIO_MAX = 1024 * 1048576;          // the zip stops adding audio here (it is built in the browser)
 function exportWithAudio() {
   var calls = [], files = [], total = 0, i = 0, missing = 0, full = false, seen = {};
+  var filt = expFilterOn();
   toast('Making the export\u2026');
   fetch('/net/export.json', { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
   .then(function (txt) {
     var d = JSON.parse(txt);
+    if (filt) { d = exportFiltered(d); txt = JSON.stringify(d); }
     for (var f in d.families) (d.families[f].calls || []).forEach(function (c) { if (c.audio && !seen[c.audio]) { seen[c.audio] = 1; calls.push(c); } });
     function next() {
       if (i >= calls.length || full) return Promise.resolve();
@@ -4405,7 +4464,7 @@ function exportWithAudio() {
         }, function () { ++missing; }).then(next);
     }
     return next().then(function () {
-      var name = 'dsd_net_export_' + stamp(now());
+      var name = 'dsd_net_export_' + (filt ? (S.fam || '') + '_filtered_' : '') + stamp(now());
       files.unshift({ name: name + '.json', data: new TextEncoder().encode(txt) });
       var a = h('a', { href: URL.createObjectURL(zipBlob(files)), download: name + '.zip' });
       document.body.appendChild(a); a.click(); a.remove();
