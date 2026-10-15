@@ -74,7 +74,7 @@ From top to bottom:
 | **Record** | A developer tool, hidden unless turned on ([section 13](#13-recording-a-session-for-troubleshooting)): records everything the explorer receives, for replay and troubleshooting. While on, the header shows the file name, its size and a **Download** link. |
 | **♫ Audio** | Starts / stops recording each call's voice (off by default) — [section 10](#10-call-audio). Orange when on. |
 | **Pause** | Freezes the whole page (no updates) until pressed again. |
-| **Clear** | Forgets everything learned so far, and any imports. Asks first — and, if there are recorded call audio files, whether to delete those from the server too (Cancel keeps them). |
+| **Clear ▾** | A menu (asks first for each): **Learned data** forgets the calls, talkgroups, radios and networks learned so far and any imports — and, if there are recorded call audio files, offers to delete those from the server too (Cancel keeps them) — but keeps your keys and merges; **Network merges** unmerges every merged network, across all protocols; **Encryption keys** removes every stored key, across all protocols (cannot be undone). |
 | **Export ▾** | Saves what the explorer shows: explorer data (.json), the same with the calls' audio (.zip), the association graph (.graphml), or the listed radios' positions (.kml). |
 | **Import…** | Adds saved exports (e.g. from another receiver) to the live view. |
 | **Open…** | Views saved exports offline, read-only (several files are merged). You can also drop files onto the page. |

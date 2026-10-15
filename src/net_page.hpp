@@ -594,7 +594,14 @@ inline std::string render_net_page_html() {
     <button id="rec" class="btn live-only dev-only" type="button" title="Record everything the explorer receives, to replay and analyse offline">&#9679; Record</button>
     <button id="aud" class="btn live-only" type="button" title="Record each call's decoded voice, to play back here (off by default)">&#9835; Audio</button>
     <button id="pause" class="btn live-only" type="button">Pause</button>
-    <button id="clear" class="btn live-only" type="button" title="Forget everything learned so far">Clear</button>
+    <span class="dropdown live-only">
+      <button id="clear" class="btn" type="button" title="Forget learned data, or clear network merges / stored keys">Clear &#9662;</button>
+      <div id="clearmenu" class="menu" hidden>
+        <a href="#" id="clr-data">Learned data<small>calls, talkgroups, radios &amp; networks (and imports) &middot; keeps keys &amp; merges</small></a>
+        <a href="#" id="clr-merges">Network merges<small>unmerge every merged network, all protocols</small></a>
+        <a href="#" id="clr-keys">Encryption keys<small>remove every stored key, all protocols &middot; cannot be undone</small></a>
+      </div>
+    </span>
     <span class="dropdown live-only">
       <button id="exp" class="btn" type="button" title="Save what the explorer shows">Export &#9662;</button>
       <div id="expmenu" class="menu" hidden>
@@ -4115,7 +4122,7 @@ document.addEventListener('click', function () { $('expmenu').hidden = true; });
 function setMenu(open) { $('acts').classList.toggle('open', open); $('more').setAttribute('aria-expanded', open ? 'true' : 'false'); }
 $('more').addEventListener('click', function (e) { e.stopPropagation(); setMenu(!$('acts').classList.contains('open')); });
 $('acts').addEventListener('click', function (e) {
-  if (e.target.closest('#exp')) return;                  // the Export submenu stays open in the menu
+  if (e.target.closest('#exp, #clear')) return;          // the Export / Clear submenus stay open in the menu
   if (e.target.closest('.btn, .menu a')) setMenu(false);
 });
 document.addEventListener('click', function (e) { if (!e.target.closest('#acts')) setMenu(false); });
@@ -4881,7 +4888,9 @@ $('pause').addEventListener('click', function () {
   this.classList.toggle('on', S.paused);
   $('live').textContent = S.paused ? 'paused — view frozen' : 'live';
 });
-$('clear').addEventListener('click', function () {
+// Clear \u25be menu. "Learned data" forgets traffic (and optionally audio) but keeps
+// keys and merges; the other two wipe those, across every protocol.
+function clearData() {
   if (!confirm('Forget all calls, talkgroups, radios and networks learned so far' +
                (S.d && S.d.imports && S.d.imports.length ? ', and the imports' : '') + '?')) return;
   // The call audio files stay unless asked: they are on the server's disk.
@@ -4894,7 +4903,52 @@ $('clear').addEventListener('click', function () {
     S.sel = null; S.nets = {}; S.tgf = {}; S.rf = {}; S.comm = null; GR.sig = '';
     toast('Cleared.' + (audio ? ' Deleted ' + r.audio_files + ' audio file' + (r.audio_files === 1 ? '' : 's') + ' (' + mb(r.audio_bytes) + ').' : ''));
   }, function () { toast('Could not clear (is the server reachable?).'); });
-});
+}
+// Unmerge every merged network, across all protocols (shared by everyone).
+function clearAllMerges() {
+  var m = (S.d && S.d.merges) || {}, jobs = [];
+  keys(m).forEach(function (fam) { keys(m[fam]).forEach(function (from) { jobs.push([fam, from]); }); });
+  if (!jobs.length) { toast('No network merges to clear.'); return; }
+  if (!confirm('Unmerge all ' + jobs.length + ' merged network' + (jobs.length > 1 ? 's' : '') +
+               ' across every protocol?\n\nThis is shared by everyone viewing this server.')) return;
+  var chain = Promise.resolve(), res = null;
+  jobs.forEach(function (j) {
+    chain = chain.then(function () {
+      return fetch('/net/networks/unmerge?fam=' + encodeURIComponent(j[0]) + '&key=' + encodeURIComponent(j[1]), { cache: 'no-store' })
+        .then(function (r) { return r.json(); }).then(function (jr) { if (jr.merges) res = jr.merges; });
+    });
+  });
+  chain.then(function () {
+    if (S.d) { S.d.merges = res || {}; applyMerges(S.d); }
+    S.comm = null; GR.sig = ''; render();
+    toast('Cleared ' + jobs.length + ' network merge' + (jobs.length > 1 ? 's' : '') + '.');
+  }, function () { render(); toast('Could not clear all merges (some may remain).'); });
+}
+// Remove every stored key, across all protocols. Irreversible. (Running
+// decoders keep the keys they started with until restarted -- Reload decoders.)
+function clearAllKeys() {
+  var kd = (S.d && S.d.keyed) || {}, jobs = [];
+  keys(kd).forEach(function (fam) { keys(kd[fam]).forEach(function (net) { keys(kd[fam][net]).forEach(function (kid) { jobs.push([fam, net, kid]); }); }); });
+  if (!jobs.length) { toast('No stored keys to clear.'); return; }
+  if (!confirm('Remove all ' + jobs.length + ' stored encryption key' + (jobs.length > 1 ? 's' : '') +
+               ' across every protocol?\n\nThis cannot be undone.')) return;
+  var chain = Promise.resolve();
+  jobs.forEach(function (j) {
+    chain = chain.then(function () {
+      return fetch('/net/keys/remove?fam=' + encodeURIComponent(j[0]) + '&net=' + encodeURIComponent(j[1]) + '&kid=' + encodeURIComponent(j[2]), { cache: 'no-store' })
+        .then(function (r) { return r.json(); }).then(function (jr) {
+          if (jr.ok && S.d.keyed && S.d.keyed[j[0]] && S.d.keyed[j[0]][j[1]]) delete S.d.keyed[j[0]][j[1]][j[2]];
+        });
+    });
+  });
+  chain.then(function () { render(); toast('Removed ' + jobs.length + ' key' + (jobs.length > 1 ? 's' : '') + '.'); },
+             function () { render(); toast('Could not remove all keys (some may remain).'); });
+}
+$('clear').addEventListener('click', function (e) { e.stopPropagation(); $('clearmenu').hidden = !$('clearmenu').hidden; });
+$('clr-data').addEventListener('click', function (e) { e.preventDefault(); $('clearmenu').hidden = true; clearData(); });
+$('clr-merges').addEventListener('click', function (e) { e.preventDefault(); $('clearmenu').hidden = true; clearAllMerges(); });
+$('clr-keys').addEventListener('click', function (e) { e.preventDefault(); $('clearmenu').hidden = true; clearAllKeys(); });
+document.addEventListener('click', function () { $('clearmenu').hidden = true; });
 ['(max-width: 640px)', '(max-width: 1050px)'].forEach(function (q) {
   if (!window.matchMedia) return;
   var m = window.matchMedia(q), f = function () {
