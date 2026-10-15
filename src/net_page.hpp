@@ -3503,9 +3503,16 @@ function step() {
   // each along the line between their centres. Only runs with 2+ components,
   // so a single-component graph behaves exactly as before.
   if (C > 1) {
+    // Pull each clump bodily toward the centre so disconnected groups pack in
+    // rather than drifting far out; the separation below then just keeps them
+    // from overlapping, so they nestle a small gap clear of each other.
+    for (i = 0; i < C; i++) {
+      var cp = comps[i], mp = cp.nodes, gx = cp.cx * 0.022 * a, gy = cp.cy * 0.022 * a, t;
+      for (t = 0; t < mp.length; t++) { mp[t].vx -= gx; mp[t].vy -= gy; }
+    }
     for (i = 0; i < C; i++) for (j = i + 1; j < C; j++) {
       var ci = comps[i], cj = comps[j], ddx = cj.cx - ci.cx, ddy = cj.cy - ci.cy, dd2 = ddx * ddx + ddy * ddy;
-      var want = ci.r + cj.r + 70;
+      var want = ci.r + cj.r + 35;
       if (dd2 >= want * want) continue;
       var dd = Math.sqrt(dd2); if (dd < 1) { ddx = Math.random() - .5; ddy = Math.random() - .5; dd = 1; }
       var push = (want - dd) * 0.5 * a, px = ddx / dd * push, py = ddy / dd * push, mi = ci.nodes, mj = cj.nodes, k;
