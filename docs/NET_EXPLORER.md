@@ -35,6 +35,7 @@ formats are in the [README](../README.md#network-explorer) and
 - [Appendix A: How associations are built](#appendix-a-how-associations-are-built)
 - [Appendix B: Per-protocol notes](#appendix-b-per-protocol-notes)
 - [Appendix C: Glossary](#appendix-c-glossary)
+- [Appendix D: The `calls.csv` columns](#appendix-d-the-callscsv-columns)
 
 ---
 
@@ -574,7 +575,8 @@ is started with `DSD_NET_AUDIO` set, which decides at every start).
 - **⤓ Audio (.zip)** saves the audio of the calls **listed, in the order
   shown** (so filter, search or sort first), up to 25 MB, with a
   `calls.csv` of time, duration, network, MHz, slot, from (and alias), to,
-  flags and any transcript. Handy for sending examples.
+  flags and any transcript ([Appendix D](#appendix-d-the-callscsv-columns) lists
+  every column). Handy for sending examples.
 
 What gets recorded:
 
@@ -1112,3 +1114,41 @@ Encrypted calls are not recorded (unless the session has the key).
 | **LSN** | Logical slot number: a channel and slot on a Capacity Plus site. |
 | **Export** | The explorer's gathered data saved as a file (re-openable). |
 | **Recording** | The explorer's raw input saved for exact replay (troubleshooting). |
+
+## Appendix D: The `calls.csv` columns
+
+**⤓ Audio (.zip)** ([§10](#10-call-audio)) packs a `calls.csv` beside the WAV
+files — one row per call saved, in the order the Calls list showed them (so
+filter, search or sort first). It has these 15 columns:
+
+| # | Column | Meaning |
+|---|---|---|
+| 1 | `file` | The call's WAV filename inside the same zip. |
+| 2 | `start_utc` | Call start, UTC — `2026-10-02 17:29:31Z`. |
+| 3 | `duration_s` | Call length in seconds (first to last voice), one decimal. |
+| 4 | `audio_s` | Length of the recorded audio in seconds, one decimal (≤ `duration_s`; silence isn't recorded). |
+| 5 | `network` | The network's label (as shown in the explorer). |
+| 6 | `mhz` | Channel frequency in MHz; blank if unknown. |
+| 7 | `slot` | TDMA timeslot; blank if none. |
+| 8 | `from` | Source radio id. |
+| 9 | `alias` | Source talker alias, if any. |
+| 10 | `to` | Talkgroup id for a group call, or the other radio's id for a private call (see `private`). |
+| 11 | `private` | `yes` for a radio-to-radio (private/unit) call, else blank. |
+| 12 | `emergency` | `yes` if the call carried an emergency flag, else blank. |
+| 13 | `encrypted` | `yes` if the call was encrypted, else blank. |
+| 14 | `transcript` | Speech-to-text of the call, if it was transcribed ([§11](#11-speech-to-text)); else blank. |
+| 15 | `transcript_model` | The speech model that produced the transcript; else blank. |
+
+Format details:
+
+- **UTF-8 with a BOM** and **CRLF** (`\r\n`) line endings, so it opens cleanly
+  in Excel and Google Sheets.
+- A field containing a comma, quote or newline is wrapped in double quotes,
+  with any inner quote doubled (standard CSV quoting). A field that begins
+  with `=`, `+`, `-` or `@` is prefixed with a single quote (`'`) so a
+  spreadsheet doesn't treat it as a formula.
+- Only **finished calls that still have audio on the server** are included.
+  The zip (and so the CSV) stops at 25 MB; if it fills, the rows past that
+  point are left out and a message says how many.
+- Times are UTC and absolute, so a CSV from a file view matches that export's
+  own clock, not yours.
