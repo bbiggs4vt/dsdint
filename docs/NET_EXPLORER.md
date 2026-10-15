@@ -294,6 +294,13 @@ evidence and a rating — **very likely**, **likely** or **possible**:
 | **one took over when the other stopped** | They were never heard in the same period: what a retune or a changed offset looks like. |
 | **talkgroups / radios shared** | Supporting evidence only: on amateur DMR, radio ids are worldwide and TG 9 is local on every repeater. |
 
+The rating: **very likely** needs a call heard on both. **Likely** means a call
+was heard on both, *or* the codes match and the channels are within 2.5 kHz —
+two distinct systems can't share a code and sit that close, so it's one channel
+heard at a small offset. A matching code with a wider gap, or frequency
+proximity alone, stays **possible** (codes aren't unique) until a call is heard
+on both.
+
 A pair is never suggested when the evidence says they are different channels:
 both have a system id; their codes differ; **one stream heard both at the same
 moment**; **different calls on the same slot at the same moment** (two

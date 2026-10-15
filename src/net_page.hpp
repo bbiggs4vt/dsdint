@@ -976,7 +976,14 @@ function sameJudge(a, b, e) {
   if (e.tgs || e.radios) why.push([e.tgs ? e.tgs + ' talkgroup' + (e.tgs > 1 ? 's' : '') : '', e.radios ? e.radios + ' radio' + (e.radios > 1 ? 's' : '') : '']
                                   .filter(Boolean).join(' and ') + ' shared');
   if (e.clash) against.push('different calls at the same moment ' + e.clash + '\u00D7');
-  var tier = e.twins && !e.clash ? 3 : e.twins || (sameCode && gap <= 2500 && (handoff || e.tgs || e.radios)) ? 2 : 1;
+  // Likely when a call was heard on both, or the codes match and the channels
+  // are within 2.5 kHz -- two distinct systems can't sit that close on the same
+  // code, so it's one channel heard at a small frequency offset. A matching
+  // code with a wider gap stays "possible" (it needs calls heard on both to
+  // rise), since codes (NAC / color code / RAN) aren't unique.
+  var tier = e.twins && !e.clash ? 3
+           : (e.twins || (sameCode && gap <= 2500)) ? 2
+           : 1;
   return { tier: tier, why: why, against: against, gap: gap, twins: e.twins };
 }
 // Pairs the user said are not the same (per browser): protocol -> [pairKey].
