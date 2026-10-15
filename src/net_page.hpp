@@ -92,6 +92,8 @@ inline std::string render_net_page_html() {
   .filebar.cmp .cmptog { margin-left: auto; display: inline-flex; align-items: center; gap: .3rem; font-size: .82rem; color: var(--heading); cursor: pointer; user-select: none; }
   .filebar.cmp .cmptog input { cursor: pointer; }
   .filebar.cmp .cmpclear { color: var(--muted); font-size: .82rem; }
+  .cmphead { display: flex; align-items: center; gap: .6rem; }
+  .cmphead .cmpexport { margin-left: auto; text-transform: none; letter-spacing: 0; font-size: .78rem; }
   .btn.on { border-color: var(--success); color: var(--success); }
   .filebar .imp-item { background: rgba(0,0,0,.25); border-radius: 3px; padding: .1rem .45rem; font-size: .8rem; }
   .filebar .imp-item a { margin-left: .35rem; }
@@ -628,6 +630,7 @@ inline std::string render_net_page_html() {
           <button class="tab" data-v="links">Links</button>
           <button class="tab" data-v="nets">Networks <span class="count" id="c-nets"></span></button>
           <button class="tab" data-v="keys" id="tab-keys" hidden>Keys <span class="count" id="c-keys"></span></button>
+          <button class="tab" data-v="changes" id="tab-changes" hidden>Changes <span class="count" id="c-changes"></span></button>
         </div>
         <div class="panel" id="v-calls">
           <div class="callbar">
@@ -668,6 +671,7 @@ inline std::string render_net_page_html() {
         <div class="panel" id="v-links" hidden><div class="scroll" id="t-links" style="max-height:78vh"></div></div>
         <div class="panel" id="v-nets" hidden><div class="scroll" id="t-nets"></div></div>
         <div class="panel" id="v-keys" hidden><div class="scroll" id="t-keys"></div></div>
+        <div class="panel" id="v-changes" hidden><div class="scroll" id="t-changes" style="max-height:78vh"></div></div>
       </div>
       <aside class="panel side" id="detail"></aside>
     </div>
@@ -3689,11 +3693,12 @@ function onlyNet(k) { var ks = netKeys(); return ks.length === 1 && ks[0] === k 
 // The Filters section's collapsed / open state (remembered per browser).
 function setFOpen(open) { S.fOpen = open; store('filtersOpen', open ? '1' : ''); render(); }
 function setView(v) {
+  if (v === 'changes' && !BASE) v = 'calls';             // the Changes tab only exists while comparing
   if (v !== 'keys') S.keyAdd = null;                     // leaving Keys: drop a half-entered manual key
   S.view = v; store('view', v);
   var tabs = document.querySelectorAll('#viewtabs .tab');
   for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-v') === v);
-  ['calls', 'tgs', 'radios', 'graph', 'map', 'links', 'nets', 'keys'].forEach(function (x) { $('v-' + x).hidden = x !== v; });
+  ['calls', 'tgs', 'radios', 'graph', 'map', 'links', 'nets', 'keys', 'changes'].forEach(function (x) { $('v-' + x).hidden = x !== v; });
   renderView();
 }
 function renderView() {
@@ -3704,6 +3709,7 @@ function renderView() {
   else if (S.view === 'nets') viewNets();
   else if (S.view === 'keys') viewKeys();
   else if (S.view === 'links') viewLinks();
+  else if (S.view === 'changes') viewChanges();
   else if (S.view === 'graph') { legend(); buildGraph(); highlight(); run(); }
   else if (S.view === 'map') viewMap();
 }
@@ -4073,30 +4079,35 @@ function idSig(o) {
   if (!ks.length) return '';
   return ks.sort().map(function (k) { return k + '=' + o[k]; }).join(';');
 }
-// Build the compact snapshot kept in BASE (plain objects as sets, so it
-// serialises straight to sessionStorage).
+// The snapshot kept in BASE: the baseline's own networks / talkgroups / radios
+// per protocol, indexed by id, so the Changes view can tell new from gone and
+// measure what changed (call counts, new talkgroup use, new private partners,
+// encryption). It serialises straight to sessionStorage (it is plain data).
 function extractBaseline(d, name) {
   var fams = {};
   keys(d.families || {}).forEach(function (f) {
-    var F = d.families[f] || {}, o = { nets: {}, netIds: {}, tgs: {}, radios: {}, encTgs: {} };
-    (F.networks || []).forEach(function (n) { o.nets[n.key] = 1; var s = idSig(n.ids); if (s) o.netIds[s] = 1; });
-    (F.talkgroups || []).forEach(function (t) { o.tgs[t.id] = 1; if (t.enc || (t.keys && keys(t.keys).length)) o.encTgs[t.id] = 1; });
-    (F.radios || []).forEach(function (r) { o.radios[r.id] = 1; });
+    var F = d.families[f] || {}, o = { netByKey: {}, netIdSig: {}, tgById: {}, rById: {} };
+    (F.networks || []).forEach(function (n) { o.netByKey[n.key] = n; var s = idSig(n.ids); if (s) o.netIdSig[s] = 1; });
+    (F.talkgroups || []).forEach(function (t) { o.tgById[t.id] = t; });
+    (F.radios || []).forEach(function (r) { o.rById[r.id] = r; });
     fams[f] = o;
   });
   return { name: name, exported: d.exported || d.now || 0, fams: fams };
 }
 function baseFam() { return (BASE && BASE.fams[S.fam]) || null; }
-function isNewRadio(id) { var b = baseFam(); return !!b && !b.radios[id]; }
-function isNewTg(id) { var b = baseFam(); return !!b && !b.tgs[id]; }
+function isNewRadio(id) { var b = baseFam(); return !!b && !b.rById[id]; }
+function isNewTg(id) { var b = baseFam(); return !!b && !b.tgById[id]; }
 function isNewNet(n) {
   var b = baseFam(); if (!b || !n) return false;
-  if (b.nets[n.key]) return false;
-  var s = idSig(n.ids); if (s && b.netIds[s]) return false;
+  if (b.netByKey[n.key]) return false;
+  var s = idSig(n.ids); if (s && b.netIdSig[s]) return false;
   var parts = n.parts || [];
-  for (var i = 0; i < parts.length; i++) { if (b.nets[parts[i].key]) return false; var s2 = idSig(parts[i].ids); if (s2 && b.netIds[s2]) return false; }
+  for (var i = 0; i < parts.length; i++) { if (b.netByKey[parts[i].key]) return false; var s2 = idSig(parts[i].ids); if (s2 && b.netIdSig[s2]) return false; }
   return true;
 }
+// Does an entity carry encryption (a flag or any key id seen)?
+function tgEnc(t) { return !!(t && (t.enc || (t.keys && keys(t.keys).length))); }
+function radEnc(r) { return !!(r && r.keys && keys(r.keys).length); }
 // Wrap a list-cell node with a NEW badge when the entity is new.
 function newBadge() { return h('span', { class: 'badge b-new', title: 'Not in the baseline' + (BASE ? ' (' + BASE.name + ')' : '') + ' — new since then', text: 'NEW' }); }
 function withNew(node, isNew) { return isNew ? h('span', { class: 'hasnew' }, [node, ' ', newBadge()]) : node; }
@@ -4107,12 +4118,12 @@ function changeStats() {
   IX.nets.forEach(function (n) { if (isNewNet(n)) ++s.newNet; });
   IX.tgs.forEach(function (t) {
     curTg[t.id] = 1;
-    if (!b.tgs[t.id]) ++s.newTg;
-    if ((t.enc || (t.keys && keys(t.keys).length)) && !b.encTgs[t.id]) ++s.newEnc;
+    if (!b.tgById[t.id]) ++s.newTg;
+    if (tgEnc(t) && !tgEnc(b.tgById[t.id])) ++s.newEnc;
   });
-  IX.radios.forEach(function (r) { curRad[r.id] = 1; if (!b.radios[r.id]) ++s.newRadio; });
-  keys(b.tgs).forEach(function (id) { if (!curTg[id]) ++s.goneTg; });
-  keys(b.radios).forEach(function (id) { if (!curRad[id]) ++s.goneRadio; });
+  IX.radios.forEach(function (r) { curRad[r.id] = 1; if (!b.rById[r.id]) ++s.newRadio; });
+  keys(b.tgById).forEach(function (id) { if (!curTg[id]) ++s.goneTg; });
+  keys(b.rById).forEach(function (id) { if (!curRad[id]) ++s.goneRadio; });
   return s;
 }
 // Is a row of a list "new" versus the baseline? Calls count as new when a new
@@ -4142,12 +4153,12 @@ function loadBaselineFile(f) {
     }
     BASE = extractBaseline(d, f.name);
     baseSave();
-    var n = 0; keys(BASE.fams).forEach(function (f) { n += keys(BASE.fams[f].radios).length; });
-    toast('Comparing to baseline “' + f.name + '” — new talkgroups, radios and networks are flagged NEW.');
+    toast('Comparing to baseline “' + f.name + '” — see the Changes tab; new rows are flagged NEW.');
     render();
+    setView('changes');                                 // land on the diff
   }).catch(function () { alert('Could not read "' + f.name + '".'); });
 }
-function clearBaseline() { BASE = null; baseSave(); toast('Baseline cleared.'); render(); }
+function clearBaseline() { BASE = null; baseSave(); toast('Baseline cleared.'); if (S.view === 'changes') setView('calls'); render(); }
 // The Changes banner under the stat cards: what is new (and gone) versus the
 // baseline, for the current protocol. Clicking a count opens that list.
 function updateChangebar() {
@@ -4156,7 +4167,8 @@ function updateChangebar() {
   btn.textContent = BASE ? 'Comparing ✕' : 'Compare…';
   btn.title = BASE ? 'Comparing to ' + BASE.name + ' — click to stop comparing'
                    : 'Compare what’s shown to a saved export (a baseline, e.g. yesterday): what is not in it is flagged NEW';
-  if (!BASE) { bar.hidden = true; bar.textContent = ''; return; }
+  $('tab-changes').hidden = !BASE;                       // the Changes tab exists only while comparing
+  if (!BASE) { $('c-changes').textContent = ''; bar.hidden = true; bar.textContent = ''; return; }
   bar.hidden = false;
   bar.textContent = '';
   bar.appendChild(h('span', null, ['Baseline ', h('b', { text: BASE.name }),
@@ -4182,6 +4194,7 @@ function updateChangebar() {
       bar.appendChild(h('span', { class: 'm', title: 'In the baseline but not heard in the current view', text: ' · ' + gone + ' not heard' }));
     }
   }
+  $('c-changes').textContent = s ? ((s.newNet + s.newTg + s.newRadio) || '') : '';
   var nf = h('input', { type: 'checkbox' });
   nf.checked = newFirstOn();
   nf.addEventListener('change', function () { store('cmpnewfirst', this.checked ? '1' : '0'); render(); });
@@ -4189,6 +4202,103 @@ function updateChangebar() {
     [nf, h('span', { text: ' New first' })]));
   bar.appendChild(h('a', { href: '#', class: 'cmpclear', title: 'Stop comparing',
                            onclick: function (e) { e.preventDefault(); clearBaseline(); } }, 'Clear'));
+}
+// ---- the diff ("Changes" view) ----
+// Classify the current protocol's data against the baseline: what is new, gone,
+// newly encrypted, newly connected, or busier. Radios and talkgroups match by
+// id (exact); networks by strong id then channel key (which can drift between
+// days). Associations are only reported between entities that are in BOTH runs,
+// so a brand-new radio's talkgroups aren't double-counted as "new use".
+function diffReport() {
+  var b = baseFam(); if (!b || !IX) return null;
+  var R = { newTgs: [], goneTgs: [], newRadios: [], goneRadios: [], newNets: [], newEncTg: [], newEncRadio: [],
+            newLinks: [], newPeers: [], busier: [] }, curTg = {}, curRad = {};
+  IX.tgs.forEach(function (t) {
+    curTg[t.id] = 1;
+    var bt = b.tgById[t.id];
+    if (!bt) { R.newTgs.push(t); return; }
+    if (tgEnc(t) && !tgEnc(bt)) R.newEncTg.push(t);
+    var d = t.calls - bt.calls; if (d > 0) R.busier.push({ kind: 'tg', id: t.id, d: d, from: bt.calls, to: t.calls });
+  });
+  IX.radios.forEach(function (r) {
+    curRad[r.id] = 1;
+    var br = b.rById[r.id];
+    if (!br) { R.newRadios.push(r); return; }
+    if (radEnc(r) && !radEnc(br)) R.newEncRadio.push(r);
+    var d = r.calls - br.calls; if (d > 0) R.busier.push({ kind: 'radio', id: r.id, d: d, from: br.calls, to: r.calls });
+    keys(r.tgs).forEach(function (tg) { if (!br.tgs[tg] && b.tgById[tg]) R.newLinks.push({ rid: r.id, tg: tg, n: r.tgs[tg] }); });
+    keys(r.peers).forEach(function (p) { if (!br.peers[p] && b.rById[p] && r.id < p) R.newPeers.push({ a: r.id, b: p, n: r.peers[p] }); });
+  });
+  IX.nets.forEach(function (n) { if (isNewNet(n)) R.newNets.push(n); });
+  keys(b.tgById).forEach(function (id) { if (!curTg[id]) R.goneTgs.push(b.tgById[id]); });
+  keys(b.rById).forEach(function (id) { if (!curRad[id]) R.goneRadios.push(b.rById[id]); });
+  R.busier.sort(function (a, b) { return b.d - a.d; });
+  return R;
+}
+// A saveable version of the report (ids and counts; no values).
+function changesJson(R) {
+  return {
+    baseline: BASE.name, baseline_exported: BASE.exported, protocol: S.fam, generated: now(),
+    new_talkgroups: R.newTgs.map(function (t) { return t.id; }),
+    gone_talkgroups: R.goneTgs.map(function (t) { return t.id; }),
+    new_radios: R.newRadios.map(function (r) { return r.id; }),
+    gone_radios: R.goneRadios.map(function (r) { return r.id; }),
+    new_networks: R.newNets.map(function (n) { return n.label || n.key; }),
+    newly_encrypted_talkgroups: R.newEncTg.map(function (t) { return t.id; }),
+    newly_encrypted_radios: R.newEncRadio.map(function (r) { return r.id; }),
+    new_talkgroup_use: R.newLinks.map(function (l) { return { radio: l.rid, talkgroup: l.tg, calls: l.n }; }),
+    new_private_pairs: R.newPeers.map(function (p) { return { a: p.a, b: p.b, calls: p.n }; }),
+    busier: R.busier.map(function (x) { return { kind: x.kind, id: x.id, from: x.from, to: x.to }; })
+  };
+}
+function changeSection(cont, title, items, key, tip) {
+  if (!items.length) return;
+  cont.appendChild(h('div', { class: 'section', title: tip || null, text: title + ' (' + items.length + ')' }));
+  cont.appendChild(lst(items, key, 12));
+}
+function viewChanges() {
+  var cont = $('t-changes'), y = cont.scrollTop;
+  cont.textContent = '';
+  var R = diffReport();
+  if (!R) {
+    cont.appendChild(h('div', { class: 'note', text: BASE ? 'This baseline has no ' + (FAMN[S.fam] || S.fam) + ' data to compare.'
+                                                           : 'Load a baseline with Compare… to see what changed.' }));
+    return;
+  }
+  var head = h('div', { class: 'section cmphead', text: 'Changes vs baseline “' + BASE.name + '”' + (BASE.exported ? ' · ' + dt(BASE.exported) : '') });
+  head.appendChild(h('a', { href: '#', class: 'cmpexport', title: 'Save this comparison (ids and counts) as JSON',
+    onclick: function (e) { e.preventDefault(); saveText('dsd_changes_' + (S.fam || '') + '_' + stamp(now()) + '.json', JSON.stringify(changesJson(R), null, 2), 'application/json'); toast('Saved the changes report.'); } }, 'Save report (.json)'));
+  cont.appendChild(head);
+  var anything = R.newTgs.length || R.newRadios.length || R.newNets.length || R.newEncTg.length || R.newEncRadio.length ||
+                 R.newLinks.length || R.newPeers.length || R.busier.length || R.goneTgs.length || R.goneRadios.length;
+  if (!anything) { cont.appendChild(h('div', { class: 'note', text: 'Nothing changed for ' + (FAMN[S.fam] || S.fam) + ' versus this baseline.' })); return; }
+  var byCalls = function (a, b) { return b.calls - a.calls; };
+  var goneEl = function (txt) { return h('span', { style: 'color:var(--muted)' }, txt); };
+  changeSection(cont, 'New talkgroups', R.newTgs.slice().sort(byCalls).map(function (t) {
+    return { el: tlink(t.id), n: t.calls, lbl: t.calls + ' call' + (t.calls === 1 ? '' : 's') }; }), 'chg|newtg', 'Talkgroups not in the baseline');
+  changeSection(cont, 'New radios', R.newRadios.slice().sort(byCalls).map(function (r) {
+    return { el: rlink(r.id), n: r.calls, lbl: r.calls + ' call' + (r.calls === 1 ? '' : 's') }; }), 'chg|newrad', 'Radios not in the baseline');
+  changeSection(cont, 'Newly encrypted',
+    R.newEncTg.map(function (t) { return { el: h('span', null, [tlink(t.id), ' ', badge('b-enc', 'ENC')]), n: t.calls, lbl: t.calls + ' calls' }; })
+      .concat(R.newEncRadio.map(function (r) { return { el: h('span', null, [rlink(r.id), ' ', badge('b-enc', 'ENC')]), n: r.calls, lbl: r.calls + ' calls' }; })),
+    'chg|enc', 'Encrypted now, clear or absent in the baseline');
+  changeSection(cont, 'New talkgroup use', R.newLinks.slice().sort(function (a, b) { return b.n - a.n; }).map(function (l) {
+    return { el: h('span', null, [rlink(l.rid), ' → ', tlink(l.tg)]), n: l.n, lbl: l.n + ' call' + (l.n === 1 ? '' : 's') }; }),
+    'chg|links', 'A radio already in the baseline now uses a talkgroup it didn’t before');
+  changeSection(cont, 'New private-call pairs', R.newPeers.slice().sort(function (a, b) { return b.n - a.n; }).map(function (p) {
+    return { el: h('span', null, [rlink(p.a), ' ⇄ ', rlink(p.b)]), n: p.n, lbl: p.n + ' call' + (p.n === 1 ? '' : 's') }; }),
+    'chg|peers', 'Private-call partners new since the baseline (both radios already known)');
+  changeSection(cont, 'Busier since baseline', R.busier.map(function (x) {
+    return { el: x.kind === 'tg' ? tlink(x.id) : rlink(x.id), n: x.d, lbl: x.from + ' → ' + x.to }; }),
+    'chg|busier', 'More calls now than in the baseline (count then → now)');
+  changeSection(cont, 'New networks', R.newNets.slice().sort(byCalls).map(function (n) {
+    return { el: netc(n.key), n: n.calls, lbl: n.calls + ' calls' }; }), 'chg|newnet', 'Networks not in the baseline — network identity can drift between days');
+  changeSection(cont, 'Not heard (in baseline only)',
+    R.goneTgs.slice().sort(byCalls).map(function (t) { return { el: goneEl('TG ' + t.id), n: t.calls, lbl: 'was ' + t.calls }; })
+      .concat(R.goneRadios.slice().sort(byCalls).map(function (r) { var al = (r.aliases && r.aliases.length) ? ' ' + r.aliases[r.aliases.length - 1] : ''; return { el: goneEl('Radio ' + r.id + al), n: r.calls, lbl: 'was ' + r.calls }; })),
+    'chg|gone', 'In the baseline but not heard in the current view');
+  cont.appendChild(h('div', { style: 'height:.8rem' }));
+  cont.scrollTop = y;
 }
 function openText(text, name) {
   if (/^\s*\{"op":"header"/.test(text)) {

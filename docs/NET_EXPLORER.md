@@ -82,7 +82,7 @@ From top to bottom:
 | **Connections** | At the end of the tabs row: `● 3 clients · 2 streams` — clients connected to the server and the decode streams they run (green dot while any decodes), or `No clients connected`. Hover for each stream's protocol, frequency, and when it last decoded something. |
 | **Stat cards** | Networks, Sites, Talkgroups, Radios, Calls (recent), **Streams** (this protocol's connected decode streams, green while one decodes; hover for each; not in a file view) and Live calls — for the current protocol, network filter and search (not **With audio only** or **Hide signaling**, which only shorten the Calls list). The protocol tab's "N live" counts all of its networks, so with a network filter or a search the two can differ. |
 | **Filters** | Everything that narrows the page, in one section under the stat cards (§9). Collapsed (the default) it is one row: **▸ Filters**, a [chip](#appendix-c-glossary) for each filter in force (click one to drop it) and **Clear all**; with none it says *none — showing everything*. Click **▸ Filters** to open it: a row each for networks (one chip per network, with its call count), talkgroups and radios (each with a box to type ids into), and the search. The browser remembers whether it is open. |
-| **View tabs** | Calls · Talkgroups · Radios · Graph · Map · Links · Networks. |
+| **View tabs** | Calls · Talkgroups · Radios · Graph · Map · Links · Networks (and **Changes** while [comparing to a baseline](#comparing-to-a-baseline-whats-new)). |
 | **Details panel** | On the right (or a drawer on smaller screens): everything tied to the radio, talkgroup or network you click. |
 
 On a narrow window the header's buttons fold into a **☰ Menu**.
@@ -692,17 +692,41 @@ top — the column sort you pick still orders within the new and the older
 groups. In the Calls list, a call counts as new when a new radio or talkgroup
 is at either end, and the new one wears the badge. Untick it to sort normally.
 
+A **Changes** tab appears while comparing (the page opens on it when you load
+a baseline) with the full day-over-day diff for the current protocol, grouped
+into sections — each collapsible, each row a link to the entity, longest first:
+
+- **New talkgroups / New radios** — not in the baseline, with their call count.
+- **Newly encrypted** — talkgroups or radios encrypted now that were clear or
+  absent before.
+- **New talkgroup use** — a radio already in the baseline now talks on a
+  talkgroup it didn't before (both already known): a new association, not just
+  a new entity.
+- **New private-call pairs** — radios already known that started private calls
+  with each other.
+- **Busier since baseline** — entities heard in both runs with more calls now
+  (shown as *before → after*).
+- **New networks** — not in the baseline (subject to the network-identity
+  caveat below).
+- **Not heard (in baseline only)** — talkgroups and radios that were in the
+  baseline but aren't in the current view.
+
+**Save report (.json)** on that tab writes the whole comparison (ids and
+counts, no key values) to a file.
+
 "New" means not present in the baseline for that protocol. Talkgroups and
-radios match by id, so those are exact; a network matches on its strong
-identifiers (system id) and falls back to its channel key, which **can drift
-between days** on weakly identified systems — so a "new network" is worth a
-glance rather than trusting blindly (radios and talkgroups are the reliable
-signal). The baseline is held in your browser only (it survives the page's
-own reloads) and compares against whatever protocol tab you are on. Load a
-different export to replace it, or **Compare… → Comparing ✕** (or the bar's
-**Clear**) to stop. This is a first, lightweight comparison; a fuller
-day-over-day diff (new associations, activity up/down, a dedicated report) is
-a planned next step.
+radios match by id, so those — and the associations built from them — are
+exact; a network matches on its strong identifiers (system id) and falls back
+to its channel key, which **can drift between days** on weakly identified
+systems, so a "new network" is worth a glance rather than trusting blindly
+(radios and talkgroups are the reliable signal). The baseline is held in your
+browser only (it survives the page's own reloads) and compares against
+whatever protocol tab you are on; it holds the baseline's networks,
+talkgroups and radios, not its calls. Load a different export to replace it,
+or **Compare… → Comparing ✕** (or the bar's **Clear**) to stop. The Changes
+tab reports over all of the current protocol's data (the Filters don't narrow
+it). A scheduled, automated day-over-day watch with alerts is a possible next
+step.
 
 ## 13. Recording a session for troubleshooting
 
