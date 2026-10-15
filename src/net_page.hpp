@@ -3360,6 +3360,22 @@ function buildGraph() {
   // (a talkgroup, or a radio with many private-call partners) pushes harder
   // and its neighbours ring it instead of other nodes being trapped inside.
   nodes.forEach(function (n) { n.m = 1 + (GR.adj[n.id] || []).length; n.r = nodeR(n); });
+  // Connected components: the layout keeps each clump together and pushes whole
+  // clumps apart, so a small disconnected group doesn't sit tangled inside an
+  // unrelated hub (without this it drifts out only slowly, over many redraws).
+  nodes.forEach(function (n) { n.comp = -1; });
+  var comps = [];
+  nodes.forEach(function (start) {
+    if (start.comp >= 0) return;
+    var id = comps.length, stack = [start], members = [];
+    start.comp = id;
+    while (stack.length) {
+      var nd = stack.pop(); members.push(nd);
+      (GR.adj[nd.id] || []).forEach(function (y) { var o = by[y]; if (o && o.comp < 0) { o.comp = id; stack.push(o); } });
+    }
+    comps.push({ nodes: members });
+  });
+  GR.comps = comps;
   GR.nodes = nodes; GR.links = links; GR.by = by;
   $('g-note').textContent = nodes.length + ' nodes · ' + links.length + ' links' +
     (cand.length > cap ? ' (busiest ' + cap + ' of ' + cand.length + ')' : '');
@@ -3441,6 +3457,18 @@ function paint() {
 }
 function step() {
   var N = GR.nodes, L = GR.links, a = GR.alpha, n = N.length, i, j;
+  // Each connected component's centre of mass and radius (for the separation
+  // force below). Cheap: O(nodes) + O(components^2).
+  var comps = GR.comps || [], C = comps.length, c, m, ln;
+  for (i = 0; i < C; i++) {
+    c = comps[i]; m = c.nodes; ln = m.length;
+    var sx = 0, sy = 0;
+    for (j = 0; j < ln; j++) { sx += m[j].x; sy += m[j].y; }
+    c.cx = ln ? sx / ln : 0; c.cy = ln ? sy / ln : 0;
+    var rr = 0;
+    for (j = 0; j < ln; j++) { var ex = m[j].x - c.cx, ey = m[j].y - c.cy, ed = Math.sqrt(ex * ex + ey * ey) + m[j].r; if (ed > rr) rr = ed; }
+    c.r = rr;
+  }
   for (i = 0; i < n; i++) {
     var A = N[i];
     for (j = i + 1; j < n; j++) {
@@ -3464,6 +3492,20 @@ function step() {
     var ux = dx / d * f, uy = dy / d * f;
     A.vx += ux; A.vy += uy; B.vx -= ux; B.vy -= uy;
   });
+  // Keep whole components apart: when two clumps overlap, shove every node of
+  // each along the line between their centres. Only runs with 2+ components,
+  // so a single-component graph behaves exactly as before.
+  if (C > 1) {
+    for (i = 0; i < C; i++) for (j = i + 1; j < C; j++) {
+      var ci = comps[i], cj = comps[j], ddx = cj.cx - ci.cx, ddy = cj.cy - ci.cy, dd2 = ddx * ddx + ddy * ddy;
+      var want = ci.r + cj.r + 70;
+      if (dd2 >= want * want) continue;
+      var dd = Math.sqrt(dd2); if (dd < 1) { ddx = Math.random() - .5; ddy = Math.random() - .5; dd = 1; }
+      var push = (want - dd) * 0.5 * a, px = ddx / dd * push, py = ddy / dd * push, mi = ci.nodes, mj = cj.nodes, k;
+      for (k = 0; k < mi.length; k++) { mi[k].vx -= px; mi[k].vy -= py; }
+      for (k = 0; k < mj.length; k++) { mj[k].vx += px; mj[k].vy += py; }
+    }
+  }
   for (i = 0; i < n; i++) {
     var q = N[i];
     q.vx -= q.x * 0.008 * a; q.vy -= q.y * 0.008 * a;

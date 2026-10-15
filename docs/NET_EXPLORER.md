@@ -178,7 +178,9 @@ the others away, harder the more links it has. So a busy talkgroup, or a radio
 with many private-call partners (a data gateway, a dispatcher), keeps its own
 space with its radios around it, other talkgroups stay out of its ring, and
 nodes never sit on top of each other. Private-call links pull less than
-talkgroup links, so the talkgroups shape the picture.
+talkgroup links, so the talkgroups shape the picture. Groups that aren't
+connected to each other are pushed apart as whole clumps, so an unrelated
+cluster doesn't end up tangled inside a busy one.
 
 - **Nodes** — how many of the busiest radios and talkgroups to draw (100 to
   1000). The note on the right says how many are shown.
