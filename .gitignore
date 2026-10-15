@@ -40,3 +40,15 @@ dsd-fme
 __pycache__/
 *.pyc
 !patches/*.patch
+
+# Network-explorer runtime files written when dsd-server is run from the repo
+# root (default log dir). These are per-deployment state, not source — and
+# net_keys.json holds key VALUES, so it must never be committed.
+net_merges.json
+net_settings.json
+net_keys.json
+net_audio/
+net_asr/
+# Recorded decoder input / replay captures.
+*.jsonl
+*.jsonl.gz
