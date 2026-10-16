@@ -3496,6 +3496,10 @@ function highlight() {
 }
 function paint() {
   var svg = $('gsvg'), w = svg.clientWidth || 800, hh = svg.clientHeight || 600;
+  // Aspect of the graph pane, so the layout can spread into a wide viewport
+  // (see step's anisotropic gravity). Clamped so an ultra-wide pane doesn't
+  // stretch the picture into a thin band.
+  GR.ar = Math.min(2.2, Math.max(1, w / (hh || 1)));
   if (GR.root) GR.root.setAttribute('transform', 'translate(' + (w / 2 + GR.t.x) + ',' + (hh / 2 + GR.t.y) + ') scale(' + GR.t.k + ')');
   GR.links.forEach(function (l) {
     var a = GR.by[l.a], b = GR.by[l.b];
@@ -3509,6 +3513,11 @@ function step() {
   // Each connected component's centre of mass and radius (for the separation
   // force below). Cheap: O(nodes) + O(components^2).
   var comps = GR.comps || [], C = comps.length, c, m, ln;
+  // Anisotropic gravity: pull harder toward the horizontal centre-line than
+  // toward the vertical one, so the cloud fills a wide pane instead of settling
+  // in a circle. Disconnected clumps then have a cheap horizontal direction to
+  // sit apart in, so two big clusters end up side by side rather than stacked.
+  var ar = GR.ar || 1, gsx = 1 / Math.pow(ar, 0.6), gsy = Math.pow(ar, 0.6);
   for (i = 0; i < C; i++) {
     c = comps[i]; m = c.nodes; ln = m.length;
     var sx = 0, sy = 0;
@@ -3549,7 +3558,7 @@ function step() {
     // rather than drifting far out; the separation below then just keeps them
     // from overlapping, so they nestle a small gap clear of each other.
     for (i = 0; i < C; i++) {
-      var cp = comps[i], mp = cp.nodes, gx = cp.cx * 0.022 * a, gy = cp.cy * 0.022 * a, t;
+      var cp = comps[i], mp = cp.nodes, gx = cp.cx * 0.022 * a * gsx, gy = cp.cy * 0.022 * a * gsy, t;
       for (t = 0; t < mp.length; t++) { mp[t].vx -= gx; mp[t].vy -= gy; }
     }
     for (i = 0; i < C; i++) for (j = i + 1; j < C; j++) {
@@ -3564,7 +3573,7 @@ function step() {
   }
   for (i = 0; i < n; i++) {
     var q = N[i];
-    q.vx -= q.x * 0.008 * a; q.vy -= q.y * 0.008 * a;
+    q.vx -= q.x * 0.008 * a * gsx; q.vy -= q.y * 0.008 * a * gsy;
     if (GR.drag && GR.drag.n === q) { q.vx = q.vy = 0; continue; }
     q.vx *= 0.55; q.vy *= 0.55;
     q.x += Math.max(-30, Math.min(30, q.vx)); q.y += Math.max(-30, Math.min(30, q.vy));
