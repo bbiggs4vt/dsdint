@@ -1635,35 +1635,64 @@ void Session::set_iq_logging(bool on) {
     }
 }
 
-void Session::finish_pending_capture() {
-    // Strand-only. Closes the capture file (no-op if none opened) and, if it
-    // actually wrote audio, finalizes the sidecar and enforces the folder cap.
+// How long after the last encrypted event a call is still considered live. A
+// gap longer than this ends the call (its segment is finalized); it matches the
+// model's call-continue window. dsd-fme reasserts the encrypted-call LC / PI
+// header every burst, so a live call updates this far more often than once a
+// second.
+static constexpr std::int64_t kPendHangMs = 4000;
+
+void Session::finalize_pending_segment_locked(std::int64_t now) {
+    // Caller holds pend_mu_. Close the current call's file, write its final
+    // sidecar (complete), and enforce the folder cap. No-op if none is active.
+    if (!pend_cur_active_) return;
+    pend_cur_active_ = false;
+    const std::int64_t last_enc = pend_last_enc_ms_.exchange(0);  // reset so the worker stops polling
     const std::uint64_t bytes = pend_capture_.finish();
-    if (bytes == 0) return;
-    std::string dir;
-    {
-        std::lock_guard<std::mutex> lk(pend_mu_);
-        pend_meta_.bytes = bytes;
-        pend_meta_.ended_ms = AssocModel::now_ms();
-        pend_meta_.complete = true;
-        dir = pend_dir_;
-        PendingStore::write_sidecar(dir, pend_meta_);
-        std::cerr << "net pending: kept " << bytes << " bytes of encrypted-call audio ("
-                  << pend_meta_.algkids << ") -- " << PendingStore::s16_path(dir, pend_meta_.id) << "\n";
-    }
+    pend_cur_.bytes = bytes;
+    pend_cur_.ended_ms = last_enc;                      // the call's last encrypted event
+    pend_cur_.complete = true;
+    const std::string dir = pend_dir_;
+    PendingStore::write_sidecar(dir, pend_cur_);
+    std::cerr << "net pending: kept " << bytes << " bytes of encrypted-call audio ("
+              << pend_cur_.algkids << ") -- " << PendingStore::s16_path(dir, pend_cur_.id) << "\n";
+    (void)now;
     PendingStore::enforce(dir, net_pending_max_bytes());
 }
 
+void Session::finish_pending_capture() {
+    // Strand (stop) / toggle-off. Finalize the call segment in progress, if any.
+    std::lock_guard<std::mutex> lk(pend_mu_);
+    finalize_pending_segment_locked(AssocModel::now_ms());
+}
+
 void Session::note_pending_event(const DsdEvent& ev) {
-    // Reader thread. Arm the capture on the first encrypted call (while the
-    // global switch is on and this unkeyed FM stream is eligible) and record
-    // each distinct alg:key-id seen, so a later key load can be matched to it.
+    // Reader thread. One capture file PER encrypted call: open a new segment on
+    // the first encrypted event (or the first after a gap that ended the last
+    // call), keep it alive while encrypted events arrive, and record each
+    // distinct alg:key-id so a later key load can be matched. The worker and the
+    // strand finalize a segment when the call goes quiet / the stream stops.
     if (!pend_eligible_.load(std::memory_order_relaxed) || !stats_ || !stats_->pending_capture()) return;
     std::string algkid;
     if (!event_is_encrypted(ev, algkid)) return;
-    const bool armed_now = pend_capture_.arm(pend_s16_path_);
+    const std::int64_t now = AssocModel::now_ms();
     std::lock_guard<std::mutex> lk(pend_mu_);
-    bool fresh = false;
+    // A gap since the last encrypted event means the previous call ended.
+    if (pend_cur_active_ && now - pend_last_enc_ms_.load() > kPendHangMs)
+        finalize_pending_segment_locked(now);
+    bool wrote_sidecar = false;
+    if (!pend_cur_active_) {                              // start this call's segment
+        pend_cur_ = pend_tmpl_;
+        pend_cur_.id = "pend_" + std::to_string(now) + "_" + std::to_string(pend_tmpl_.session) +
+                       "_" + std::to_string(++pend_seq_);
+        pend_cur_.started_ms = now;
+        pend_cur_active_ = true;
+        pend_capture_.begin(PendingStore::s16_path(pend_dir_, pend_cur_.id), now + kPendHangMs);
+        PendingStore::write_sidecar(pend_dir_, pend_cur_);   // initial (incomplete)
+        wrote_sidecar = true;
+    } else {
+        pend_capture_.extend(now + kPendHangMs);             // call still going
+    }
     if (!algkid.empty()) {
         auto has_tok = [](const std::string& csv, const std::string& t) {
             std::size_t p = 0;
@@ -1675,13 +1704,13 @@ void Session::note_pending_event(const DsdEvent& ev) {
             }
             return false;
         };
-        if (!has_tok(pend_meta_.algkids, algkid)) {
-            if (!pend_meta_.algkids.empty()) pend_meta_.algkids += ",";
-            pend_meta_.algkids += algkid;
-            fresh = true;
+        if (!has_tok(pend_cur_.algkids, algkid)) {
+            if (!pend_cur_.algkids.empty()) pend_cur_.algkids += ",";
+            pend_cur_.algkids += algkid;
+            if (!wrote_sidecar) { PendingStore::write_sidecar(pend_dir_, pend_cur_); wrote_sidecar = true; }
         }
     }
-    if (armed_now || fresh) PendingStore::write_sidecar(pend_dir_, pend_meta_);
+    pend_last_enc_ms_.store(now);
 }
 
 void Session::set_pending_capture(bool on) {
@@ -2096,29 +2125,26 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
 
         // Deferred-decrypt capture setup. Only an UNKEYED stream is a candidate
         // (a keyed one decodes its encrypted calls live, so there is nothing to
-        // recover later); the actual arming waits until an encrypted call is
-        // seen (on_event), and only while the global switch is on. Prepare the
-        // destination + metadata now so arming on the reader thread is cheap.
+        // recover later). Capture is PER CALL: each encrypted call gets its own
+        // file (opened in note_pending_event, closed when it goes quiet), so a
+        // long idle channel doesn't store a continuous session. Here we just
+        // record the stream's constants (mode, protocol, frequency) that every
+        // call shares, and create the folder up front.
         pipeline_keyed_ = keyed;
         pend_eligible_.store(!keyed && stats_ && stats_id_);
         if (pend_eligible_.load()) {
-            const std::int64_t started = AssocModel::now_ms();
-            const std::string id = "pend_" + std::to_string(started) + "_" + std::to_string(stats_id_);
             pend_dir_ = net_pending_dir();
-            pend_s16_path_ = PendingStore::s16_path(pend_dir_, id);
-            // Create the folder now so the worker's fopen (on the first feed
-            // after arming) can't lose a race with the reader thread's first
-            // sidecar write, which would otherwise be what creates it.
             std::error_code pec;
             std::filesystem::create_directories(pend_dir_, pec);
             std::lock_guard<std::mutex> lk(pend_mu_);
-            pend_meta_ = PendingMeta{};
-            pend_meta_.id = id;
-            pend_meta_.session = stats_id_;
-            pend_meta_.started_ms = started;
-            pend_meta_.mode = dcfg.mode_flag;
-            pend_meta_.protocol = protocol_hint_label(hint);
-            pend_meta_.center_freq_hz = center_freq_ > 0 ? static_cast<std::int64_t>(center_freq_ + freq_offset) : 0;
+            pend_tmpl_ = PendingMeta{};
+            pend_tmpl_.session = stats_id_;
+            pend_tmpl_.mode = dcfg.mode_flag;
+            pend_tmpl_.protocol = protocol_hint_label(hint);
+            pend_tmpl_.center_freq_hz = center_freq_ > 0 ? static_cast<std::int64_t>(center_freq_ + freq_offset) : 0;
+            pend_cur_active_ = false;
+            pend_seq_ = 0;
+            pend_last_enc_ms_.store(0);
         }
 
         bool ok = dsd_.start(dcfg, on_event, on_audio);
@@ -2301,11 +2327,20 @@ void Session::demod_worker_loop() {
             }
             if (!pcm_scratch.empty()) {
                 dsd_.write_audio(pcm_scratch.data(), pcm_scratch.size());
-                // Deferred-decrypt capture: keep the same discriminator audio
-                // (and a rolling preroll) so an encrypted call heard without a
-                // key can be decrypted later. feed() is cheap until armed.
-                if (pend_eligible_.load(std::memory_order_relaxed))
-                    pend_capture_.feed(pcm_scratch.data(), pcm_scratch.size());
+                // Deferred-decrypt capture: keep the discriminator audio of each
+                // encrypted call (with a rolling preroll) so it can be decrypted
+                // later. feed() keeps the preroll ring and appends to the open
+                // call's file; when a call has gone quiet past the hang time,
+                // finalize its segment here so it's promptly closed and complete.
+                if (pend_eligible_.load(std::memory_order_relaxed)) {
+                    const std::int64_t now = AssocModel::now_ms();
+                    pend_capture_.feed(pcm_scratch.data(), pcm_scratch.size(), now);
+                    if (pend_last_enc_ms_.load() && now - pend_last_enc_ms_.load() > kPendHangMs) {
+                        std::lock_guard<std::mutex> lk(pend_mu_);
+                        if (pend_cur_active_ && now - pend_last_enc_ms_.load() > kPendHangMs)
+                            finalize_pending_segment_locked(now);
+                    }
+                }
             }
         }
     }

@@ -621,16 +621,20 @@ afterwards — say an operator loads it on the radio but hasn't told you yet —
 - **What is kept.** Not "the ciphertext" — dsd-server doesn't decrypt anything
   itself; the external decoder (dsd-fme) does, from the discriminator audio the
   server feeds it, using the key it was given at start. The key only changes how
-  that same audio is decoded, so the server keeps **the discriminator audio of
-  the session** (48 kHz mono, about 96 KB/s). Replaying it through the decoder
-  with the key present then recovers the voice — no re-tuning needed.
+  that same audio is decoded, so the server keeps **that discriminator audio**
+  (48 kHz mono, about 96 KB/s). Replaying it through the decoder with the key
+  present then recovers the voice — no re-tuning needed.
+- **One file per call.** Capture is **per call**, not per session: each
+  encrypted call gets its own file (its voice plus a ~3 s lead-in and a short
+  tail), and the idle/clear time between calls is not stored. So an always-up
+  trunking channel costs roughly *(encrypted call time) × 96 KB/s*, not a flat
+  96 KB/s for as long as the channel is up.
 - **Turning it on.** **Pending ▾ → Capture encrypted calls without a key.**
-  Capture begins only once an encrypted call with no key is actually heard on a
-  stream, and runs for the rest of that stream's session; a stream that already
-  has a key decodes live and is never captured. The switch is remembered across
-  restarts, and can be set from startup with `DSD_NET_PENDING_CAPTURE=1`
-  (`=0` never). You must enable it **before** the calls happen — it can't go
-  back in time.
+  A capture is made whenever an encrypted call with no key is heard; a stream
+  that already has a key decodes live and is never captured. The switch is
+  remembered across restarts, and can be set from startup with
+  `DSD_NET_PENDING_CAPTURE=1` (`=0` never). You must enable it **before** the
+  calls happen — it can't go back in time.
 - **The list.** The menu shows each kept capture: when it started, the protocol
   and channel, its length and size, and the **alg:key-id** pairs seen in it
   (the ids a matching key must cover). Captures are kept until you remove one

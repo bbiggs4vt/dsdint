@@ -77,15 +77,15 @@ int main() {
     {
         PendingCapture cap;
         std::vector<int16_t> pre(1000);
-        for (int i = 0; i < 1000; ++i) pre[i] = static_cast<int16_t>(i);  // 0..999 before arming
-        cap.feed(pre.data(), pre.size());
-        check(!cap.is_open(), "writer: not open before arm");
+        for (int i = 0; i < 1000; ++i) pre[i] = static_cast<int16_t>(i);  // 0..999 before the call
+        cap.feed(pre.data(), pre.size(), /*now=*/0);
+        check(!cap.is_open(), "writer: not open before begin");
         const std::string path = PendingStore::s16_path(dir, "pend_a");
-        check(cap.arm(path), "writer: arm() succeeds the first time");
-        check(!cap.arm(path), "writer: arm() is idempotent (second call no-op)");
+        cap.begin(path, /*keep_until=*/1000000);
+        check(cap.is_open(), "writer: begin() opens a segment (pending)");
         std::vector<int16_t> post(500);
         for (int i = 0; i < 500; ++i) post[i] = static_cast<int16_t>(2000 + i);
-        cap.feed(post.data(), post.size());  // opens the file, flushes preroll, then streams
+        cap.feed(post.data(), post.size(), /*now=*/10);  // opens the file, flushes preroll, then streams
         const std::uint64_t bytes = cap.finish();
         check(bytes == (1000 + 500) * 2, "writer: wrote preroll + streamed audio");
         auto got = read_s16(path);
@@ -100,11 +100,11 @@ int main() {
         const std::size_t extra = 10;
         std::vector<int16_t> pre(PendingCapture::kPrerollSamples + extra);
         for (std::size_t i = 0; i < pre.size(); ++i) pre[i] = static_cast<int16_t>(i & 0x7fff);
-        cap.feed(pre.data(), pre.size());             // overfills the ring by `extra`
+        cap.feed(pre.data(), pre.size(), 0);          // overfills the ring by `extra`
         const std::string path = PendingStore::s16_path(dir, "pend_b");
-        cap.arm(path);
+        cap.begin(path, 1000000);
         int16_t one = 12345;
-        cap.feed(&one, 1);                            // opens + flushes the (wrapped) ring, then streams one
+        cap.feed(&one, 1, 1);                         // opens + flushes the (wrapped) ring, then streams one
         const std::uint64_t bytes = cap.finish();
         check(bytes == (PendingCapture::kPrerollSamples + 1) * 2, "writer: wrapped ring keeps exactly kPrerollSamples + stream");
         auto got = read_s16(path);
@@ -112,6 +112,30 @@ int main() {
         // Oldest retained sample is index `extra` (the first `extra` were evicted).
         check(!got.empty() && got[0] == static_cast<int16_t>(extra & 0x7fff), "writer: oldest `extra` samples evicted");
         check(got.back() == 12345, "writer: streamed sample is last");
+    }
+
+    // ---- writer: per-call segments -- idle audio past the deadline is NOT
+    //      written to the open file, and a second call makes a separate file ----
+    {
+        PendingCapture cap;
+        std::vector<int16_t> a(1000, 1), idle(1000, 2), b(1000, 3);
+        const std::string pA = PendingStore::s16_path(dir, "pend_c1");
+        cap.begin(pA, /*keep_until=*/1000);
+        cap.feed(a.data(), a.size(), /*now=*/0);          // active: opens + writes a (ring was empty -> no preroll)
+        cap.feed(idle.data(), idle.size(), /*now=*/5000); // now > keep_until: idle, NOT written to the file
+        const std::uint64_t ba = cap.finish();
+        auto ga = read_s16(pA);
+        check(ba == 1000 * 2, "writer: idle audio past the deadline is not written");
+        check(ga.size() == 1000 && ga.front() == 1 && ga.back() == 1, "writer: call 1 file holds only the call");
+
+        const std::string pB = PendingStore::s16_path(dir, "pend_c2");
+        cap.begin(pB, /*keep_until=*/8000);
+        cap.feed(b.data(), b.size(), /*now=*/6000);       // opens a NEW file; preroll = ring (a + idle)
+        const std::uint64_t bb = cap.finish();
+        auto gb = read_s16(pB);
+        check(bb == 3000 * 2, "writer: call 2 is a separate file with its own preroll");
+        check(gb.size() == 3000 && gb[0] == 1 && gb[1000] == 2 && gb[2000] == 3,
+              "writer: call 2 = rolling preroll (prev tail + gap) then its own audio");
     }
 
     // ---- writer: finish() with nothing fed writes no file ----

@@ -235,19 +235,28 @@ private:
 
     // Deferred-decrypt capture (pending_capture.hpp). When the global switch
     // (ServerStats::pending_capture) is on and this FM stream has no key, the
-    // discriminator audio is kept so an encrypted call heard here can be
-    // decrypted later, once a key is loaded. The writer is touched from three
-    // threads (worker feeds it, the dsd-fme reader arms it, the strand finishes
-    // it) and is internally synchronized. pend_meta_ is built on the strand at
-    // start, appended to from the reader thread as encrypted alg:kid pairs are
-    // seen, and finalized on the strand at stop, so pend_mu_ guards it.
+    // discriminator audio of each encrypted call is kept (one file per call) so
+    // it can be decrypted later, once a key is loaded. The writer is touched
+    // from three threads (worker feeds it and finalizes an idle call, the
+    // dsd-fme reader opens/extends a call, the strand finishes at stop) and is
+    // internally synchronized. pend_cur_/pend_cur_active_/pend_seq_ (the current
+    // call) are built on the reader thread and read on the worker/strand, so
+    // pend_mu_ guards them; pend_tmpl_ (set once at start) holds what every call
+    // of the stream shares.
     PendingCapture pend_capture_;
     bool pipeline_keyed_ = false;              // strand: a key was handed to this stream
     std::atomic<bool> pend_eligible_{false};   // unkeyed FM stream: capture is possible
+    std::atomic<std::int64_t> pend_last_enc_ms_{0};  // last encrypted event (worker reads it to finalize an idle call)
     std::mutex pend_mu_;
-    PendingMeta pend_meta_;                    // guarded by pend_mu_
-    std::string pend_s16_path_;                // set at start (strand), read at arm (reader)
-    std::string pend_dir_;                     // capture folder; set at start
+    PendingMeta pend_tmpl_;                     // this stream's constants (mode, protocol, freq); set at start
+    PendingMeta pend_cur_;                      // the current call's metadata; guarded by pend_mu_
+    bool pend_cur_active_ = false;              // a call segment is open; guarded by pend_mu_
+    unsigned pend_seq_ = 0;                     // per-session call counter; guarded by pend_mu_
+    std::string pend_dir_;                      // capture folder; set at start
+    // Close the current call's capture segment: write its final sidecar and
+    // enforce the folder cap. Caller holds pend_mu_. Used by the reader (a new
+    // call after a gap), the worker (the call went idle) and the strand (stop).
+    void finalize_pending_segment_locked(std::int64_t now);
     // Apply the global deferred-decrypt switch to this session (arm-eligibility;
     // finalizes an open capture when turned off). Posted to the strand by
     // ServerStats::set_pending_capture.

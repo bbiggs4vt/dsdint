@@ -39,70 +39,94 @@
 
 namespace dsdsrv {
 
-// Live capture of one session's discriminator audio (48 kHz S16LE mono -- the
-// exact bytes written to dsd-fme's stdin). Thread-safe: feed() runs on the
-// demod worker thread, arm() on the dsd-fme reader thread (from the event
-// callback that first sees an encrypted call), finish() on the session strand
-// at stop. The preroll ring is touched only by feed(), so it needs no lock; the
-// mutex guards the file handle / byte count shared with arm() and finish().
+// Per-call capture of the discriminator audio (48 kHz S16LE mono -- the exact
+// bytes written to dsd-fme's stdin). One file per encrypted call, not per
+// session: on a long-lived channel that would otherwise store a fixed 96 KB/s
+// of mostly-idle audio, so only each call's span is kept (plus a ~3 s preroll
+// so its start isn't clipped, and a short tail).
+//
+// A call is a run of encrypted events; begin() opens its file (the next feed()
+// flushes the preroll), extend() pushes the write deadline out as events keep
+// arriving, and when the deadline passes feed() stops appending -- finish()
+// then closes it. A rolling preroll ring is kept CONTINUOUSLY (even between and
+// during calls) so the next call always has its lead-in.
+//
+// Thread-safe: feed() runs on the demod worker thread; begin()/extend()/finish()
+// on the dsd-fme reader thread (the encrypted-event callback), on the worker
+// (idle finalize) and on the strand (stop). The mutex guards all shared state.
 class PendingCapture {
 public:
     static constexpr int kRate = 48000;                        // S16LE mono
     static constexpr std::size_t kPrerollSamples = kRate * 3;  // ~3 s of lead-in
 
-    // Worker thread. Before arming, keeps the last ~3 s in a preroll ring; the
-    // opening feed flushes that preroll (the audio BEFORE this block, in
-    // chronological order) and then this block; subsequent feeds just append.
-    void feed(const int16_t* pcm, std::size_t n) {
+    // Worker thread. `now_ms` is the current time (same clock as begin/extend).
+    // Opens a pending segment (flushing the preroll), appends while the call is
+    // active (now <= keep_until), and always keeps the preroll ring current so
+    // the next call has its lead-in.
+    void feed(const int16_t* pcm, std::size_t n, std::int64_t now_ms) {
         std::lock_guard<std::mutex> lk(mu_);
-        if (fp_) {                                   // already streaming: ring no longer needed
-            bytes_ += std::fwrite(pcm, sizeof(int16_t), n, fp_) * sizeof(int16_t);
-            return;
-        }
-        if (armed_.load(std::memory_order_relaxed) && !open_path_.empty()) {
+        if (!fp_ && pending_open_) {
             fp_ = std::fopen(open_path_.c_str(), "wb");
+            pending_open_ = false;
             if (fp_) {
-                flush_ring_locked();                 // preroll: everything up to (not incl.) this block
+                bytes_ = 0;
+                flush_ring_locked();                       // preroll: audio BEFORE this block
                 bytes_ += std::fwrite(pcm, sizeof(int16_t), n, fp_) * sizeof(int16_t);
+                ring_push_locked(pcm, n);                  // keep the ring current for the next call too
                 return;
             }
-            armed_.store(false, std::memory_order_release);   // open failed: give up, keep ringing
-            open_path_.clear();
+            open_path_.clear();                            // open failed: fall through to ringing
         }
-        // Not yet open: maintain the rolling preroll ring.
+        if (fp_ && now_ms <= keep_until_ms_) {             // active call: append
+            bytes_ += std::fwrite(pcm, sizeof(int16_t), n, fp_) * sizeof(int16_t);
+        }
+        // Idle (fp_ open past the deadline) or no call: just keep the ring rolling.
+        ring_push_locked(pcm, n);
+    }
+
+    // Reader thread. Start a new segment written to `path`, active until
+    // `keep_until_ms`. The caller guarantees no segment is currently open
+    // (finish() the previous one first).
+    void begin(const std::string& path, std::int64_t keep_until_ms) {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (fp_ || pending_open_) return;                  // already have one
+        open_path_ = path;
+        keep_until_ms_ = keep_until_ms;
+        pending_open_ = true;
+    }
+    // Reader thread. The call is still going: push the write deadline out.
+    void extend(std::int64_t keep_until_ms) {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (keep_until_ms > keep_until_ms_) keep_until_ms_ = keep_until_ms;
+    }
+
+    bool is_open() const { std::lock_guard<std::mutex> lk(mu_); return fp_ != nullptr || pending_open_; }
+    std::uint64_t bytes() const { std::lock_guard<std::mutex> lk(mu_); return bytes_; }
+
+    // Close the current segment; returns its bytes (0 if it never opened). A
+    // segment that was armed but never fed is flushed (its preroll) so a call
+    // armed right at a stop isn't lost. Safe to call repeatedly.
+    std::uint64_t finish() {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (!fp_ && pending_open_ && !open_path_.empty()) {
+            fp_ = std::fopen(open_path_.c_str(), "wb");
+            if (fp_) { bytes_ = 0; flush_ring_locked(); }
+        }
+        pending_open_ = false;
+        open_path_.clear();
+        const std::uint64_t b = bytes_;
+        if (fp_) { std::fclose(fp_); fp_ = nullptr; }
+        return b;
+    }
+
+private:
+    void ring_push_locked(const int16_t* pcm, std::size_t n) {
         if (ring_.capacity() < kPrerollSamples) ring_.reserve(kPrerollSamples);
         for (std::size_t i = 0; i < n; ++i) {
             if (ring_.size() < kPrerollSamples) ring_.push_back(pcm[i]);
             else { ring_[ring_head_] = pcm[i]; ring_head_ = (ring_head_ + 1) % kPrerollSamples; }
         }
     }
-
-    // Reader thread. Idempotent: the first call records the target path and
-    // arms; later calls (and calls after finish()) are no-ops, returning false.
-    // Returns true only on the call that actually arms a fresh capture.
-    bool arm(const std::string& s16_path) {
-        std::lock_guard<std::mutex> lk(mu_);
-        if (armed_.load(std::memory_order_relaxed) || fp_) return false;
-        open_path_ = s16_path;
-        armed_.store(true, std::memory_order_release);
-        return true;
-    }
-
-    bool armed() const { return armed_.load(std::memory_order_acquire); }
-    bool is_open() const { std::lock_guard<std::mutex> lk(mu_); return fp_ != nullptr; }
-    std::uint64_t bytes() const { std::lock_guard<std::mutex> lk(mu_); return bytes_; }
-
-    // Strand. Close the file; returns bytes written (0 if never opened). Safe to
-    // call repeatedly. Leaves the ring intact (a later arm reuses it as preroll).
-    std::uint64_t finish() {
-        std::lock_guard<std::mutex> lk(mu_);
-        if (fp_) { std::fclose(fp_); fp_ = nullptr; }
-        armed_.store(false, std::memory_order_release);
-        open_path_.clear();
-        return bytes_;
-    }
-
-private:
     void flush_ring_locked() {
         if (ring_.empty()) return;
         if (ring_.size() < kPrerollSamples) {
@@ -116,13 +140,14 @@ private:
     }
 
     mutable std::mutex mu_;
-    std::FILE* fp_ = nullptr;      // guarded by mu_
-    std::string open_path_;        // guarded by mu_
-    std::uint64_t bytes_ = 0;      // guarded by mu_
-    std::atomic<bool> armed_{false};
+    std::FILE* fp_ = nullptr;          // guarded by mu_
+    std::string open_path_;            // guarded by mu_
+    std::uint64_t bytes_ = 0;          // guarded by mu_ (current segment)
+    bool pending_open_ = false;        // guarded by mu_: begin() waiting for a feed to open
+    std::int64_t keep_until_ms_ = 0;   // guarded by mu_: append while now <= this
 
-    std::vector<int16_t> ring_;    // worker-thread-only
-    std::size_t ring_head_ = 0;    // worker-thread-only
+    std::vector<int16_t> ring_;        // guarded by mu_ (touched only in feed)
+    std::size_t ring_head_ = 0;        // guarded by mu_
 };
 
 // One stored capture's metadata, kept in a flat sidecar JSON next to the .s16

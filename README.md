@@ -726,13 +726,15 @@ calls without a key** keeps the call so it can be decrypted afterward. The
 server doesn't decrypt itself — dsd-fme does, from the discriminator audio the
 server feeds it — and the key only changes how that audio is decoded, so what
 is kept is **that 48 kHz discriminator audio** (~96 KB/s), replayable through
-the decoder once the key is loaded. Capture starts only when an encrypted-no-key
-call is actually heard and runs to the session's end; a keyed stream is never
-captured. Kept captures (their time, channel, size and the `alg:key-id` pairs
-seen) are listed in the menu and kept until removed, under `DSD_NET_PENDING_DIR`
-(default `net_pending/`), capped by `DSD_NET_PENDING_MAX_MB` (default 8192,
-`0` = none); `DSD_NET_PENDING_CAPTURE=1` turns capture on from startup. No key
-values are ever stored in a capture.
+the decoder once the key is loaded. Capture is **per call** — each encrypted
+call gets its own file (its voice plus a ~3 s lead-in and a short tail), and the
+idle time between calls isn't stored, so an always-up trunking channel costs
+roughly *(encrypted call time) × 96 KB/s* rather than a flat rate for as long as
+it's up. A keyed stream is never captured. Kept captures (their time, channel,
+size and the `alg:key-id` pairs seen) are listed in the menu and kept until
+removed, under `DSD_NET_PENDING_DIR` (default `net_pending/`), capped by
+`DSD_NET_PENDING_MAX_MB` (default 8192, `0` = none); `DSD_NET_PENDING_CAPTURE=1`
+turns capture on from startup. No key values are ever stored in a capture.
 
 Once you load the matching key, the explorer says how many captures it can now
 decrypt; **Pending ▾ → Decrypt** replays a capture through a fresh dsd-fme with
