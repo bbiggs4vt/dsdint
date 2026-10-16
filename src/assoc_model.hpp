@@ -457,6 +457,21 @@ public:
         } else {
             cur = fresh_call(c, F, slot, now);
         }
+        // A voice burst that carries no ids of its own must not convert a data
+        // transaction on this slot into a "voice" call. On a Capacity Plus
+        // channel a confirmed individual-data exchange (e.g. an ARS / LRRP /
+        // text-message gateway ACKing a radio) keeps the slot's call open while,
+        // in the same window, an unrelated voice call is heard whose link
+        // control is FEC-corrupted and never yields a source/target. Those
+        // target-less voice frames fell back to the slot's latest call -- the
+        // data call -- and flipped it to voice, gluing the (low-quality) audio
+        // onto the data endpoint. Leave the data transaction alone: a genuine
+        // voice call opens on whatever channel decodes its LC cleanly, and this
+        // slot's unattributable audio is dropped by the data-only guard below.
+        if (cur && cur->data && !cur->voice && src.empty() && tgt.empty() &&
+            (ev.kind == "voice" || (ev.kind == "sync" && is_voice_sync(up)) ||
+             (ev.kind == "call" && has(" " + up, " AMBE "))))
+            cur = nullptr;
         if (cur && !src.empty() && !cur->src.empty() && src != cur->src) {
             close_call(F, *cur);                 // same target, new talker -> new call
             cur = nullptr;
