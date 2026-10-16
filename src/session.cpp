@@ -1547,7 +1547,15 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
                 .field("raw", ev.raw_line)
                 .str();
             net::post(ex, [weak_self, s = std::move(s)] {
-                if (auto self = weak_self.lock()) self->send_text(s);
+                if (auto self = weak_self.lock()) {
+                    // A page decoded: mark data flow so the status page's "last
+                    // data" column advances (the dsd / tetra paths do this via
+                    // note_data; paging has no network-explorer ingest, but a
+                    // page is still data on the stream). On the strand, where
+                    // holding self is already safe -- unlike the reader thread.
+                    if (self->stats_ && self->stats_id_) self->stats_->note_data(self->stats_id_);
+                    self->send_text(s);
+                }
             });
         };
         auto on_exit = [weak_self, ex] {
