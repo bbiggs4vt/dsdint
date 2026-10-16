@@ -679,7 +679,9 @@ or talkgroup's recent calls.
   when its call ends. Calls without voice (SMS, data) never get a file.
 - **Encrypted calls are never recorded** (unless the session was started with
   the key, so the call is heard in the clear). A call found to be encrypted
-  after its audio began loses the file.
+  after its audio began loses the file. An encrypted call heard **without** a
+  key can instead be *kept for later decryption* — see **Deferred decryption**
+  below.
 - Files go to `DSD_NET_AUDIO_DIR`, else `net_audio/` under the recording
   directory (`/captures/net_audio` in the Docker image). The total is capped
   by `DSD_NET_AUDIO_MAX_MB` (default 1024 MB, about 18 hours of speech): the
@@ -714,6 +716,24 @@ In the **Calls** view:
   **With audio only**.
 - The call playing stays in a bar at the bottom of the window (time, channel,
   who, progress, download), however fast the list moves.
+
+### Deferred decryption
+
+An encrypted call heard on a stream with **no key** can't be decoded as it
+happens, so its voice is normally dropped. When you expect the key later (an
+operator loads it but hasn't shared it yet), **Pending ▾ → Capture encrypted
+calls without a key** keeps the call so it can be decrypted afterward. The
+server doesn't decrypt itself — dsd-fme does, from the discriminator audio the
+server feeds it — and the key only changes how that audio is decoded, so what
+is kept is **that 48 kHz discriminator audio** (~96 KB/s), replayable through
+the decoder once the key is loaded. Capture starts only when an encrypted-no-key
+call is actually heard and runs to the session's end; a keyed stream is never
+captured. Kept captures (their time, channel, size and the `alg:key-id` pairs
+seen) are listed in the menu and kept until removed, under `DSD_NET_PENDING_DIR`
+(default `net_pending/`), capped by `DSD_NET_PENDING_MAX_MB` (default 8192,
+`0` = none); `DSD_NET_PENDING_CAPTURE=1` turns capture on from startup. No key
+values are ever stored in a capture. Only do this for systems you are
+authorized to monitor.
 
 ### Speech-to-text
 

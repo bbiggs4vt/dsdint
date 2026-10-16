@@ -48,6 +48,7 @@ net_merges.json
 net_settings.json
 net_keys.json
 net_audio/
+net_pending/
 net_asr/
 # Recorded decoder input / replay captures.
 *.jsonl

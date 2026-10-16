@@ -594,7 +594,9 @@ What gets recorded:
   receivers is recorded once.
 - **Never**: silence (no file without audible audio; recordings under 0.2 s
   are deleted), data calls (SMS, private data), and **encrypted calls**
-  (unless the session has the key).
+  (unless the session has the key). An encrypted call heard without a key can
+  instead be *kept for later* decryption — see
+  [Keeping encrypted calls for later](#keeping-encrypted-calls-for-later-pending).
 - Disk use is capped (1 GB by default, about 18 hours of speech); the oldest
   files go first. A call keeps its place in the list for as long as its audio
   is on disk — so this disk limit, not the 10000 call count, is what bounds how
@@ -608,6 +610,42 @@ What gets recorded:
 
 Rules on keeping intercepted communications differ from place to place;
 check what applies to you before switching audio on.
+
+### Keeping encrypted calls for later (Pending)
+
+An encrypted call heard on a stream that has **no key** can't be decoded while
+it happens, so its voice is normally discarded. If you expect to obtain the key
+afterwards — say an operator loads it on the radio but hasn't told you yet — the
+**Pending ▾** menu keeps the call so it can be **decrypted after the fact**.
+
+- **What is kept.** Not "the ciphertext" — dsd-server doesn't decrypt anything
+  itself; the external decoder (dsd-fme) does, from the discriminator audio the
+  server feeds it, using the key it was given at start. The key only changes how
+  that same audio is decoded, so the server keeps **the discriminator audio of
+  the session** (48 kHz mono, about 96 KB/s). Replaying it through the decoder
+  with the key present then recovers the voice — no re-tuning needed.
+- **Turning it on.** **Pending ▾ → Capture encrypted calls without a key.**
+  Capture begins only once an encrypted call with no key is actually heard on a
+  stream, and runs for the rest of that stream's session; a stream that already
+  has a key decodes live and is never captured. The switch is remembered across
+  restarts, and can be set from startup with `DSD_NET_PENDING_CAPTURE=1`
+  (`=0` never). You must enable it **before** the calls happen — it can't go
+  back in time.
+- **The list.** The menu shows each kept capture: when it started, the protocol
+  and channel, its length and size, and the **alg:key-id** pairs seen in it
+  (the ids a matching key must cover). Captures are kept until you remove one
+  (**✕**) or **Clear all captures** — they are not pruned by age. A generous
+  disk cap (`DSD_NET_PENDING_MAX_MB`, default 8192 MB; `0` = no cap) evicts the
+  oldest only if reached. Captures live under `DSD_NET_PENDING_DIR` (default
+  `net_pending/` in the recordings folder) and never contain key values.
+- **Decrypting a kept call.** Load the matching key (Keys tab, or
+  **+ Add a key manually**), then decrypt the capture with that key — the
+  recovered call joins the explorer like any other. *(The capture and this
+  review step are described together here; the one-click prompt that offers to
+  decrypt matching captures the moment a key is loaded is being wired next.)*
+
+Only capture and decrypt traffic on systems you are **authorized to monitor**,
+and mind the same local rules that apply to recording audio.
 
 ## 11. Speech-to-text
 
@@ -840,6 +878,9 @@ Server environment variables that affect the explorer (details in the README):
 | `DSD_NET_AUDIO_DIR` | `net_audio/` in the log dir | Where call audio goes. |
 | `DSD_NET_AUDIO_VIZ` | on | `0` (or `off`) hides the player bar's seek slider and spectrogram for everyone, leaving a plain progress bar; a browser can still turn them back on with the **Spectrogram** tick. All drawing is client-side regardless. |
 | `DSD_NET_AUDIO_MAX_MB` / `DSD_NET_AUDIO_MAX_AGE_H` | 1024 / none | Audio disk cap and maximum age. |
+| `DSD_NET_PENDING_CAPTURE` | (as last left) | `1` keeps encrypted calls heard without a key (for later decryption) from startup, `0` never; unset, the **Pending** switch is remembered across restarts. |
+| `DSD_NET_PENDING_DIR` | `net_pending/` in the log dir | Where kept encrypted-call audio goes (no key values). |
+| `DSD_NET_PENDING_MAX_MB` | 8192 | Disk cap for kept captures (`0` = no cap); the oldest go first when reached. Captures are otherwise kept until cleared by hand. |
 | `DSD_NET_IMPORT_AUDIO_MAX_MB` | 1024 | Cap on audio uploaded with imported "export with audio" zips (kept in `imported/` under the audio dir, emptied at startup). |
 | `DSD_NET_KEYS_FILE` | `net_keys.json` in the log dir | The encryption keyring (key values; owner-only). |
 | `DSD_NET_NO_APPLY_KEYS` | (unset) | Set to keep the keyring for download only — do not hand it to the server's own dsd-fme decoder. |

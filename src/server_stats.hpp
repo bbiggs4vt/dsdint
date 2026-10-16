@@ -163,6 +163,35 @@ public:
         iq_controls_.erase(id);
     }
 
+    // Deferred-decrypt capture switch (pending_capture.hpp): when on, a session
+    // that hears an encrypted call it has no key for keeps the discriminator
+    // audio so the call can be decrypted later, once a key is loaded. Mirrors
+    // the IQ-logging switch: a global flag, fanned out to each session's
+    // registered control, and read by new sessions at start.
+    bool pending_capture() const {
+        std::lock_guard<std::mutex> lk(mu_);
+        return pending_capture_;
+    }
+    void register_pending_control(std::uint64_t id, std::function<void(bool)> fn) {
+        std::lock_guard<std::mutex> lk(mu_);
+        pending_controls_[id] = std::move(fn);
+    }
+    void unregister_pending_control(std::uint64_t id) {
+        std::lock_guard<std::mutex> lk(mu_);
+        pending_controls_.erase(id);
+    }
+    bool set_pending_capture(bool on) {
+        std::vector<std::function<void(bool)>> controls;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            pending_capture_ = on;
+            controls.reserve(pending_controls_.size());
+            for (const auto& kv : pending_controls_) controls.push_back(kv.second);
+        }
+        for (auto& fn : controls) fn(on); // off-lock: each just posts to a strand
+        return on;
+    }
+
     // Session registers (on connect) a callback that restarts its decode
     // pipeline so the decoder re-reads the keyring (applied as a dsd-fme -K
     // list at start). Returns true if it will restart (an active FM/DSD
@@ -306,6 +335,7 @@ public:
         if (it == sessions_.end()) return;
         if (it->second.active) close_active_locked(it->second);
         iq_controls_.erase(id); // session gone: drop its capture control
+        pending_controls_.erase(id); // and its deferred-decrypt control
         key_reloads_.erase(id); // and its key-reload control
         FinishedRow f;
         f.id = it->second.id;
@@ -403,6 +433,8 @@ private:
     std::deque<LogEntry> log_;
     bool iq_logging_ = false;                                   // global IQ-capture switch
     std::map<std::uint64_t, std::function<void(bool)>> iq_controls_; // per-session appliers
+    bool pending_capture_ = false;                              // global deferred-decrypt capture switch
+    std::map<std::uint64_t, std::function<void(bool)>> pending_controls_; // per-session appliers
     std::map<std::uint64_t, std::function<bool()>> key_reloads_;      // per-session pipeline restart
     AssocModel assoc_;                                          // network explorer model
     std::size_t history_limit_;

@@ -210,6 +210,13 @@ target_compile_options(test_blue_writer PRIVATE -Wall -Wextra)
 add_test(NAME blue_writer_test COMMAND test_blue_writer)
 set_tests_properties(blue_writer_test PROPERTIES TIMEOUT 30)
 
+# Deferred-decrypt capture writer + store (header-only, in src/). Filesystem I/O.
+add_executable(test_pending_capture EXCLUDE_FROM_ALL tests/test_pending_capture.cpp)
+target_include_directories(test_pending_capture PRIVATE src)
+target_compile_options(test_pending_capture PRIVATE -Wall -Wextra)
+add_test(NAME pending_capture_test COMMAND test_pending_capture)
+set_tests_properties(pending_capture_test PROPERTIES TIMEOUT 30)
+
 # Network explorer association model (header-only, in src/), fed real dsd-fme
 # line formats through the real classifier.
 add_executable(test_assoc_model EXCLUDE_FROM_ALL

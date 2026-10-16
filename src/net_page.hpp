@@ -82,6 +82,22 @@ inline std::string render_net_page_html() {
                         border-bottom: 1px solid var(--comp-bd); cursor: pointer; user-select: none; }
   .menu label.expfilt input { margin-right: .4rem; vertical-align: middle; cursor: pointer; }
   .menu label.expfilt small { display: block; color: var(--muted); font-size: .72rem; margin-left: 1.3rem; }
+  .menu.wide { min-width: 22rem; max-width: 24rem; }
+  .menu label.pendtoggle { display: block; padding: .45rem .8rem; color: var(--heading); font-size: .9rem;
+                           border-bottom: 1px solid var(--comp-bd); cursor: pointer; user-select: none; }
+  .menu label.pendtoggle input { margin-right: .4rem; vertical-align: middle; cursor: pointer; }
+  .menu label.pendtoggle small { display: block; color: var(--muted); font-size: .72rem; margin-left: 1.3rem; }
+  .pendlist { max-height: 15rem; overflow-y: auto; }
+  .pendempty { padding: .5rem .8rem; color: var(--muted); font-size: .78rem; }
+  .pendrow { display: flex; align-items: flex-start; gap: .5rem; padding: .4rem .8rem; border-bottom: 1px solid var(--comp-bd); }
+  .pendrow:last-child { border-bottom: 0; }
+  .pendrow .pi { flex: 1 1 auto; min-width: 0; font-size: .78rem; color: var(--heading); }
+  .pendrow .pi small { display: block; color: var(--muted); font-size: .7rem; }
+  .pendrow .algk { display: inline-block; background: rgba(230,194,41,.16); color: #e6c229; border-radius: 3px;
+                   padding: 0 .3rem; margin: .15rem .2rem 0 0; font-size: .68rem; font-family: var(--mono, monospace); }
+  .pendrow .px { flex: 0 0 auto; color: var(--muted); cursor: pointer; text-decoration: none; font-size: .95rem; padding: 0 .2rem; }
+  .pendrow .px:hover { color: var(--danger, #e06c75); }
+  .menu a.penddanger { color: var(--danger, #e06c75); border-top: 1px solid var(--comp-bd); }
   .filebar { background: #2c4a56; border: 1px solid var(--info); color: var(--heading); border-radius: 4px;
              padding: .5rem .8rem; margin-bottom: .9rem; display: flex; flex-wrap: wrap; gap: .4rem .8rem;
              align-items: center; }
@@ -600,6 +616,14 @@ inline std::string render_net_page_html() {
         <a href="#" id="clr-data">Learned data<small>calls, talkgroups, radios &amp; networks (and imports) &middot; keeps keys &amp; merges</small></a>
         <a href="#" id="clr-merges">Network merges<small>unmerge every merged network, all protocols</small></a>
         <a href="#" id="clr-keys">Encryption keys<small>remove every stored key, all protocols &middot; cannot be undone</small></a>
+      </div>
+    </span>
+    <span class="dropdown live-only">
+      <button id="pend" class="btn" type="button" title="Keep the audio of encrypted calls heard without a key, so they can be decrypted later once you load the key">Pending &#9662;</button>
+      <div id="pendmenu" class="menu wide" hidden>
+        <label class="pendtoggle"><input type="checkbox" id="pend-on"> Capture encrypted calls without a key<small>keeps the raw call audio so it can be decrypted later, once you load the matching key &middot; stored on the server until cleared</small></label>
+        <div id="pendlist" class="pendlist"><div class="pendempty">&hellip;</div></div>
+        <a href="#" id="pend-clear" class="penddanger" hidden>Clear all captures<small>delete every stored encrypted-call capture &middot; cannot be undone</small></a>
       </div>
     </span>
     <span class="dropdown live-only">
@@ -4958,11 +4982,74 @@ function clearAllKeys() {
   chain.then(function () { render(); toast('Removed ' + jobs.length + ' key' + (jobs.length > 1 ? 's' : '') + '.'); },
              function () { render(); toast('Could not remove all keys (some may remain).'); });
 }
+// Deferred-decrypt capture (pending_capture.hpp): the Pending menu toggles
+// keeping the audio of encrypted calls heard without a key, and lists what has
+// been kept so it can be decrypted later once the key is loaded.
+function renderPending(d) {
+  var on = !!(d && d.enabled), caps = (d && d.captures) || [];
+  $('pend-on').checked = on;
+  var b = $('pend');
+  b.classList.toggle('on', on);
+  b.textContent = 'Pending' + (caps.length ? ' (' + caps.length + ')' : '') + ' ▾';
+  var list = $('pendlist'); list.textContent = '';
+  if (!caps.length) {
+    list.appendChild(h('div', { class: 'pendempty', text: on
+      ? 'No encrypted calls captured yet. A capture appears here when an encrypted call is heard on a stream that has no key.'
+      : 'Off. Turn on to keep the audio of encrypted calls heard without a key, so they can be decrypted later once you load the matching key.' }));
+    $('pend-clear').hidden = true;
+    return;
+  }
+  caps.forEach(function (c) {
+    var meta = (c.protocol ? c.protocol.toUpperCase() : '?') + (c.center_freq_hz ? ' · ' + mhz(c.center_freq_hz) : '');
+    var info = h('div', { class: 'pi' }, [
+      h('span', { text: dt(c.started_ms) }),
+      h('small', { text: meta + ' · ' + dur((c.seconds || 0) * 1000) + ' · ' + mb(c.bytes || 0) + (c.complete ? '' : ' · in progress') })
+    ]);
+    (c.algkids || []).forEach(function (ak) { info.appendChild(h('span', { class: 'algk', text: ak })); });
+    list.appendChild(h('div', { class: 'pendrow' }, [
+      info,
+      h('a', { class: 'px', href: '#', title: 'Delete this capture', text: '✕',
+               onclick: function (e) { e.preventDefault(); removePending(c.id); } })
+    ]));
+  });
+  $('pend-clear').hidden = false;
+}
+function loadPending() {
+  return fetch('/net/pending/list', { cache: 'no-store' }).then(function (r) { return r.json(); })
+    .then(renderPending).catch(function () {});
+}
+function togglePending() {
+  var on = $('pend-on').checked;
+  fetch('/net/pending/' + (on ? 'on' : 'off'), { cache: 'no-store' }).then(function (r) { return r.json(); })
+    .then(function () { loadPending(); toast(on ? 'Keeping encrypted calls heard without a key.' : 'Stopped capturing encrypted calls.'); })
+    .catch(function () { $('pend-on').checked = !on; toast('Could not change capture (is the server reachable?).'); });
+}
+function removePending(id) {
+  if (!confirm('Delete this captured encrypted-call audio?\n\nThis cannot be undone.')) return;
+  fetch('/net/pending/remove?id=' + encodeURIComponent(id), { cache: 'no-store' }).then(function (r) { return r.json(); })
+    .then(function () { loadPending(); }).catch(function () { toast('Could not delete the capture.'); });
+}
+function clearPending() {
+  fetch('/net/pending/list', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
+    var n = ((d && d.captures) || []).length;
+    if (!n) { toast('No captures to clear.'); return; }
+    if (!confirm('Delete all ' + n + ' stored encrypted-call capture' + (n > 1 ? 's' : '') + '?\n\nThis cannot be undone.')) return;
+    fetch('/net/pending/clear', { cache: 'no-store' }).then(function (r) { return r.json(); })
+      .then(function (r) { loadPending(); toast('Cleared ' + r.files + ' capture' + (r.files === 1 ? '' : 's') + ' (' + mb(r.bytes) + ').'); })
+      .catch(function () { toast('Could not clear captures.'); });
+  });
+}
 $('clear').addEventListener('click', function (e) { e.stopPropagation(); $('clearmenu').hidden = !$('clearmenu').hidden; });
 $('clr-data').addEventListener('click', function (e) { e.preventDefault(); $('clearmenu').hidden = true; clearData(); });
 $('clr-merges').addEventListener('click', function (e) { e.preventDefault(); $('clearmenu').hidden = true; clearAllMerges(); });
 $('clr-keys').addEventListener('click', function (e) { e.preventDefault(); $('clearmenu').hidden = true; clearAllKeys(); });
 document.addEventListener('click', function () { $('clearmenu').hidden = true; });
+$('pend').addEventListener('click', function (e) { e.stopPropagation(); var m = $('pendmenu'); m.hidden = !m.hidden; if (!m.hidden) loadPending(); });
+$('pendmenu').addEventListener('click', function (e) { e.stopPropagation(); });
+$('pend-on').addEventListener('change', togglePending);
+$('pend-clear').addEventListener('click', function (e) { e.preventDefault(); clearPending(); });
+document.addEventListener('click', function () { $('pendmenu').hidden = true; });
+loadPending();
 ['(max-width: 640px)', '(max-width: 1050px)'].forEach(function (q) {
   if (!window.matchMedia) return;
   var m = window.matchMedia(q), f = function () {

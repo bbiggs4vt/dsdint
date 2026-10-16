@@ -86,6 +86,7 @@
 #include "pager_process.hpp"
 #include "server_stats.hpp"
 #include "blue_writer.hpp"
+#include "pending_capture.hpp"
 
 namespace dsdsrv {
 
@@ -231,6 +232,29 @@ private:
     // explorer's keyring (key VALUES, so owner-only). "" when none; removed in
     // stop_pipeline. Strand-only, like iq_log_.
     std::string klist_path_;
+
+    // Deferred-decrypt capture (pending_capture.hpp). When the global switch
+    // (ServerStats::pending_capture) is on and this FM stream has no key, the
+    // discriminator audio is kept so an encrypted call heard here can be
+    // decrypted later, once a key is loaded. The writer is touched from three
+    // threads (worker feeds it, the dsd-fme reader arms it, the strand finishes
+    // it) and is internally synchronized. pend_meta_ is built on the strand at
+    // start, appended to from the reader thread as encrypted alg:kid pairs are
+    // seen, and finalized on the strand at stop, so pend_mu_ guards it.
+    PendingCapture pend_capture_;
+    bool pipeline_keyed_ = false;              // strand: a key was handed to this stream
+    std::atomic<bool> pend_eligible_{false};   // unkeyed FM stream: capture is possible
+    std::mutex pend_mu_;
+    PendingMeta pend_meta_;                    // guarded by pend_mu_
+    std::string pend_s16_path_;                // set at start (strand), read at arm (reader)
+    std::string pend_dir_;                     // capture folder; set at start
+    // Apply the global deferred-decrypt switch to this session (arm-eligibility;
+    // finalizes an open capture when turned off). Posted to the strand by
+    // ServerStats::set_pending_capture.
+    void set_pending_capture(bool on);
+    // Finalize this session's pending capture (close the file, write the final
+    // sidecar, enforce the folder cap). Strand-only; safe when none is open.
+    void finish_pending_capture();
 
     // The active pipeline's full start parameters, cached so restart_pipeline()
     // can relaunch it (to pick up a keyring change) with the same settings.

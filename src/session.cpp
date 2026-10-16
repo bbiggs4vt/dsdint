@@ -103,6 +103,56 @@ std::int64_t net_audio_max_age_ms() {
     const char* h = std::getenv("DSD_NET_AUDIO_MAX_AGE_H");
     return (h && h[0]) ? static_cast<std::int64_t>(std::strtod(h, nullptr) * 3600.0 * 1000.0) : 0;
 }
+// Deferred-decrypt captures (pending_capture.hpp): the discriminator audio of
+// an encrypted call heard without a key, kept so it can be decrypted later.
+// DSD_NET_PENDING_DIR, else <net log dir>/net_pending; capped at
+// DSD_NET_PENDING_MAX_MB (default 8192; 0 = no cap -- captures are otherwise
+// kept until cleared by hand).
+std::string net_pending_dir() {
+    const char* d = std::getenv("DSD_NET_PENDING_DIR");
+    return (d && d[0]) ? std::string(d) : (std::filesystem::path(net_log_dir()) / "net_pending").string();
+}
+std::uint64_t net_pending_max_bytes() {
+    const char* m = std::getenv("DSD_NET_PENDING_MAX_MB");
+    unsigned long mb = (m && m[0]) ? std::strtoul(m, nullptr, 10) : 8192;
+    return static_cast<std::uint64_t>(mb) * 1024ull * 1024ull;
+}
+// Encryption as seen in one raw event, from its "extra" tokens
+// ("...; alg_id=AA; key_id=1234") and raw line -- the reader-thread equivalent
+// of AssocModel::is_encrypted (which needs the parsed token map). On a match it
+// also returns the "ALG:KID" pair, normalized like the keyring (uppercase, lead
+// zeros stripped, min two digits) so a later key load can be matched against it.
+bool event_is_encrypted(const DsdEvent& ev, std::string& algkid) {
+    auto token = [&](const char* key) -> std::string {
+        const std::string k = std::string(key) + "=";
+        std::size_t p = ev.extra.find(k);
+        if (p == std::string::npos) return "";
+        p += k.size();
+        std::size_t e = ev.extra.find(';', p);
+        std::string v = ev.extra.substr(p, e == std::string::npos ? std::string::npos : e - p);
+        // Trim surrounding spaces ("; " join leaves a leading space only before
+        // the key, not after '=').
+        while (!v.empty() && std::isspace(static_cast<unsigned char>(v.back()))) v.pop_back();
+        return v;
+    };
+    auto norm = [](std::string v) {
+        for (char& c : v) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        std::size_t nz = v.find_first_not_of('0');
+        v = (nz == std::string::npos) ? std::string() : v.substr(nz);
+        while (v.size() < 2) v.insert(v.begin(), '0');
+        return v;
+    };
+    const std::string alg = token("alg_id");
+    bool enc = false;
+    if (!alg.empty()) {
+        const std::string a = norm(alg);
+        if (!a.empty() && a != "80") enc = true;   // 0x80 / 0x00 = clear
+    }
+    if (!enc && ev.raw_line.find("ENCRYPTED") != std::string::npos) enc = true;
+    if (!enc) return false;
+    algkid = norm(alg.empty() ? "0" : alg) + ":" + norm(token("key_id"));
+    return true;
+}
 std::string net_audio_json(const CallAudioStore::Status& a) {
     return json::Writer().field("on", a.on).field("dir", a.dir).field("bytes", static_cast<double>(a.bytes))
         .field("cap_bytes", static_cast<double>(a.cap_bytes)).field("files", static_cast<double>(a.files))
@@ -841,6 +891,46 @@ void Session::serve_http() {
         res->result(ok ? http::status::ok : http::status::internal_server_error);
         res->set(http::field::content_type, "application/json");
         res->body() = stats_ ? net_audio_json(stats_->assoc().audio_status()) : std::string("{}");
+    } else if (target == "/net/pending/on" || target == "/net/pending/off") {
+        // Explorer deferred-decrypt switch: keep the discriminator audio of an
+        // encrypted call heard without a key, so it can be decrypted later (off
+        // by default; captures live under net_pending_dir). Remembered for the
+        // next start, like the Audio switch.
+        const bool on = (target == "/net/pending/on");
+        if (stats_) {
+            stats_->set_pending_capture(on);
+            remember_net_setting("pending", on);
+            std::cerr << (on ? "net pending: capturing encrypted calls without a key into "
+                             : "net pending: capture off (kept captures remain in ") << net_pending_dir()
+                      << (on ? "\n" : ")\n");
+        }
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "application/json");
+        res->body() = std::string("{\"enabled\":") + (on ? "true" : "false") +
+                      ",\"dir\":\"" + net_pending_dir() + "\"}";
+    } else if (target == "/net/pending/list") {
+        // The stored captures (newest first), for the Pending panel. Metadata
+        // only -- never key values, and the audio is encrypted until decoded.
+        res->result(http::status::ok);
+        res->set(http::field::content_type, "application/json");
+        const bool on = stats_ && stats_->pending_capture();
+        res->body() = std::string("{\"enabled\":") + (on ? "true" : "false") +
+                      ",\"captures\":" + PendingStore::list_json(net_pending_dir()) + "}";
+    } else if (target == "/net/pending/remove" || target == "/net/pending/clear") {
+        // Delete one stored capture (?id=...) or all of them. Deferred-decrypt
+        // captures are kept until removed here (or evicted at the size cap).
+        bool ok = true;
+        std::uint64_t files = 0, bytes = 0;
+        if (target == "/net/pending/clear") {
+            auto g = PendingStore::clear(net_pending_dir());
+            files = g.first; bytes = g.second;
+        } else {
+            ok = PendingStore::remove(net_pending_dir(), query_param(query, "id"));
+        }
+        res->result(ok ? http::status::ok : http::status::not_found);
+        res->set(http::field::content_type, "application/json");
+        res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") +
+                      ",\"files\":" + std::to_string(files) + ",\"bytes\":" + std::to_string(bytes) + "}";
     } else if (target == "/net/networks/merge" || target == "/net/networks/unmerge") {
         // Explorer network merges (NetMerges, assoc_merge.hpp), shared by every
         // viewer: ?fam=dmr&from=KEY&to=KEY shows `from` as part of `to`;
@@ -993,6 +1083,12 @@ void Session::on_accept(beast::error_code ec) {
             if (!self || !self->pipeline_active_.load() || self->chain_.load() != Chain::Fm) return false;
             net::post(self->ws_.get_executor(), [self] { self->restart_pipeline(); });
             return true;
+        });
+        // Let the explorer's deferred-decrypt switch reach this session, like
+        // the IQ switch above: the callback just posts onto this strand.
+        stats_->register_pending_control(stats_id_, [wp](bool on) {
+            if (auto self = wp.lock())
+                net::post(self->ws_.get_executor(), [self, on] { self->set_pending_capture(on); });
         });
     }
     // Advertise what this build can emit before the client sends anything,
@@ -1374,6 +1470,40 @@ void Session::set_iq_logging(bool on) {
     }
 }
 
+void Session::finish_pending_capture() {
+    // Strand-only. Closes the capture file (no-op if none opened) and, if it
+    // actually wrote audio, finalizes the sidecar and enforces the folder cap.
+    const std::uint64_t bytes = pend_capture_.finish();
+    if (bytes == 0) return;
+    std::string dir;
+    {
+        std::lock_guard<std::mutex> lk(pend_mu_);
+        pend_meta_.bytes = bytes;
+        pend_meta_.ended_ms = AssocModel::now_ms();
+        pend_meta_.complete = true;
+        dir = pend_dir_;
+        PendingStore::write_sidecar(dir, pend_meta_);
+        std::cerr << "net pending: kept " << bytes << " bytes of encrypted-call audio ("
+                  << pend_meta_.algkids << ") -- " << PendingStore::s16_path(dir, pend_meta_.id) << "\n";
+    }
+    PendingStore::enforce(dir, net_pending_max_bytes());
+}
+
+void Session::set_pending_capture(bool on) {
+    // Runs on this session's strand (posted by ServerStats::set_pending_capture).
+    // Eligibility (an unkeyed FM stream with its destination prepared) is set
+    // once at start_pipeline and read together with the global switch in
+    // on_event, so turning the switch ON needs nothing here -- an eligible
+    // stream simply starts arming on its next encrypted call. Turning it OFF
+    // finalizes any in-progress capture and ends capture for this session (so a
+    // later ON can't re-arm onto the same file); the next start_pipeline makes a
+    // fresh, unkeyed stream eligible again.
+    if (!on) {
+        finish_pending_capture();
+        pend_eligible_.store(false);
+    }
+}
+
 void Session::start_pipeline(double sample_rate, double channel_bw, double freq_offset,
                              float gain, bool afc, const std::string& protocol,
                              const std::string& key_type, const std::string& key,
@@ -1418,6 +1548,32 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         // Feed the network explorer's association model (structured, before
         // serialization). It has its own lock; this runs on the reader thread.
         if (self->stats_ && self->stats_id_) { self->stats_->assoc().ingest(self->stats_id_, ev); self->stats_->note_data(self->stats_id_); }
+        // Deferred-decrypt capture: the first encrypted call on an unkeyed
+        // stream arms the capture (while the global switch is on); every
+        // distinct alg:kid is recorded so a later key load can be matched.
+        if (self->pend_eligible_.load(std::memory_order_relaxed) && self->stats_ && self->stats_->pending_capture()) {
+            std::string algkid;
+            if (event_is_encrypted(ev, algkid)) {
+                const bool armed_now = self->pend_capture_.arm(self->pend_s16_path_);
+                std::lock_guard<std::mutex> lk(self->pend_mu_);
+                auto has_tok = [](const std::string& csv, const std::string& t) {
+                    std::size_t p = 0;
+                    while (p <= csv.size()) {
+                        std::size_t e = csv.find(',', p);
+                        if (e == std::string::npos) e = csv.size();
+                        if (csv.compare(p, e - p, t) == 0) return true;
+                        p = e + 1;
+                    }
+                    return false;
+                };
+                const bool fresh = !has_tok(self->pend_meta_.algkids, algkid);
+                if (fresh) {
+                    if (!self->pend_meta_.algkids.empty()) self->pend_meta_.algkids += ",";
+                    self->pend_meta_.algkids += algkid;
+                }
+                if (armed_now || fresh) PendingStore::write_sidecar(self->pend_dir_, self->pend_meta_);
+            }
+        }
         std::string s = json::Writer()
             .field("type", std::string("event"))
             .field("kind", ev.kind)
@@ -1754,13 +1910,40 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         // Network explorer per-call audio (off unless enabled): every slot's
         // decoded voice, before the client's mono mix. A session with a key
         // hears encrypted calls in the clear, so those may be recorded.
+        const bool keyed = key_type_enum != KeyType::None || have_key_list || stored_bp != 0 || !stored_forced.first.empty();
         if (stats_ && stats_id_) {
             auto st = stats_;
             const std::uint64_t sid = stats_id_;
-            const bool keyed = key_type_enum != KeyType::None || have_key_list || stored_bp != 0 || !stored_forced.first.empty();
             dcfg.on_slot_audio = [st, sid, keyed](int slot, const int16_t* pcm, std::size_t n) {
                 st->assoc().audio(sid, slot, pcm, n, keyed);
             };
+        }
+
+        // Deferred-decrypt capture setup. Only an UNKEYED stream is a candidate
+        // (a keyed one decodes its encrypted calls live, so there is nothing to
+        // recover later); the actual arming waits until an encrypted call is
+        // seen (on_event), and only while the global switch is on. Prepare the
+        // destination + metadata now so arming on the reader thread is cheap.
+        pipeline_keyed_ = keyed;
+        pend_eligible_.store(!keyed && stats_ && stats_id_);
+        if (pend_eligible_.load()) {
+            const std::int64_t started = AssocModel::now_ms();
+            const std::string id = "pend_" + std::to_string(started) + "_" + std::to_string(stats_id_);
+            pend_dir_ = net_pending_dir();
+            pend_s16_path_ = PendingStore::s16_path(pend_dir_, id);
+            // Create the folder now so the worker's fopen (on the first feed
+            // after arming) can't lose a race with the reader thread's first
+            // sidecar write, which would otherwise be what creates it.
+            std::error_code pec;
+            std::filesystem::create_directories(pend_dir_, pec);
+            std::lock_guard<std::mutex> lk(pend_mu_);
+            pend_meta_ = PendingMeta{};
+            pend_meta_.id = id;
+            pend_meta_.session = stats_id_;
+            pend_meta_.started_ms = started;
+            pend_meta_.mode = dcfg.mode_flag;
+            pend_meta_.protocol = protocol_hint_label(hint);
+            pend_meta_.center_freq_hz = center_freq_ > 0 ? static_cast<std::int64_t>(center_freq_ + freq_offset) : 0;
         }
 
         bool ok = dsd_.start(dcfg, on_event, on_audio);
@@ -1869,6 +2052,12 @@ void Session::stop_pipeline() {
         klist_path_.clear();
     }
 
+    // Deferred-decrypt capture: close the file and finalize its sidecar. The
+    // worker (feed) and dsd-fme reader (arm) threads are both joined by now
+    // (worker above, reader in dsd_.stop()), so this strand owns it.
+    finish_pending_capture();
+    pend_eligible_.store(false);
+
     {
         std::lock_guard<std::mutex> lock(iq_mutex_);
         iq_queue_.clear();
@@ -1937,6 +2126,11 @@ void Session::demod_worker_loop() {
             }
             if (!pcm_scratch.empty()) {
                 dsd_.write_audio(pcm_scratch.data(), pcm_scratch.size());
+                // Deferred-decrypt capture: keep the same discriminator audio
+                // (and a rolling preroll) so an encrypted call heard without a
+                // key can be decrypted later. feed() is cheap until armed.
+                if (pend_eligible_.load(std::memory_order_relaxed))
+                    pend_capture_.feed(pcm_scratch.data(), pcm_scratch.size());
             }
         }
     }
@@ -2048,6 +2242,15 @@ Server::Server(net::io_context& ioc, const tcp::endpoint& endpoint)
             std::cerr << "net audio: recording calls into " << net_audio_dir() << "\n";
         else
             std::cerr << "net audio: cannot write to " << net_audio_dir() << "\n";
+    }
+
+    // Deferred-decrypt capture from startup: DSD_NET_PENDING_CAPTURE=1 (=0
+    // never), or, with it unset, as the explorer's switch was last left.
+    const char* np = std::getenv("DSD_NET_PENDING_CAPTURE");
+    const bool pending_at_start = (np && np[0]) ? env_on("DSD_NET_PENDING_CAPTURE") : net_setting("pending") == 1;
+    if (pending_at_start) {
+        stats_->set_pending_capture(true);
+        std::cerr << "net pending: capturing encrypted calls without a key into " << net_pending_dir() << "\n";
     }
 
     acceptor_.open(endpoint.protocol(), ec);
