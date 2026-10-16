@@ -306,15 +306,21 @@ color code / NAC on each repeater or site, so two networks with different codes
 can still be one system. When a call is heard on both, or a fleet of radios is
 shared, the suggestion is made anyway (it says *different color code (3 vs 5)*
 as a caveat, so you can confirm it). Shared talkgroups alone are not enough to
-cross a code boundary. These cross-code suggestions are never auto-merged
-(auto-merge only ever joins the same code within 2.5 kHz).
+cross a code boundary. Different calls happening on the two at the same moment
+don't block a shared-fleet match either — that is just the two sites carrying
+their own traffic — though the *different calls at the same moment* caveat is
+still shown. Its count is capped, so one long or stuck call record can't overlap
+every short call on the other site and inflate it into the dozens. These
+cross-code suggestions are never auto-merged (auto-merge only ever joins the
+same code within 2.5 kHz).
 
 A pair is never suggested when the evidence says they are different channels:
 both have a system id; their codes differ; **one stream heard both at the same
 moment**; **different calls on the same slot at the same moment** (two
-transmissions at once — unless the same calls were also heard on both, which
-is shown as *but: different calls at the same moment N×*); or their channels
-are more than 6.25 kHz apart (or unknown) with no call heard on both.
+transmissions at once — unless the same calls were also heard on both, or a
+fleet of radios is shared, which is the multi-site case above; shown as
+*but: different calls at the same moment N×*); or their channels are more than
+6.25 kHz apart (or unknown) with no call heard on both and no shared fleet.
 
 **Merge** merges the less busy one into the busier. **Not the same** stops
 suggesting that pair in this browser (**Suggest them again** brings them back).

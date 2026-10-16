@@ -909,14 +909,28 @@ function sameEvidence() {
           twinOf[L[i].id + '|' + L[j].id] = twinOf[L[j].id + '|' + L[i].id] = 1;
         }
   });
-  // Clashes: calls on two networks at the same moment.
+  // Clashes: calls on two networks at the same moment. A clash is evidence the
+  // two aren't the same channel -- but the COUNT is only meant to say "it
+  // happened", not be a magnitude. One abnormally long call record (a stuck/
+  // artifact call can run tens of seconds) would otherwise overlap every short
+  // call on the other network for its whole duration and manufacture dozens of
+  // clashes on its own, drowning out real shared traffic (and, via the
+  // clash-without-twins gate, suppressing genuine multi-site matches). So cap
+  // how many clashes any single call can contribute (CLASH_CAP): a few is
+  // plenty to establish "they conflicted", and no one call can dominate.
+  var CLASH_CAP = 3, clashN = {};
   var all = IX.calls.filter(function (c) { return c.net; }).sort(function (a, b) { return a.start - b.start; }), act = [];
   all.forEach(function (c) {
     act = act.filter(function (o) { return o.last >= c.start; });
     act.forEach(function (o) {
       if (o.net === c.net || twinOf[o.id + '|' + c.id]) return;
-      if (o.session === c.session) E(o.net, c.net).sameStream++;
-      else if (o.slot === c.slot && !(o.src === c.src && o.tgt === c.tgt)) E(o.net, c.net).clash++;
+      if (o.session === c.session) { E(o.net, c.net).sameStream++; return; }
+      if (o.slot === c.slot && !(o.src === c.src && o.tgt === c.tgt)) {
+        if ((clashN[o.id] || 0) >= CLASH_CAP || (clashN[c.id] || 0) >= CLASH_CAP) return;
+        clashN[o.id] = (clashN[o.id] || 0) + 1;
+        clashN[c.id] = (clashN[c.id] || 0) + 1;
+        E(o.net, c.net).clash++;
+      }
     });
     act.push(c);
   });
@@ -977,7 +991,10 @@ function sameJudge(a, b, e) {
   if (a.confidence === 'strong' && b.confidence === 'strong') return null;
   if (ca && cb && !sameCode && !(e.twins || crossFleet)) return null;
   if (e.sameStream) return null;
-  if (e.clash && !e.twins) return null;
+  // Conflicting calls with none heard on both argue "different networks" -- but
+  // not against a shared fleet: two sites of ONE system carry their own traffic
+  // at the same time, so clashes are expected there, not disqualifying.
+  if (e.clash && !e.twins && !crossFleet) return null;
   if (!e.twins && !(gap <= 6250) && !crossFleet) return null;
   var why = [], against = [];
   if (e.twins) why.push(e.twins + ' call' + (e.twins > 1 ? 's' : '') + ' heard on both');
