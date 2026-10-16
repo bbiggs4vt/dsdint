@@ -149,9 +149,24 @@ bool event_is_encrypted(const DsdEvent& ev, std::string& algkid) {
         const std::string a = norm(alg);
         if (!a.empty() && a != "80") enc = true;   // 0x80 / 0x00 = clear
     }
-    if (!enc && ev.raw_line.find("ENCRYPTED") != std::string::npos) enc = true;
+    const std::string kid = token("key_id");
+    if (!enc) {
+        // dsd-fme flags DMR Basic/Enhanced Privacy only as text ("Group
+        // Encrypted Call", title case) with no alg/key-id token, so match it
+        // case-insensitively -- the raw line is NOT uppercased here (unlike the
+        // model's is_encrypted, which works on an already-uppercased copy).
+        std::string up = ev.raw_line;
+        for (char& c : up) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        if (up.find("ENCRYPTED") != std::string::npos) enc = true;
+    }
     if (!enc) return false;
-    algkid = norm(alg.empty() ? "0" : alg) + ":" + norm(token("key_id"));
+    // The ALG:KID pair, only when it was actually decoded (a DMR "Group
+    // Encrypted Call" / "ENCRYPTED" line carries neither, and dsd-fme emits the
+    // ALG ID / KEY ID separately on its PI-header line -- a suppressed event --
+    // so a text-only match leaves this empty rather than recording a bogus
+    // "00:00". The caller still arms the capture; the real pair is picked up
+    // from the PI-header event.
+    algkid = (alg.empty() && kid.empty()) ? std::string() : (norm(alg.empty() ? "0" : alg) + ":" + norm(kid));
     return true;
 }
 std::string net_audio_json(const CallAudioStore::Status& a) {
@@ -1639,6 +1654,36 @@ void Session::finish_pending_capture() {
     PendingStore::enforce(dir, net_pending_max_bytes());
 }
 
+void Session::note_pending_event(const DsdEvent& ev) {
+    // Reader thread. Arm the capture on the first encrypted call (while the
+    // global switch is on and this unkeyed FM stream is eligible) and record
+    // each distinct alg:key-id seen, so a later key load can be matched to it.
+    if (!pend_eligible_.load(std::memory_order_relaxed) || !stats_ || !stats_->pending_capture()) return;
+    std::string algkid;
+    if (!event_is_encrypted(ev, algkid)) return;
+    const bool armed_now = pend_capture_.arm(pend_s16_path_);
+    std::lock_guard<std::mutex> lk(pend_mu_);
+    bool fresh = false;
+    if (!algkid.empty()) {
+        auto has_tok = [](const std::string& csv, const std::string& t) {
+            std::size_t p = 0;
+            while (p <= csv.size()) {
+                std::size_t e = csv.find(',', p);
+                if (e == std::string::npos) e = csv.size();
+                if (csv.compare(p, e - p, t) == 0) return true;
+                p = e + 1;
+            }
+            return false;
+        };
+        if (!has_tok(pend_meta_.algkids, algkid)) {
+            if (!pend_meta_.algkids.empty()) pend_meta_.algkids += ",";
+            pend_meta_.algkids += algkid;
+            fresh = true;
+        }
+    }
+    if (armed_now || fresh) PendingStore::write_sidecar(pend_dir_, pend_meta_);
+}
+
 void Session::set_pending_capture(bool on) {
     // Runs on this session's strand (posted by ServerStats::set_pending_capture).
     // Eligibility (an unkeyed FM stream with its destination prepared) is set
@@ -1698,32 +1743,9 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         // Feed the network explorer's association model (structured, before
         // serialization). It has its own lock; this runs on the reader thread.
         if (self->stats_ && self->stats_id_) { self->stats_->assoc().ingest(self->stats_id_, ev); self->stats_->note_data(self->stats_id_); }
-        // Deferred-decrypt capture: the first encrypted call on an unkeyed
-        // stream arms the capture (while the global switch is on); every
-        // distinct alg:kid is recorded so a later key load can be matched.
-        if (self->pend_eligible_.load(std::memory_order_relaxed) && self->stats_ && self->stats_->pending_capture()) {
-            std::string algkid;
-            if (event_is_encrypted(ev, algkid)) {
-                const bool armed_now = self->pend_capture_.arm(self->pend_s16_path_);
-                std::lock_guard<std::mutex> lk(self->pend_mu_);
-                auto has_tok = [](const std::string& csv, const std::string& t) {
-                    std::size_t p = 0;
-                    while (p <= csv.size()) {
-                        std::size_t e = csv.find(',', p);
-                        if (e == std::string::npos) e = csv.size();
-                        if (csv.compare(p, e - p, t) == 0) return true;
-                        p = e + 1;
-                    }
-                    return false;
-                };
-                const bool fresh = !has_tok(self->pend_meta_.algkids, algkid);
-                if (fresh) {
-                    if (!self->pend_meta_.algkids.empty()) self->pend_meta_.algkids += ",";
-                    self->pend_meta_.algkids += algkid;
-                }
-                if (armed_now || fresh) PendingStore::write_sidecar(self->pend_dir_, self->pend_meta_);
-            }
-        }
+        // Deferred-decrypt capture: arm on the first encrypted call and record
+        // its alg:key-id (also done for suppressed events -- see on_suppressed).
+        self->note_pending_event(ev);
         std::string s = json::Writer()
             .field("type", std::string("event"))
             .field("kind", ev.kind)
@@ -1971,6 +1993,9 @@ void Session::start_pipeline(double sample_rate, double channel_bw, double freq_
         dcfg.on_suppressed = [weak_self](const DsdEvent& ev) {
             auto self = weak_self.lock();
             if (self && self->stats_ && self->stats_id_) { self->stats_->assoc().ingest(self->stats_id_, ev); self->stats_->note_data(self->stats_id_); }
+            // DMR's ALG ID / KEY ID arrive on a suppressed PI-header line, so the
+            // deferred-decrypt capture records the alg:key-id from here too.
+            if (self) self->note_pending_event(ev);
         };
         // Decryption key -> the matching dsd-fme flag, appended as a separate
         // argv token (never a shell string, and key was validated digits-only

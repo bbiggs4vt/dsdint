@@ -255,6 +255,11 @@ private:
     // Finalize this session's pending capture (close the file, write the final
     // sidecar, enforce the folder cap). Strand-only; safe when none is open.
     void finish_pending_capture();
+    // Arm the deferred-decrypt capture on an encrypted event and record its
+    // alg:key-id. Runs for BOTH forwarded and suppressed events (dsd-fme emits
+    // the "Group Encrypted Call" flag as a forwarded event but the ALG ID / KEY
+    // ID on a suppressed PI-header line), on the dsd-fme reader thread.
+    void note_pending_event(const DsdEvent& ev);
 
     // The active pipeline's full start parameters, cached so restart_pipeline()
     // can relaunch it (to pick up a keyring change) with the same settings.
