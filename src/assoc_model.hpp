@@ -1141,6 +1141,27 @@ public:
         for (const auto& fk : keys_) { if (!fam.empty() && fk.first != fam) continue; for (const auto& nk : fk.second) n += nk.second.size(); }
         return n;
     }
+    // Total calls held across all families (the deferred-decrypt replay reports
+    // how many it recovered as the difference before/after).
+    std::size_t call_count() const {
+        std::lock_guard<std::mutex> lk(mu_);
+        std::size_t n = 0;
+        for (const auto& fk : fam_) n += fk.second.calls.size();
+        return n;
+    }
+    // Whether the keyring holds a decryption key with id `kid` for family `fam`
+    // (any network -- dsd-fme matches a -K key by the id the call announces, so
+    // this mirrors what a replay would actually be able to decrypt). `kid` is
+    // compared normalized (see assoc_keys key_norm_id).
+    bool family_has_key_id(const std::string& fam, const std::string& kid) const {
+        std::lock_guard<std::mutex> lk(mu_);
+        const std::string want = key_norm_id(kid);
+        auto fk = keys_.find(fam);
+        if (fk == keys_.end()) return false;
+        for (const auto& nk : fk->second)
+            if (nk.second.count(want)) return true;
+        return false;
+    }
 
     // This server run's identity in exports (see assoc_merge.hpp). The
     // instance is random per process; the name is DSD_SERVER_NAME or the

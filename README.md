@@ -732,8 +732,14 @@ captured. Kept captures (their time, channel, size and the `alg:key-id` pairs
 seen) are listed in the menu and kept until removed, under `DSD_NET_PENDING_DIR`
 (default `net_pending/`), capped by `DSD_NET_PENDING_MAX_MB` (default 8192,
 `0` = none); `DSD_NET_PENDING_CAPTURE=1` turns capture on from startup. No key
-values are ever stored in a capture. Only do this for systems you are
-authorized to monitor.
+values are ever stored in a capture.
+
+Once you load the matching key, the explorer says how many captures it can now
+decrypt; **Pending ▾ → Decrypt** replays a capture through a fresh dsd-fme with
+the key, and the recovered calls appear in the explorer with their audio, dated
+to the capture's original time. Decrypting runs one capture at a time on the
+server and turns on call-audio recording so the recovered voice is kept. Only
+do this for systems you are authorized to monitor.
 
 ### Speech-to-text
 

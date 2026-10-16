@@ -192,6 +192,33 @@ public:
         return on;
     }
 
+    // Deferred-decrypt replay in progress (one at a time, server-wide). A worker
+    // claims it with try_begin_decode and releases with end_decode; the explorer
+    // shows which capture is decoding so the operator isn't left guessing.
+    bool try_begin_decode(const std::string& id) {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (decoding_) return false;
+        decoding_ = true;
+        decode_id_ = id;
+        return true;
+    }
+    void end_decode(const std::string& summary = std::string()) {
+        std::lock_guard<std::mutex> lk(mu_);
+        decoding_ = false;
+        decode_id_.clear();
+        last_decode_ = summary;
+    }
+    std::string decoding_id() const {
+        std::lock_guard<std::mutex> lk(mu_);
+        return decoding_ ? decode_id_ : std::string();
+    }
+    // The most recent finished decode's one-line summary (for a UI toast); "" if
+    // none yet. Cleared implicitly by the next decode's end_decode.
+    std::string last_decode() const {
+        std::lock_guard<std::mutex> lk(mu_);
+        return last_decode_;
+    }
+
     // Session registers (on connect) a callback that restarts its decode
     // pipeline so the decoder re-reads the keyring (applied as a dsd-fme -K
     // list at start). Returns true if it will restart (an active FM/DSD
@@ -435,6 +462,9 @@ private:
     std::map<std::uint64_t, std::function<void(bool)>> iq_controls_; // per-session appliers
     bool pending_capture_ = false;                              // global deferred-decrypt capture switch
     std::map<std::uint64_t, std::function<void(bool)>> pending_controls_; // per-session appliers
+    bool decoding_ = false;                                     // a deferred-decrypt replay is running
+    std::string decode_id_;                                     // which capture, while decoding_
+    std::string last_decode_;                                   // last finished decode's summary (UI toast)
     std::map<std::uint64_t, std::function<bool()>> key_reloads_;      // per-session pipeline restart
     AssocModel assoc_;                                          // network explorer model
     std::size_t history_limit_;

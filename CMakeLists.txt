@@ -482,6 +482,23 @@ set_tests_properties(session_integration_test PROPERTIES
   TIMEOUT 60
 )
 
+# Deferred-decrypt replay (PendingDecoder): feed a stored capture to a fresh
+# (fake) dsd-fme and confirm the decoded calls land back in the model. Reuses
+# the same fake dsd-fme binary and TEST_FAKE_DSD_FME_DIR lookup as test_session.
+add_executable(test_pending_decode EXCLUDE_FROM_ALL
+  src/dsd_process.cpp
+  tests/test_pending_decode.cpp
+)
+target_include_directories(test_pending_decode PRIVATE src)
+target_link_libraries(test_pending_decode PRIVATE Threads::Threads ZLIB::ZLIB)
+target_compile_options(test_pending_decode PRIVATE -Wall -Wextra)
+add_dependencies(test_pending_decode test-fake-dsd-fme)
+add_test(NAME pending_decode_test COMMAND test_pending_decode)
+set_tests_properties(pending_decode_test PROPERTIES
+  ENVIRONMENT "TEST_FAKE_DSD_FME_DIR=$<TARGET_FILE_DIR:test-fake-dsd-fme>"
+  TIMEOUT 60
+)
+
 # --- Verification test against a REAL dsd-fme binary ---
 # DsdProcess spawning actual dsd-fme (lwvmobile/dsd-fme, built from
 # source) and decoding a real DMR capture -- this is what verified

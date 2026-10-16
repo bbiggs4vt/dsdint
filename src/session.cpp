@@ -4,6 +4,7 @@
 #include "status_page.hpp"
 #include "net_manual.hpp"
 #include "net_page.hpp"
+#include "pending_decode.hpp"
 #include "pager_events.hpp"
 
 #include <algorithm>
@@ -446,6 +447,91 @@ void release_udp_port(uint16_t port) {
     std::lock_guard<std::mutex> lock(g_udp_port_mutex);
     g_udp_ports_in_use.erase(port);
 }
+
+// Build the dsd-fme key flags for DECODING a stored capture (pending_decode.hpp)
+// of `family` on channel `chf`, from the model's stored keys. This is the
+// stored-key half of start_pipeline's argv build (below) -- keyring -K list,
+// DMR BP, EP and forced per-frequency keys -- minus the client-supplied key (a
+// capture has none). On return, if a -K list was written, `klist_out` holds its
+// owner-only temp path (it carries key values); the caller unlinks it after the
+// decode. Unlike the live path this ignores DSD_NET_NO_APPLY_KEYS: decoding a
+// capture is an explicit "apply the key now" action. Keep in sync with
+// start_pipeline's key block.
+std::vector<std::string> build_decode_key_args(AssocModel& m, const std::string& family,
+                                               std::int64_t chf, std::string& klist_out) {
+    std::vector<std::string> args;
+    klist_out.clear();
+    std::string stored_ep;
+    if (family == "dmr" || family == "auto" || family.empty()) {
+        if (int bp = m.bp_for_freq("dmr", chf)) { args.push_back("-b"); args.push_back(std::to_string(bp)); }
+        stored_ep = m.net_key_for_freq("ep", "dmr", chf);
+        const auto forced = m.forced_net_key_for_freq("dmr", chf);
+        if (!forced.first.empty()) {
+            static const std::map<std::string, std::string> flag = {
+                {"tytep", "-5"}, {"tytbp", "-2"}, {"anybp", "-A"}, {"tytap", "-!"}, {"bfap", "-+"}, {"rtap", "-@"}};
+            auto it = flag.find(forced.first);
+            if (it != flag.end()) {
+                const std::string& v = forced.second;
+                std::string arg;
+                for (std::size_t i = 0; i < v.size(); i += 16) arg += (i ? " " : "") + v.substr(i, 16);
+                args.push_back(it->second);
+                args.push_back(arg);
+            }
+        }
+    }
+    const std::string kfam = (family == "auto") ? std::string() : family;
+    const std::string csv = m.keys_csv_stream(kfam, stored_ep);
+    if (csv.size() > sizeof("KEY ID,KEY\n") - 1) {            // more than just the header
+        std::string tmpl = (std::filesystem::temp_directory_path() / "dsd_klist_dec_XXXXXX").string();
+        std::vector<char> path(tmpl.begin(), tmpl.end());
+        path.push_back('\0');
+        int fd = ::mkstemp(path.data());
+        if (fd >= 0) {
+            ::fchmod(fd, S_IRUSR | S_IWUSR);                  // owner-only: it carries key values
+            std::size_t off = 0;
+            while (off < csv.size()) {
+                ssize_t w = ::write(fd, csv.data() + off, csv.size() - off);
+                if (w <= 0) break;
+                off += static_cast<std::size_t>(w);
+            }
+            ::close(fd);
+            if (off == csv.size()) {
+                klist_out.assign(path.data());
+                args.push_back("-K");
+                args.push_back(klist_out);
+            } else {
+                ::unlink(path.data());
+            }
+        }
+    }
+    return args;
+}
+
+// How many stored captures the keyring can now decrypt: a capture counts if any
+// of its recorded alg:key-id pairs has a matching key loaded for its family.
+// Used to tell the operator, when they add a key, that captures are now
+// decryptable. `dir` is the pending-capture folder.
+std::size_t pending_decryptable_count(AssocModel& m, const std::string& dir) {
+    std::size_t n = 0;
+    for (const auto& meta : PendingStore::list(dir)) {
+        const std::string fam = assoc_family(meta.protocol);
+        bool match = false;
+        std::size_t p = 0;
+        while (!match && p <= meta.algkids.size()) {
+            std::size_t e = meta.algkids.find(',', p);
+            if (e == std::string::npos) e = meta.algkids.size();
+            const std::string tok = meta.algkids.substr(p, e - p);   // "ALG:KID"
+            const std::size_t colon = tok.find(':');
+            if (colon != std::string::npos) {
+                const std::string kid = tok.substr(colon + 1);
+                if (!kid.empty() && m.family_has_key_id(fam, kid)) match = true;
+            }
+            p = e + 1;
+        }
+        if (match) ++n;
+    }
+    return n;
+}
 } // namespace
 
 Session::Session(tcp::socket socket, std::shared_ptr<ServerStats> stats)
@@ -727,7 +813,11 @@ void Session::serve_http() {
                                          json::get_string(obj, "key"));
         }
         if (!ok) res->result(http::status::bad_request);
-        res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") + "}";
+        // How many stored captures this key (and the rest of the keyring) can
+        // now decrypt, so the explorer can offer to decode them.
+        const std::size_t pend = (ok && stats_) ? pending_decryptable_count(stats_->assoc(), net_pending_dir()) : 0;
+        res->body() = std::string("{\"ok\":") + (ok ? "true" : "false") +
+                      ",\"pending_decryptable\":" + std::to_string(pend) + "}";
     } else if (post && target == "/net/bp/set") {
         // Set a DMR Basic Privacy key number (1-255) for a network. BP has no
         // key id and isn't a hex key, so it is kept apart from the keyring and
@@ -914,8 +1004,68 @@ void Session::serve_http() {
         res->result(http::status::ok);
         res->set(http::field::content_type, "application/json");
         const bool on = stats_ && stats_->pending_capture();
+        const std::string dec = stats_ ? stats_->decoding_id() : std::string();
+        const std::string last = stats_ ? stats_->last_decode() : std::string();
+        std::string lastq = "\"";
+        for (char c : last) { if (c == '"' || c == '\\') lastq += '\\'; lastq += c; }
+        lastq += "\"";
         res->body() = std::string("{\"enabled\":") + (on ? "true" : "false") +
+                      ",\"decoding\":" + (dec.empty() ? std::string("null") : ("\"" + dec + "\"")) +
+                      ",\"last_decode\":" + lastq +
                       ",\"captures\":" + PendingStore::list_json(net_pending_dir()) + "}";
+    } else if (target == "/net/pending/decode") {
+        // Replay one stored capture through a fresh dsd-fme with the keyring now
+        // loaded, recovering the (previously-undecryptable) calls into the live
+        // explorer. Runs on a detached background thread -- a long capture takes
+        // a while -- so the explorer polls /net/pending/list for the "decoding"
+        // state and watches recovered calls appear. One decode at a time.
+        const std::string id = query_param(query, "id");
+        std::string err;
+        bool started = false;
+        if (!stats_) err = "unavailable";
+        else if (!PendingStore::valid_id(id)) err = "bad id";
+        else {
+            const std::string dir = net_pending_dir();
+            std::ifstream sf(PendingStore::json_path(dir, id), std::ios::binary);
+            if (!sf) err = "no such capture";
+            else {
+                std::string s((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>());
+                PendingMeta meta = PendingMeta::from_json(s);
+                if (meta.id != id) err = "bad capture metadata";
+                else if (!std::filesystem::exists(PendingStore::s16_path(dir, id))) err = "capture audio missing";
+                else if (!stats_->try_begin_decode(id)) err = "a decode is already running";
+                else {
+                    // Recovered voice is kept only while the call-audio store is
+                    // on, so turn it on for the decode (the whole point is to
+                    // hear the decrypted calls).
+                    stats_->assoc().start_audio(net_audio_dir(), net_audio_max_bytes(), net_audio_max_age_ms());
+                    auto stats = stats_;
+                    const char* fp = std::getenv("DSD_FME_PATH");
+                    const std::string dsd_fme = (fp && fp[0]) ? std::string(fp) : std::string("dsd-fme");
+                    std::thread([stats, meta, dir, dsd_fme]() {
+                        const std::string s16 = PendingStore::s16_path(dir, meta.id);
+                        const std::string fam = assoc_family(meta.protocol);
+                        const std::int64_t chf = channel_freq(static_cast<double>(meta.center_freq_hz));
+                        std::string klist;
+                        auto args = build_decode_key_args(stats->assoc(), fam, chf, klist);
+                        const uint16_t port = acquire_udp_port();
+                        PendingDecoder::Result r =
+                            PendingDecoder::decode(stats->assoc(), meta, s16, args, dsd_fme, port);
+                        release_udp_port(port);
+                        if (!klist.empty()) { std::error_code ec; std::filesystem::remove(klist, ec); }
+                        std::cerr << "net pending decode " << meta.id << ": " << (r.ok ? "ok" : "failed")
+                                  << " -- " << r.message << "\n";
+                        stats->end_decode(r.ok ? r.message : ("decode failed: " + r.message));
+                    }).detach();
+                    started = true;
+                }
+            }
+        }
+        res->result(started ? http::status::ok
+                            : (err == "a decode is already running" ? http::status::conflict
+                                                                    : http::status::bad_request));
+        res->set(http::field::content_type, "application/json");
+        res->body() = json::Writer().field("ok", started).field("id", id).field("error", err).str();
     } else if (target == "/net/pending/remove" || target == "/net/pending/clear") {
         // Delete one stored capture (?id=...) or all of them. Deferred-decrypt
         // captures are kept until removed here (or evicted at the size cap).

@@ -288,6 +288,30 @@ bool DsdProcess::write_audio(const int16_t* pcm, std::size_t n) {
     return true;
 }
 
+void DsdProcess::drain_stop() {
+    // Send EOF first and let the child finish on its own, WITHOUT clearing
+    // running_ (which stop() does, and which lets the stdout reader bail at its
+    // loop top and drop whatever it hasn't read yet). The reader loop breaks on
+    // read() returning 0 (EOF) regardless of running_, so with running_ left
+    // true it drains every buffered line before exiting -- exactly what a replay
+    // needs. Then hand off to stop() for the normal teardown.
+    if (stdin_fd_ >= 0) { ::close(stdin_fd_); stdin_fd_ = -1; } // EOF -> child emits the rest and exits
+    bool exited = (child_pid_ <= 0);
+    if (child_pid_ > 0) {
+        int status = 0;
+        for (int i = 0; i < 200; ++i) {         // up to ~10 s for the child to finish
+            pid_t r = waitpid(child_pid_, &status, WNOHANG);
+            if (r == child_pid_) { child_pid_ = -1; exited = true; break; }
+            usleep(50 * 1000);
+        }
+    }
+    // Child done => stdout hit EOF: joining the reader now drains it fully (it
+    // breaks on EOF with running_ still true). If the child didn't exit in time,
+    // leave it to stop() to SIGTERM and join (don't risk blocking here).
+    if (exited && stdout_thread_.joinable()) stdout_thread_.join();
+    stop();
+}
+
 void DsdProcess::stop() {
     if (!running_.exchange(false)) {
         // Already stopped, but make sure a partially-started instance

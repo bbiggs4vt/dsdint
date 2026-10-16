@@ -639,10 +639,16 @@ afterwards — say an operator loads it on the radio but hasn't told you yet —
   oldest only if reached. Captures live under `DSD_NET_PENDING_DIR` (default
   `net_pending/` in the recordings folder) and never contain key values.
 - **Decrypting a kept call.** Load the matching key (Keys tab, or
-  **+ Add a key manually**), then decrypt the capture with that key — the
-  recovered call joins the explorer like any other. *(The capture and this
-  review step are described together here; the one-click prompt that offers to
-  decrypt matching captures the moment a key is loaded is being wired next.)*
+  **+ Add a key manually**). When a key you add can decrypt one or more stored
+  captures, a message says so — open **Pending ▾** and click **Decrypt** on a
+  capture. The server replays that capture's audio through a fresh decoder with
+  the keyring now loaded; the recovered calls appear in the explorer like any
+  other (with their audio, and dated to the capture's original time, not now).
+  While a decrypt runs the button shows **decrypting…**; it does one capture at
+  a time, and a message reports how many calls were recovered when it finishes.
+  Decrypting turns on call-audio recording (§10) so the recovered voice is kept.
+  A capture whose key you don't have yet still decrypts nothing — load the key
+  first.
 
 Only capture and decrypt traffic on systems you are **authorized to monitor**,
 and mind the same local rules that apply to recording audio.

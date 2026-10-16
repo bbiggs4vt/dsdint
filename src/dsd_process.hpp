@@ -327,6 +327,14 @@ public:
     // exit, and joins reader threads. Safe to call multiple times.
     void stop();
 
+    // Finite-input shutdown, for replaying a fixed recording (deferred-decrypt
+    // decode): send EOF, wait for the child to emit the rest and exit, and let
+    // the stdout reader drain every remaining line to EOF before teardown.
+    // stop() sets running_=false up front, so its reader can exit at the loop
+    // top and drop the buffered tail -- fine for an open-ended live stream, but
+    // it would lose the last events of a replay. Safe to call multiple times.
+    void drain_stop();
+
     bool running() const { return running_.load(); }
 
 private:

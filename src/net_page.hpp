@@ -97,6 +97,12 @@ inline std::string render_net_page_html() {
                    padding: 0 .3rem; margin: .15rem .2rem 0 0; font-size: .68rem; font-family: var(--mono, monospace); }
   .pendrow .px { flex: 0 0 auto; color: var(--muted); cursor: pointer; text-decoration: none; font-size: .95rem; padding: 0 .2rem; }
   .pendrow .px:hover { color: var(--danger, #e06c75); }
+  .pendrow .px.off { pointer-events: none; opacity: .3; }
+  .pendrow .pdo { flex: 0 0 auto; color: var(--accent, #6cc); cursor: pointer; text-decoration: none; font-size: .74rem;
+                  border: 1px solid var(--comp-bd); border-radius: 3px; padding: .1rem .4rem; white-space: nowrap; }
+  .pendrow .pdo:hover { background: rgba(255,255,255,.07); }
+  .pendrow .pdo.off { color: var(--muted); opacity: .5; pointer-events: none; }
+  .pendrow .pdo.busy { color: #e6c229; border-color: #e6c229; pointer-events: none; }
   .menu a.penddanger { color: var(--danger, #e06c75); border-top: 1px solid var(--comp-bd); }
   .filebar { background: #2c4a56; border: 1px solid var(--info); color: var(--heading); border-radius: 4px;
              padding: .5rem .8rem; margin-bottom: .9rem; display: flex; flex-wrap: wrap; gap: .4rem .8rem;
@@ -1557,10 +1563,16 @@ function forgetKeyVals(net) { delete KEYVALS[S.fam + '|' + net]; }
 function setKey(net, kid, alg, value, done) {
   fetch('/net/keys/set', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
                            body: JSON.stringify({ fam: S.fam, net: net, kid: kid, alg: alg, key: value }) })
-    .then(function (r) { return r.json().then(function (j) { return r.ok && j.ok; }, function () { return false; }); })
-    .then(function (ok) {
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok && j.ok, j: j }; }, function () { return { ok: false, j: {} }; }); })
+    .then(function (res) {
+      var ok = res.ok;
       if (ok) { S.keyEdit = null; forgetKeyVals(net); delete KEYSHOW[S.fam + '|' + net + '|' + kid];   // value changed: re-reveal to see it
-                markKeyed(net, kid, true, alg); toast('Key loaded for ' + keyText(alg, kid) + '.'); if (S.d) render(); }
+                markKeyed(net, kid, true, alg); toast('Key loaded for ' + keyText(alg, kid) + '.'); if (S.d) render();
+                // If this key (or the keyring now) can decrypt stored captures,
+                // tell the operator so they can replay them from the Pending menu.
+                var n = (res.j && res.j.pending_decryptable) || 0;
+                if (n > 0) toast(n + ' stored encrypted-call capture' + (n > 1 ? 's' : '') +
+                                 ' can now be decrypted — open Pending ▾ to replay ' + (n > 1 ? 'them' : 'it') + '.'); }
       else toast('That key wasn’t accepted (expected hex digits, up to 64).');
       if (done) done(ok);
     }).catch(function () { toast('Could not reach the server to set the key.'); });
@@ -4985,18 +4997,28 @@ function clearAllKeys() {
 // Deferred-decrypt capture (pending_capture.hpp): the Pending menu toggles
 // keeping the audio of encrypted calls heard without a key, and lists what has
 // been kept so it can be decrypted later once the key is loaded.
+var PEND = { decoding: null, poll: 0 };
 function renderPending(d) {
   var on = !!(d && d.enabled), caps = (d && d.captures) || [];
+  var decoding = (d && d.decoding) || null;
+  // A decode just finished (was running, now isn't): tell the operator the
+  // outcome and refresh the explorer so the recovered calls show up.
+  if (PEND.decoding && !decoding) {
+    if (d && d.last_decode) toast('Decrypt complete — ' + d.last_decode + '.');
+    poll();
+  }
+  PEND.decoding = decoding;
   $('pend-on').checked = on;
   var b = $('pend');
-  b.classList.toggle('on', on);
-  b.textContent = 'Pending' + (caps.length ? ' (' + caps.length + ')' : '') + ' ▾';
+  b.classList.toggle('on', on || !!decoding);
+  b.textContent = 'Pending' + (decoding ? ' · decrypting…' : (caps.length ? ' (' + caps.length + ')' : '')) + ' ▾';
   var list = $('pendlist'); list.textContent = '';
   if (!caps.length) {
     list.appendChild(h('div', { class: 'pendempty', text: on
       ? 'No encrypted calls captured yet. A capture appears here when an encrypted call is heard on a stream that has no key.'
       : 'Off. Turn on to keep the audio of encrypted calls heard without a key, so they can be decrypted later once you load the matching key.' }));
     $('pend-clear').hidden = true;
+    pendPoll(!!decoding);
     return;
   }
   caps.forEach(function (c) {
@@ -5006,17 +5028,42 @@ function renderPending(d) {
       h('small', { text: meta + ' · ' + dur((c.seconds || 0) * 1000) + ' · ' + mb(c.bytes || 0) + (c.complete ? '' : ' · in progress') })
     ]);
     (c.algkids || []).forEach(function (ak) { info.appendChild(h('span', { class: 'algk', text: ak })); });
-    list.appendChild(h('div', { class: 'pendrow' }, [
-      info,
-      h('a', { class: 'px', href: '#', title: 'Delete this capture', text: '✕',
-               onclick: function (e) { e.preventDefault(); removePending(c.id); } })
-    ]));
+    var act;
+    if (decoding === c.id) {
+      act = h('span', { class: 'pdo busy', text: 'decrypting…' });
+    } else if (decoding) {
+      act = h('span', { class: 'pdo off', text: 'Decrypt' });   // another decode is running
+    } else {
+      act = h('a', { class: 'pdo', href: '#', title: 'Replay this capture through the decoder with the keys now loaded',
+                     text: 'Decrypt', onclick: function (e) { e.preventDefault(); decodePending(c.id); } });
+    }
+    var del = h('a', { class: 'px', href: '#', title: 'Delete this capture', text: '✕',
+                       onclick: function (e) { e.preventDefault(); if (!decoding) removePending(c.id); } });
+    if (decoding) del.classList.add('off');
+    list.appendChild(h('div', { class: 'pendrow' }, [info, act, del]));
   });
   $('pend-clear').hidden = false;
+  pendPoll(!!decoding);
+}
+// Keep the menu refreshing while a decode runs, so progress + completion show
+// without the operator reopening it.
+function pendPoll(active) {
+  if (active && !PEND.poll) PEND.poll = setInterval(loadPending, 2000);
+  else if (!active && PEND.poll) { clearInterval(PEND.poll); PEND.poll = 0; }
 }
 function loadPending() {
   return fetch('/net/pending/list', { cache: 'no-store' }).then(function (r) { return r.json(); })
     .then(renderPending).catch(function () {});
+}
+function decodePending(id) {
+  fetch('/net/pending/decode?id=' + encodeURIComponent(id), { cache: 'no-store' })
+    .then(function (r) { return r.json().then(function (j) { return { s: r.status, j: j }; }); })
+    .then(function (x) {
+      if (x.j && x.j.ok) { toast('Decrypting… recovered calls will appear in the explorer.'); loadPending(); }
+      else toast(x.s === 409 ? 'A decrypt is already running — one at a time.'
+                             : 'Could not start decrypt' + (x.j && x.j.error ? ' (' + x.j.error + ')' : '') + '.');
+    })
+    .catch(function () { toast('Could not start decrypt (is the server reachable?).'); });
 }
 function togglePending() {
   var on = $('pend-on').checked;
