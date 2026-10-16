@@ -948,9 +948,11 @@ function freqGap(a, b) {
   return best;
 }
 // How likely networks a and b are one: null when the evidence rules it out
-// (both have a system id; different codes; one stream heard both at once;
-// different calls on one slot at the same moment, with no call heard on both;
-// channels more than 6.25 kHz apart, or unknown, with no call heard on both).
+// (both strong; different codes, UNLESS a call was heard on both or a fleet of
+// radios is shared -- the multi-site / different-color-code case; one stream
+// heard both at once; different calls on one slot at the same moment, with no
+// call heard on both; channels more than 6.25 kHz apart, or unknown, with no
+// call heard on both and no shared fleet).
 // Otherwise { tier: 3 very likely | 2 likely | 1 possible, why: [...], against: [...] }.
 function sameJudge(a, b, e) {
   e = e || { twins: 0, clash: 0, sameStream: 0, tgs: 0, radios: 0 };
@@ -962,20 +964,36 @@ function sameJudge(a, b, e) {
   if (unidentifiedNet(a) || unidentifiedNet(b)) return null;
   var ca = netCode(a), cb = netCode(b), gap = freqGap(a, b);
   var sameCode = ca && cb && ca.k === cb.k && ca.v === cb.v;
+  // A shared fleet -- subscriber radios heard on BOTH networks -- is the strong
+  // sign that two networks are one system even when their codes or channels
+  // differ. In DMR a system commonly runs a DIFFERENT color code on each
+  // repeater/site, so one fleet seen across different codes (or far-apart
+  // channels) is exactly the multi-site case this would otherwise miss.
+  // Talkgroup numbers are too common to carry this (TG 9, 12, 13 recur across
+  // unrelated systems); radios are 24-bit subscriber ids, far more telling, so
+  // require a couple of them. This only ever reaches "possible" (tier 1 below):
+  // never auto-merged (that needs same code within 2.5 kHz), always dismissable.
+  var crossFleet = (e.radios || 0) >= 2;
   if (a.confidence === 'strong' && b.confidence === 'strong') return null;
-  if (ca && cb && !sameCode) return null;
+  if (ca && cb && !sameCode && !(e.twins || crossFleet)) return null;
   if (e.sameStream) return null;
   if (e.clash && !e.twins) return null;
-  if (!e.twins && !(gap <= 6250)) return null;
+  if (!e.twins && !(gap <= 6250) && !crossFleet) return null;
   var why = [], against = [];
   if (e.twins) why.push(e.twins + ' call' + (e.twins > 1 ? 's' : '') + ' heard on both');
   if (sameCode) why.push('same ' + CODE_NAME[ca.k] + ' (' + ca.v + ')');
-  if (isFinite(gap)) why.push(gap ? khz(gap) + ' apart' : 'same channel');
+  // The channel gap is evidence FOR only when the channels are near each other;
+  // for a multi-site match the repeaters are legitimately far apart, so the
+  // shared fleet carries it instead and the gap isn't claimed as support.
+  if (isFinite(gap) && gap <= 6250) why.push(gap ? khz(gap) + ' apart' : 'same channel');
   var handoff = a.last && b.last && (a.last < b.first || b.last < a.first);
   if (handoff) why.push('one took over when the other stopped');
   if (e.tgs || e.radios) why.push([e.tgs ? e.tgs + ' talkgroup' + (e.tgs > 1 ? 's' : '') : '', e.radios ? e.radios + ' radio' + (e.radios > 1 ? 's' : '') : '']
                                   .filter(Boolean).join(' and ') + ' shared');
   if (e.clash) against.push('different calls at the same moment ' + e.clash + '\u00D7');
+  // When the codes differ (a multi-site system on different color codes), say so
+  // -- it's why this stays "possible" and wants a human's eye.
+  if (ca && cb && !sameCode) against.push(ca.k === cb.k ? ('different ' + CODE_NAME[ca.k] + ' (' + ca.v + ' vs ' + cb.v + ')') : 'different codes');
   // Likely when a call was heard on both, or the codes match and the channels
   // are within 2.5 kHz -- two distinct systems can't sit that close on the same
   // code, so it's one channel heard at a small frequency offset. A matching

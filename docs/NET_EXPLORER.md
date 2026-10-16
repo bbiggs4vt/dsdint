@@ -292,7 +292,7 @@ evidence and a rating — **very likely**, **likely** or **possible**:
 | **same color code (1)** (or NAC, RAN, …) | Both carry the same short code. |
 | **2.5 kHz apart** | Their channels are this close — less than a channel apart (real channels are 6.25 or 12.5 kHz apart). |
 | **one took over when the other stopped** | They were never heard in the same period: what a retune or a changed offset looks like. |
-| **talkgroups / radios shared** | Supporting evidence only: on amateur DMR, radio ids are worldwide and TG 9 is local on every repeater. |
+| **N talkgroups / radios shared** | The same talkgroups and subscriber radios were heard on both. Talkgroup numbers are too common to count alone (TG 9 is local on every repeater), but a *fleet* of shared radio ids — 2 or more of those 24-bit subscriber ids on both — rarely coincides, so it's enough on its own to suggest a match. |
 
 The rating: **very likely** needs a call heard on both. **Likely** means a call
 was heard on both, *or* the codes match and the channels are within 2.5 kHz —
@@ -300,6 +300,14 @@ two distinct systems can't share a code and sit that close, so it's one channel
 heard at a small offset. A matching code with a wider gap, or frequency
 proximity alone, stays **possible** (codes aren't unique) until a call is heard
 on both.
+
+**Different codes, same system (multi-site).** A system often runs a *different*
+color code / NAC on each repeater or site, so two networks with different codes
+can still be one system. When a call is heard on both, or a fleet of radios is
+shared, the suggestion is made anyway (it says *different color code (3 vs 5)*
+as a caveat, so you can confirm it). Shared talkgroups alone are not enough to
+cross a code boundary. These cross-code suggestions are never auto-merged
+(auto-merge only ever joins the same code within 2.5 kHz).
 
 A pair is never suggested when the evidence says they are different channels:
 both have a system id; their codes differ; **one stream heard both at the same
