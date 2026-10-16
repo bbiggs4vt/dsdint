@@ -1185,6 +1185,47 @@ int main() {
         check(c && (*c)["voice"].b && (*c)["q"].s.empty(), "quality: P25 voice, no AMBE+2 frames -> no badge (Phase 1 IMBE)");
     }
 
+    // ---- Capacity Plus: an overlapping voice burst must not relabel a data
+    //      transaction as "voice" (so it never glues audio onto a data id) ----
+    {
+        AssocModel m;
+        m.begin_stream(1, "dmr", 0);
+        // A confirmed individual-data exchange holds slot 1 open: an ARS/LRRP-
+        // style gateway (64250) talking private data to a radio (23014).
+        line(m, 1, "19:17:06 Sync: +DMR  [slot1]  slot2  | Color Code=03 | CSBK", 1000);
+        line(m, 1, "Preamble CSBK - Individual Data - Source: 64250 - Target: 23014 - Rest LSN: 4", 1050);
+        line(m, 1, "Slot 1 Data Header - Indiv - Confirmed Delivery - Response Requested - Source: 64250 Target: 23014", 1100);
+        line(m, 1, "DATA RESP TGT: 23014; SRC: 64250; ACK - Success", 1150);
+        // In the same window an unrelated voice call is heard on the slot, but
+        // its link control is FEC-corrupted: only target-less VC bursts and
+        // owner-less AMBE frames arrive.
+        for (int i = 0; i < 6; ++i)
+            line(m, 1, "19:17:06 Sync: +DMR  [SLOT1]  slot2  | Color Code=03 | VC" + std::to_string(i + 1), 1200 + i * 60);
+        feed_frames(m, 1, 0xABCD, true, 20, 1600, "1");
+        J j = snap(m, 1800);
+        const J& F = j["families"]["dmr"];
+        const J* d = nullptr;
+        for (const auto& x : F["calls"].a) if (x["src"].s == "64250" && x["tgt"].s == "23014") d = &x;
+        check(d && (*d)["data"].b && !(*d)["voice"].b,
+              "Cap+: a target-less voice burst does NOT flip a data call to voice");
+        bool any_voice = false;
+        for (const auto& x : F["calls"].a) if (x["voice"].b) any_voice = true;
+        check(!any_voice, "Cap+: unattributable voice on a data slot opens no spurious call");
+
+        // Positive control: a voice call whose header DOES decode stays voice --
+        // the guard must not over-block real voice.
+        AssocModel m2;
+        m2.begin_stream(1, "dmr", 0);
+        line(m2, 1, " SLOT 1 TGT=16 SRC=999 Group Call ", 1000);
+        line(m2, 1, "19:17:06 Sync: +DMR  [SLOT1]  slot2  | Color Code=03 | VC1", 1100);
+        feed_frames(m2, 1, 0x1234, true, 20, 1200, "1");
+        const J* v = nullptr;
+        J j2 = snap(m2, 1400);
+        for (const auto& x : j2["families"]["dmr"]["calls"].a) if (x["src"].s == "999") v = &x;
+        check(v && (*v)["voice"].b && !(*v)["data"].b && (*v)["tgt"].s == "16",
+              "Cap+: a voice call with a decoded header is still voice (not over-blocked)");
+    }
+
     if (g_failures == 0) {
         std::printf("\nALL ASSOC MODEL TESTS PASSED\n");
         return 0;
