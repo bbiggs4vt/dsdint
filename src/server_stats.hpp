@@ -19,6 +19,7 @@
 #include "assoc_model.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <deque>
@@ -230,6 +231,13 @@ public:
         it->second.got_data = true;
     }
 
+    // Rough wire throughput: WebSocket payload bytes received (mostly IQ from
+    // clients) and sent (decoder events + decoded audio). Lock-free -- these
+    // sit on the network hot path. The status page turns successive totals
+    // into a rate (MB/s), so only the running totals are kept here.
+    void add_bytes_in(std::uint64_t n)  { bytes_in_.fetch_add(n, std::memory_order_relaxed); }
+    void add_bytes_out(std::uint64_t n) { bytes_out_.fetch_add(n, std::memory_order_relaxed); }
+
     // A client asked for a protocol (a "start" message, resolved to its
     // canonical label). Counted whether or not the pipeline then comes up, so
     // the protocols view shows everything the server was asked to do.
@@ -329,6 +337,8 @@ public:
         std::size_t current_sessions = 0;   // connected right now
         std::size_t active_pipelines = 0;   // currently decoding
         double uptime_s = 0.0;
+        std::uint64_t bytes_in = 0;         // WS payload bytes received since start (mostly IQ)
+        std::uint64_t bytes_out = 0;        // WS payload bytes sent since start (events + audio)
         bool iq_logging = false;            // global IQ-capture switch state
         std::chrono::system_clock::time_point started;
         std::vector<SessionRow> rows;                 // sorted by id
@@ -355,6 +365,8 @@ public:
         s.started = started_wall_;
         s.uptime_s = std::chrono::duration<double>(
                          std::chrono::steady_clock::now() - started_mono_).count();
+        s.bytes_in = bytes_in_.load(std::memory_order_relaxed);
+        s.bytes_out = bytes_out_.load(std::memory_order_relaxed);
         s.rows.reserve(sessions_.size());
         for (const auto& kv : sessions_) {
             s.rows.push_back(kv.second);
@@ -409,6 +421,8 @@ private:
     std::size_t log_limit_;
     std::uint64_t last_id_ = 0;
     std::uint64_t total_sessions_ = 0;
+    std::atomic<std::uint64_t> bytes_in_{0};   // WS payload bytes received (lock-free, hot path)
+    std::atomic<std::uint64_t> bytes_out_{0};  // WS payload bytes sent
     std::chrono::system_clock::time_point started_wall_;
     std::chrono::steady_clock::time_point started_mono_;
 };

@@ -143,6 +143,8 @@ inline std::string render_status_json(const ServerStats::Snapshot& s) {
     o << ",\"current_sessions\":" << s.current_sessions;
     o << ",\"active_pipelines\":" << s.active_pipelines;
     o << ",\"uptime_seconds\":" << static_cast<long>(s.uptime_s);
+    o << ",\"bytes_in\":" << static_cast<long long>(s.bytes_in);
+    o << ",\"bytes_out\":" << static_cast<long long>(s.bytes_out);
     o << ",\"log_lines\":" << s.log_lines;
     o << ",\"iq_logging\":" << (s.iq_logging ? "true" : "false");
     o << ",\"started\":\"" << json_escape(format_utc(s.started)) << "\"";
@@ -386,6 +388,7 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
     card("cur", "Current sessions", std::to_string(s.current_sessions));
     card("tot", "Total sessions", std::to_string(s.total_sessions));
     card("act", "Active decodes", std::to_string(s.active_pipelines));
+    card("net", "Network", "\xE2\x80\x94");   // live MB/s, filled in by the poll
     o << "</div>\n";
 
     // Global IQ-capture switch. Toggling it flips server-side logging for every
@@ -525,6 +528,12 @@ inline std::string render_status_html(const ServerStats::Snapshot& s) {
 function setText(id,v){var e=document.getElementById(id);if(e&&e.textContent!==v)e.textContent=v;}
 function cell(cls,text){var td=document.createElement('td');if(cls)td.className=cls;td.textContent=text;return td;}
 function mhz(hz){if(!(hz>0))return '-';var t=(hz/1e6).toFixed(5);return t.charAt(t.length-1)==='0'?t.slice(0,-1):t;}
+// Bytes/second -> a compact MB/s / KB/s string for the Network card.
+function fmtRate(bps){if(!(bps>0))return '0 KB/s';
+  if(bps>=1048576)return (bps/1048576).toFixed(bps>=10485760?0:1)+' MB/s';
+  if(bps>=1024)return (bps/1024).toFixed(bps>=102400?0:1)+' KB/s';
+  return Math.round(bps)+' B/s';}
+var _netBytes=null,_netT=null,_netRate=null;
 function emptyRow(tb,msg,span){var tr=document.createElement('tr');var td=cell('empty',msg);td.colSpan=span||7;tr.appendChild(td);tb.appendChild(tr);}
 function trail(req,used,cur){var l=(req&&req.length)?req:(used||[]);if(!l.length)return cur||'-';
   return l.map(function(p){return (used||[]).indexOf(p)<0?p+' \u2717':p;}).join(' \u2192 ');}
@@ -534,6 +543,19 @@ function render(d){
   setText('tot',''+d.total_sessions);
   setText('act',''+d.active_pipelines);
   setText('uptime',dur(d.uptime_seconds));
+  // Network throughput: turn successive byte totals into a rate. Seed the first
+  // sample with the average since start so the card isn't blank; after that use
+  // the instantaneous rate between polls (lightly smoothed). A drop in the
+  // total (server restart) just reseeds.
+  var _nTot=(d.bytes_in||0)+(d.bytes_out||0),_nNow=Date.now()/1000;
+  if(_netT!=null&&_nNow>_netT+0.05&&_nTot>=_netBytes){
+    var _r=(_nTot-_netBytes)/(_nNow-_netT);
+    _netRate=_netRate==null?_r:(_netRate*0.5+_r*0.5);
+    setText('net',fmtRate(_netRate));
+  }else if(_netT==null){
+    setText('net',fmtRate(d.uptime_seconds>0?_nTot/d.uptime_seconds:0));
+  }
+  _netT=_nNow;_netBytes=_nTot;
   var sec=document.getElementById('byproto-sec'),bp=document.getElementById('byproto');
   var keys=Object.keys(d.by_protocol||{}).sort();
   bp.textContent='';

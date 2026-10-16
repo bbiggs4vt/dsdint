@@ -1026,6 +1026,9 @@ void Session::on_read(beast::error_code ec, std::size_t /*bytes_transferred*/) {
         auto data = static_cast<const uint8_t*>(read_buffer_.data().data());
         handle_binary_message(data, read_buffer_.size());
     }
+    // Throughput: count this frame's payload (mostly IQ) toward the server's
+    // received-bytes total, for the status page's network card.
+    if (stats_ && stats_id_) stats_->add_bytes_in(read_buffer_.size());
     read_buffer_.consume(read_buffer_.size());
 
     do_read();
@@ -1980,6 +1983,9 @@ void Session::send_binary(std::vector<uint8_t> data) {
 }
 
 void Session::queue_and_send(std::vector<uint8_t> frame, bool is_text) {
+    // Throughput: count this frame's payload (events + decoded audio) toward
+    // the server's sent-bytes total, before it is moved into the queue.
+    if (stats_ && stats_id_) stats_->add_bytes_out(frame.size());
     // out_queue_/writing_ are also touched from send_text/send_binary
     // calls made directly on the network thread (inside on_read's call
     // chain) as well as from the strand-posted callbacks above, so this
